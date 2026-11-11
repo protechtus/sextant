@@ -737,7 +737,8 @@ def test_setup_prints_a_registration_for_this_install(monkeypatch, tmp_path):
     assert entry["command"] == sys.executable and entry["env"]["ATLAS_STATE_DIR"] == str(root / "state")
     hook_cmd = json.loads(json.dumps(info["settings_json"]))["hooks"]["SessionStart"][0]["hooks"][0]["command"]
     # POSIX puts the variables on the command line in front; Windows sets them with set "K=V" && (hooks run via cmd)
-    assert f'"{sys.executable}" -m atlas_plus.hooks.session_start' in hook_cmd
+    qpy = f'"{sys.executable}"' if os.name == "nt" else __import__("shlex").quote(sys.executable)
+    assert f"{qpy} -m atlas_plus.hooks.session_start" in hook_cmd
     assert hook_cmd.startswith('set "ATLAS_') if os.name == "nt" else hook_cmd.startswith("ATLAS_MEMORY_ROOT=")
     assert "claude_code_from_windows" not in info
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")

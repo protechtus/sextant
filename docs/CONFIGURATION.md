@@ -83,6 +83,7 @@ the README before exposing anything.
 | `ATLAS_MCP_TRUSTED_PEERS` | unset | Comma-separated IPs or CIDRs treated like loopback by the lockout (never locked out, failures not counted). Every client behind one NAT shares one counter, and a container published on the host's loopback sees all host clients as the Docker bridge gateway (`172.17.0.1`): list that gateway when the port is published on `127.0.0.1` only. Never list a public range. |
 | `CLAUDE_CONFIG_DIR` | unset | Read only by the uninstall report, which lists the Claude Code config files that still reference the install; Claude Code itself honours it. |
 | `NO_COLOR` | unset | Any value makes `sextant doctor` print plain text; piped output is plain regardless. |
+| `APPDATA` | Windows default | Read only by the uninstall report to find Claude Desktop's `claude_desktop_config.json`. |
 
 ## Write consent (the two switches)
 

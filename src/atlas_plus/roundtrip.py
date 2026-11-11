@@ -85,7 +85,7 @@ def server_command(python: str | None = None, command: str | None = None) -> lis
 
 
 def _is_wsl_launcher(exe: str) -> bool:
-    return Path(exe).name.lower() in ("wsl", "wsl.exe")
+    return exe.replace("\\", "/").rsplit("/", 1)[-1].lower() in ("wsl", "wsl.exe")
 
 
 def _wslenv_with(existing: str, names: list[str]) -> str:
