@@ -8,8 +8,9 @@ the install directory without asking. Do not set `ATLAS_AUTONOMOUS`, do not edit
 hooks or settings files without an explicit yes, and never `pip install sextant` (an unrelated
 package). The whole run takes 5 to 10 minutes.
 
-Already installed as a package (`pipx install sextant-ai`, `uv tool install sextant-ai`, or pip
-from PyPI), so there is no clone? Steps 1 to 3 are done. From step 4 on, the installed commands
+Already installed as a package (`pipx install sextant-ai`, `uv tool install sextant-ai`, pip
+from PyPI, or `pip install "sextant-ai[telegram,summarizer] @ git+https://github.com/protechtus/sextant.git"`),
+so there is no clone? Steps 1 to 3 are done. From step 4 on, the installed commands
 are `sextant-init`, `sextant-doctor`, `sextant setup` and `sextant verify`; wherever a step says
 `<venv-python> -m atlas_plus.<x>`, the `sextant <x>` form is the same thing.
 
@@ -101,6 +102,7 @@ python3 -m venv --without-pip .venv
 curl -sSLo get-pip.py https://bootstrap.pypa.io/get-pip.py
 .venv/bin/python get-pip.py && rm get-pip.py
 ```
+(No `curl` on a slim image? `python3 -c "import urllib.request as u; u.urlretrieve('https://bootstrap.pypa.io/get-pip.py', 'get-pip.py')"`.)
 or, if `uv` is installed, `uv venv --seed .venv` (the `--seed` flag installs pip so the
 `python -m pip` commands below keep working).
 
@@ -183,7 +185,9 @@ Git Bash: `"$(pwd -W)/.venv/Scripts/python.exe"` (the real `C:/...` path; `$PWD`
 **WSL install, Windows Claude Code**: run `setup` inside WSL; besides the Linux command it
 prints the Windows-side form, which crosses the boundary with
 `-- wsl -d <Distro> -- /home/<user>/<install>/.venv/bin/python -m atlas_plus.mcp.memory_server.server --stdio`
-and carries `-e "WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"` (or whichever variables you set).
+and carries `-e "WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"` (or whichever variables you set,
+appended to any `WSLENV` already in the Windows environment; the values are Linux paths, so no
+`/p` flag).
 Without `WSLENV`, variables set on the Windows side never reach the Linux process and the
 server silently serves `~/.memory` inside WSL while still answering `ok`. Run the printed
 command in PowerShell on the Windows side; `claude` is usually not on the WSL PATH.
@@ -283,16 +287,17 @@ Run the report first; it lists exactly what exists and what still references the
 <venv-python> -m atlas_plus.uninstall_cmd
 ```
 
-Then, **ASK** before each of these, because the corpus is the human's notes:
+Then, **ASK** before each of these, because the corpus is the human's notes. Unhook the
+client first, then delete: a registration left behind points at a venv that no longer exists.
 
-1. `<venv-python> -m atlas_plus.uninstall_cmd --all --yes --confirm-path <corpus path> --confirm-state-path <state path>`
+1. `claude mcp remove -s user sextant` (or the equivalent in the client they used), and remove
+   any Stop or SessionStart hook entries that point at the install from `~/.claude/settings.json`.
+2. `<venv-python> -m atlas_plus.uninstall_cmd --all --yes --confirm-path <corpus path> --confirm-state-path <state path>`
    removes the state dir and the corpus. Both paths must be named (the report prints them);
    the state dir is not a cache: it holds captured transcripts, the task database, the
    intake ledger, sync devices and research reports. A corpus containing a `.sextant-protect` marker refuses deletion until the
    human removes the marker by hand. A state dir that overlaps the corpus, home, or workspace
    root is refused outright.
-2. `claude mcp remove -s user sextant` (or the equivalent in the client they used), and remove
-   any Stop or SessionStart hook entries that point at the clone from `~/.claude/settings.json`.
 3. The session log the summarizer wrote (its path is in the report when one exists) is
    never deleted by the tool; the human decides.
 4. `pip uninstall sextant-ai` inside the venv, or simply delete the clone and its `.venv`.

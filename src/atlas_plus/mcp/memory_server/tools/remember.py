@@ -155,6 +155,17 @@ def memory_remember(
     except ValueError as e:
         return {"ok": False, "file": None, "version_copy": None, "error": str(e)}
 
+    # A corpus that was never initialised is not written into: the write used to succeed by
+    # creating a stray `.memory` under the home default whenever the client's env never
+    # reached the server (registration without -e, GUI-launched client), so the user's facts
+    # landed in a corpus nobody looks at while memory_health said degraded (sweep 2026-11-11).
+    root = target.parents[1]
+    if not root.exists():
+        return {"ok": False, "file": None, "version_copy": None,
+                "error": (f"memory root does not exist: {root} -- run sextant-init there, or pass "
+                          "ATLAS_MEMORY_ROOT (or ATLAS_WORKSPACE_ROOT) to the MCP server; "
+                          "`sextant setup` prints the registration with them baked in")}
+
     version_path = version_before_write(target)
 
     try:

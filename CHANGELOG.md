@@ -50,6 +50,25 @@ public tree.
   under compose, `exec mcp sextant verify`, brain key into `.env`, backup of all of `/data`
   with the real volume name and a restore line, override file for bind mounts and ports,
   Windows `.env` encoding); sdist carries `deploy/*.json` and `constraints.txt`.
+- Second wave (real `claude mcp add` in an isolated config dir, upgrade, `pip install git+`,
+  clean Debian container, adversarial review): a write into a corpus that does not exist is
+  refused with the setup hint (it used to create a stray `~/.memory` when the registration
+  lacked `-e`); `setup` quotes with `shlex` on POSIX, refuses a quote or line break in a value
+  on Windows, doubles a trailing backslash, quotes the WSL interpreter and distro, appends to
+  an existing `WSLENV`, carries `ATLAS_UPDATES_FILE`, puts the hook-only variables on the POSIX
+  hook line, names its JSON blocks after the file they go in, accepts `--client claude-desktop`
+  and `cursor`; `verify` passes only when the search returns the file the write named, parses
+  `--command` the way Windows does, never leaks its log file, tolerates non-UTF-8 and non-JSON
+  stdout, and ignores server-initiated requests; the session-start hook prints the corpus it
+  read; the MCP temporal search looked in `temporal/` while every builder writes
+  `temporal_graph/`; `ATLAS_HOME_TZ` with a bad value degrades instead of raising; the Telegram
+  remedy and the uninstall note no longer assume uv or a clone; docs carry the `pip install
+  "sextant-ai[extras] @ git+..."` form and the exact `--strict` rule. The public mirror now
+  keeps its git history (one commit per publish, pushed fast-forward) so the documented
+  `git pull` upgrade works; the Updating section adds `sextant-init` (ownership marker),
+  `setup` and `verify`; the agent runbook unhooks the client before deleting data; the
+  self-hosting env file names the corpus paths; `setup` prints the HTTP-mode and remote
+  registration lines for a machine without Claude Code; a get-pip route without curl.
 - Known and left: search snippets bracket the matched words and show the `<!-- source -->`
   comment; `atlas-review-memory summary` counts files differently from the doctor; the
   components table folds long paths at 80 columns; Brain pytest executors assume a clone.

@@ -231,7 +231,7 @@ def _temporal_context_for_query(query: str, limit: int = 3) -> list[dict]:
         from atlas_plus import paths as atlas_paths
         graph_root = Path(
             os.environ.get("ATLAS_TEMPORAL_ROOT")
-            or (atlas_paths.state_dir() / "temporal")
+            or (atlas_paths.state_dir() / "temporal_graph")  # the dir every builder writes (review 2026-11-11)
         )
         if not graph_root.exists():
             return []
@@ -603,7 +603,8 @@ def now_state_tool(zones: list[str] | None = None) -> dict:
 
     Args:
         zones: IANA timezone keys, e.g. ["UTC", "America/Denver",
-               "Asia/Tokyo"]. Omit for a standard world set
+               "Asia/Tokyo"], or "local" for this machine's zone (ATLAS_HOME_TZ
+               when set). Omit for a standard world set
                (UTC, Los Angeles, Denver, New York, London, Tokyo, Sydney).
 
     Returns {as_of_utc, zones: [{key, label, hh_mm, abbrev,
@@ -634,8 +635,8 @@ def memory_health() -> dict:
     if not exists:
         health["hint"] = (
             "memory root does not exist -- run sextant-init, or check that "
-            "ATLAS_MEMORY_ROOT is visible to the MCP server process "
-            "(pass it with `claude mcp add -e ATLAS_MEMORY_ROOT=...`)"
+            "ATLAS_MEMORY_ROOT (or ATLAS_WORKSPACE_ROOT) is visible to the MCP server process "
+            "(`sextant setup` prints the `claude mcp add -e ...` registration with it baked in)"
         )
     return health
 

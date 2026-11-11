@@ -732,21 +732,42 @@ def test_setup_prints_a_registration_for_this_install(monkeypatch, tmp_path):
     assert cmd.startswith("claude mcp add -s user sextant -e ")
     assert f'-e "ATLAS_MEMORY_ROOT={root / "memory"}"' in cmd
     assert f'-- "{sys.executable}" -m atlas_plus.mcp.memory_server.server --stdio' in cmd
-    entry = info["mcp_servers"]["mcpServers"]["sextant"]
+    entry = info["client_config_json"]["mcpServers"]["sextant"]
     assert entry["command"] == sys.executable and entry["env"]["ATLAS_STATE_DIR"] == str(root / "state")
-    hook_cmd = json.loads(json.dumps(info["hooks"]))["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    hook_cmd = json.loads(json.dumps(info["settings_json"]))["hooks"]["SessionStart"][0]["hooks"][0]["command"]
     # POSIX puts the variables on the command line in front; Windows cannot (hooks run via cmd)
     assert f'"{sys.executable}" -m atlas_plus.hooks.session_start' in hook_cmd
     assert hook_cmd.startswith('"') if os.name == "nt" else hook_cmd.startswith("ATLAS_MEMORY_ROOT=")
     assert "claude_code_from_windows" not in info
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.delenv("WSLENV", raising=False)  # Windows Terminal sets one; it must be appended to, not replaced
     wsl = setup_cmd.describe()["claude_code_from_windows"]
-    assert "-- wsl -d Ubuntu -- " in wsl and '"WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"' in wsl
+    assert '-- wsl -d "Ubuntu" -- ' in wsl and '"WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"' in wsl
+    monkeypatch.setenv("WSLENV", "WT_SESSION")
+    assert '"WSLENV=WT_SESSION:ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"' in setup_cmd.describe()["claude_code_from_windows"]
     from atlas_plus.cli import app
     res = CliRunner().invoke(app, ["setup", "--json"])
-    assert res.exit_code == 0 and json.loads(res.output)["verify"] == "sextant verify"
+    assert res.exit_code == 0 and json.loads(res.output)["verify"].endswith("-m atlas_plus verify")
     res = CliRunner().invoke(app, ["setup", "--client", "claude-code"])
     assert res.exit_code == 0 and res.output.strip().startswith("claude mcp add -s user sextant")
+    res = CliRunner().invoke(app, ["setup", "--client", "claude-desktop"])
+    assert res.exit_code == 0 and json.loads(res.output)["mcpServers"]["sextant"]["type"] == "stdio"
+
+
+def test_remember_refuses_a_corpus_that_does_not_exist(tmp_path, monkeypatch):
+    """Registration without -e: the server fell back to ~/.memory and CREATED it on the first
+    write, so facts landed in a corpus nobody reads while memory_health said degraded (A7)."""
+    from atlas_plus.mcp.memory_server.tools import remember as rem
+    missing = tmp_path / "never-initialised" / ".memory"
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(missing))
+    monkeypatch.setattr(rem, "MEMORY_ROOT", missing, raising=False)
+    from atlas_plus.mcp.memory_server import config, routing
+    monkeypatch.setattr(config, "MEMORY_ROOT", missing, raising=False)
+    monkeypatch.setattr(routing, "MEMORY_ROOT", missing, raising=False)
+    out = rem.memory_remember("project:demo", "a fact nobody will find", interactive=True)
+    assert out["ok"] is False and "memory root does not exist" in out["error"]
+    assert "sextant setup" in out["error"]
+    assert not missing.exists() and not (tmp_path / "never-initialised").exists()
 
 
 def test_in_clone_corpus_is_gitignored_and_sdist_carries_snippets():
@@ -798,3 +819,97 @@ def test_sweep6_docs_say_what_the_code_does():
     dk = (_REPO / "docs" / "HOWTO-docker.md").read_text(encoding="utf-8")
     assert "set -a; . ./.env; set +a" in dk and "exec mcp sextant verify" in dk
     assert "ATLAS_BRAIN_API_KEY={secrets.token_urlsafe(32)}')\" >> .env" in dk
+
+
+def test_setup_quoting_is_safe_per_platform(monkeypatch):
+    from atlas_plus import setup_cmd as sc
+    hostile = "/tmp/a$HOME\"b`id`"
+    assert sc._q(hostile, posix=True) == "'/tmp/a$HOME\"b`id`'"
+    cmd = sc.claude_code_command("/opt/v env/bin/python", {"ATLAS_STATE_DIR": hostile}, posix=True)
+    assert "'ATLAS_STATE_DIR=/tmp/a$HOME\"b`id`'" in cmd and "'/opt/v env/bin/python'" in cmd
+    assert sc._q("D:\\", posix=False) == '"D:\\\\"'
+    with pytest.raises(sc.UnquotableValue):
+        sc._q('C:\\quo"te', posix=False)
+    hooks = sc.hooks_json("/opt/v env/bin/python", {"ATLAS_USER_NAME": "Ann O'Neil"}, posix=True)
+    start = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert start.startswith("ATLAS_USER_NAME='Ann O'\"'\"'Neil' '/opt/v env/bin/python' -m")
+    wsl = sc.claude_code_command_from_windows("/home/me/my proj/.venv/bin/python",
+                                              {"ATLAS_MEMORY_ROOT": "/home/me/m"}, "Ubuntu 22.04",
+                                              existing_wslenv="FOO/p")
+    assert '-- wsl -d "Ubuntu 22.04" -- \'/home/me/my proj/.venv/bin/python\' -m' in wsl
+    assert '"WSLENV=FOO/p:ATLAS_MEMORY_ROOT"' in wsl
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", "C:\\bad\"quote" if os.name == "nt" else "/ok")
+    info = sc.describe()
+    if os.name == "nt":
+        assert info["claude_code"] is None and "quote" in info["error"]
+        assert sc.render(info).startswith("CANNOT PRINT ONE PIECE")
+    assert sc.describe(environ={"ATLAS_UPDATES_FILE": "/x/u.txt", "ATLAS_HOME_TZ": "UTC"})["hook_env"] == {
+        "ATLAS_UPDATES_FILE": "/x/u.txt", "ATLAS_HOME_TZ": "UTC"}
+
+
+def test_verify_splits_launchers_and_proves_this_write():
+    from atlas_plus import roundtrip as rt
+    if os.name != "nt":  # CommandLineToArgvW tolerates an unclosed quote; shlex does not
+        with pytest.raises(ValueError):
+            rt.server_command(command="wsl -d \"unclosed")
+    with pytest.raises(ValueError):
+        rt.server_command(command="   ")
+    cmd = rt.server_command(command='wsl --distribution="Ubuntu 22.04" -- /home/me/py')
+    assert cmd[1] in ('--distribution=Ubuntu 22.04', '--distribution="Ubuntu 22.04"') or "Ubuntu 22.04" in " ".join(cmd)
+    assert cmd[-3:] == ["-m", rt.SERVER_MODULE, "--stdio"]
+    src = inspect_source(rt.main)
+    assert "found_this_write" in src and "_discard_log()" in src and '"method" not in reply' in src
+    import os as _os
+    _os.environ["ATLAS_VERIFY_TIMEOUT"] = "2.5"
+    try:
+        assert rt._timeout_seconds() == 2
+        _os.environ["ATLAS_VERIFY_TIMEOUT"] = "nope"
+        assert rt._timeout_seconds() == 240
+    finally:
+        del _os.environ["ATLAS_VERIFY_TIMEOUT"]
+
+
+def inspect_source(fn):
+    import inspect
+    return inspect.getsource(fn)
+
+
+def test_session_start_names_its_corpus(tmp_path, monkeypatch, capsys):
+    from atlas_plus.hooks import session_start as ss
+    monkeypatch.setattr(ss, "MEMORY_ROOT", tmp_path / "nowhere")
+    monkeypatch.setattr(sys, "argv", ["atlas-session-start"])
+    monkeypatch.delenv("ATLAS_TASK_HINT", raising=False)
+    try:
+        ss.main()
+    except SystemExit:
+        pass
+    out = capsys.readouterr().out
+    assert "Corpus:" in out and "missing" in out and "sextant-init" in out
+
+
+def test_mcp_temporal_search_reads_the_built_graph_dir():
+    import inspect
+    from atlas_plus.mcp.memory_server import server
+    assert 'state_dir() / "temporal_graph"' in inspect.getsource(server._temporal_context_for_query)
+
+
+def test_home_zone_survives_a_bad_value(monkeypatch):
+    from atlas_plus.mcp.memory_server.tools import now_state as ns
+    monkeypatch.setenv("ATLAS_HOME_TZ", "America")
+    assert ns.home_zone() == ("local", "local")
+    assert ns.world_clock_line().startswith("Now: ") and "UTC" in ns.world_clock_line()
+
+
+def test_setup_tells_a_server_what_to_do_without_claude():
+    from atlas_plus import setup_cmd as sc
+    info = sc.describe(environ={})
+    assert info["http"]["serve"].startswith("ATLAS_MCP_TOKEN=") and "--transport http" in info["http"]["remote_claude_code"]
+    text = sc.render(info)
+    assert "HOWTO-self-hosting" in text and "4. No Claude Code on this machine" in text
+
+
+def test_mirror_builder_keeps_history_and_publisher_pushes_fast_forward():
+    b = (_REPO / "scripts" / "build_public_repo.py").read_text(encoding="utf-8")
+    assert "--fresh-history" in b and 'keep_git=keep_history' in b and '"diff", "--cached", "--quiet"' in b
+    p = (_REPO / "scripts" / "publish_sextant.py").read_text(encoding="utf-8")
+    assert "push(target, force=args.force_push)" in p and '*(["--force"] if force else [])' in p

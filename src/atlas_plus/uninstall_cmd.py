@@ -498,7 +498,8 @@ def main() -> None:
         print("           unhook BEFORE deleting the clone: `claude mcp remove -s user sextant`")
         print("           and delete any Stop hook entry ending in atlas_plus.summarizer.hook_entry.")
     print("  package: this command never uninstalls the package or venv --")
-    print("           run `pip uninstall sextant-ai` / delete the clone dir yourself.")
+    print("           run `pip uninstall sextant-ai` (or `uv tool uninstall sextant-ai` / `pipx uninstall sextant-ai`)")
+    print("           and delete the clone or venv yourself.")
 
     do_state = args.state or args.all
     do_corpus = args.corpus or args.all

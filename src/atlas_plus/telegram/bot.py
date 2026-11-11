@@ -94,8 +94,9 @@ def main() -> None:
         from telegram.ext import Application, CommandHandler
     except ImportError:
         print(
-            "python-telegram-bot not installed. Run:\n"
-            "  uv sync --extra telegram",
+            "python-telegram-bot not installed. Install the telegram extra:\n"
+            "  pip install \"sextant-ai[telegram]\"   (or, from a clone: pip install -e \".[telegram]\";"
+            " uv users: uv sync --extra telegram)",
             file=sys.stderr,
         )
         sys.exit(1)

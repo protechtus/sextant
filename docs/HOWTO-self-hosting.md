@@ -40,7 +40,11 @@ Set the secrets once, in the service environment (never in the repo). At
 minimum for a server deployment:
 
 ```bash
-# /home/sextant/sextant.env   (chmod 600, owned by the sextant user)
+# /home/sextant/sextant.env   (chmod 600, owned by the sextant user; systemd reads
+# KEY=VALUE lines here, no `export`, no quotes needed)
+ATLAS_MEMORY_ROOT=/home/sextant/.memory   # where the corpus lives: without these two lines the
+ATLAS_STATE_DIR=/home/sextant/.atlas      # service serves the sextant user's home defaults,
+                                          # which is fine only if that is where you ran sextant-init
 ATLAS_MCP_TOKEN=<long random>          # memory server bearer
 ATLAS_WEB_API_KEY=<long random>        # dashboard key
 ATLAS_BRAIN_API_KEY=<long random>      # brain API (if running Brain)

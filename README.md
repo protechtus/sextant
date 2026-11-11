@@ -75,7 +75,10 @@ Install from a clone as shown below (the clone also gives you the docs and the t
 suite; `sextant verify` and `sextant setup` work in every kind of install). Two other
 ways once you know what you want:
 `pip install git+https://github.com/protechtus/sextant.git` installs the current
-main without a clone, and `pip install sextant-ai` will install the released
+main without a clone (with the optional layers:
+`pip install "sextant-ai[telegram,summarizer] @ git+https://github.com/protechtus/sextant.git"`;
+`sextant setup` and `sextant verify` then replace every clone-only step), and
+`pip install sextant-ai` will install the released
 package from PyPI once v0.1.0 is published (not before). Do NOT `pip install
 sextant` -- that is an unrelated third-party package (a helm-charts CLI), not
 this project.

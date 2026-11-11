@@ -71,7 +71,7 @@ def home_zone() -> tuple[str, str]:
         try:
             ZoneInfo(key)
             return key, _label_for(key)
-        except (ZoneInfoNotFoundError, ValueError, KeyError):
+        except Exception:  # noqa: BLE001  (a directory-like key raised PermissionError on Windows)
             pass
     return "local", "local"
 
@@ -86,7 +86,7 @@ def _zone_snapshot(key: str, label: str, now_utc: datetime) -> dict:
     else:
         try:
             tz = ZoneInfo(key)
-        except (ZoneInfoNotFoundError, ValueError, KeyError):
+        except Exception:  # noqa: BLE001
             return {"key": key, "label": label, "error": "unknown zone"}
         local = now_utc.astimezone(tz)
     off = local.utcoffset()

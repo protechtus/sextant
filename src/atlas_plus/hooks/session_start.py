@@ -300,6 +300,13 @@ def main() -> None:
             print(f"# [atlas-prime] fallback to full context: {e}", file=sys.stderr)
 
     lines: list[str] = ["=== ATLAS SESSION CONTEXT ===", ""]
+    # Always say which corpus this is: hooks run without the client's env, so a relocated
+    # corpus is easy to miss (a package-user persona primed ~/.memory silently, 2026-11-11).
+    if MEMORY_ROOT.exists():
+        lines += [f"Corpus: {MEMORY_ROOT}", ""]
+    else:
+        lines += [f"Corpus: {MEMORY_ROOT} (missing: run sextant-init, or set ATLAS_MEMORY_ROOT "
+                  "or ATLAS_WORKSPACE_ROOT user-wide so hooks see the one you created)", ""]
 
     # --- Who you're talking to ---
     from atlas_plus.identity import resolve_identity_path

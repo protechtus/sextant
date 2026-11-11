@@ -210,7 +210,8 @@ not just keywords; without it, keyword search works exactly as before).
   `http://127.0.0.1:8766/?key=<your key>` once; that exchanges the key for a
   session cookie and the bare URL works from then on (without the cookie it
   answers 401, on purpose). Without the key the server refuses to start.
-- **Telegram control**: optional; `python -m pip install -e ".[telegram]"`
+- **Telegram control**: optional; `python -m pip install -e ".[telegram]"` from a clone,
+  `pip install "sextant-ai[telegram]"` for a package install
   (in a uv-made venv there is no pip -- use `uv pip install -e ".[telegram]"`), set
   `ATLAS_TELEGRAM_BOT_TOKEN` (from @BotFather) and `ATLAS_TELEGRAM_ALLOWED_USERS`
   (your numeric Telegram user id, from @userinfobot; the bot refuses to run
@@ -359,6 +360,14 @@ venv's python by absolute path, and the update below reuses that venv
 reinstall is what makes any NEW `sextant-*` commands appear, so do not
 skip it. Local edits in the clone? `git stash` before pulling.
 
+After the reinstall, three short commands: `sextant-init` once more (it is
+idempotent and adds anything a newer build expects, for example the state-dir
+ownership marker that builds before 0.1.0 did not write and the uninstaller
+now requires); `sextant setup --client claude-code` to compare with your
+registration (unchanged unless you moved the venv); and
+`sextant verify --project upgrade-check` to prove the round-trip (it writes
+one dated fact under that project; `--skip-remember` only reads).
+
 Windows (PowerShell -- note `&&` does not work in PowerShell 5.1, hence
 separate lines):
 
@@ -413,8 +422,9 @@ Then restart whatever services you run. Docker users:
   `python3-venv`, use `python3 -m venv --without-pip .venv`, then bootstrap pip with
   `curl -sSL https://bootstrap.pypa.io/get-pip.py | .venv/bin/python`, or use
   `uv venv` (uv brings its own installer: `uv pip install -e .`).
-- **Scripting a health check?** `sextant-doctor --strict` exits 1 when any service it probes
-  is down or any check reports an error, and prints `strict: FAIL (...)` as its last line
+- **Scripting a health check?** `sextant-doctor --strict` exits 1 when a service you have
+  configured (a key or token set for it) is down, or any check reports an error, and prints
+  `strict: FAIL (...)` naming why as its last line
   (plain `sextant-doctor` is a report and always exits 0). On a machine that also runs
   another install, the probes see that install's services; the report says so.
 - **Two installs, one client.** `claude mcp add` registers the server under the name
