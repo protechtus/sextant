@@ -1,0 +1,31 @@
+name: Question
+description: How do I ..., or is this expected?
+labels: [question, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions live in Issues on purpose: one queue, searchable, and the
+        answer helps the next person. Check the README, docs/GETTING-STARTED.md
+        and docs/USAGE.md first; if the answer should have been there, say so
+        and it becomes a documentation fix.
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment (if relevant)
+      description: OS + Python version + which client (Claude Code, Claude Desktop, other MCP client)
+    validations:
+      required: false
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you already tried
+      description: Commands, docs you read, what happened.
+    validations:
+      required: false

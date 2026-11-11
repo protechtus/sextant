@@ -1,0 +1,8 @@
+# sdist contents beyond the package (wheel is unaffected). The agent runbook asks a fresh
+# install to run scripts/mcp_roundtrip.py, so the sdist must carry it (2026-11-09).
+include CHANGELOG.md
+include scripts/mcp_roundtrip.py
+include constraints.txt
+recursive-include deploy *.json
+recursive-include docs *.md
+global-exclude *.pyc

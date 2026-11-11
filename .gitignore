@@ -1,0 +1,40 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+.venv311/
+.atlas/
+.tmp/
+.tmp_*
+*.egg-info/
+build/
+dist/
+node_modules/
+.DS_Store
+Thumbs.db
+schtasks
+versions/
+# Filled-in secrets -- never commit (use atlas-env.local.ps1 for secrets)
+deploy/atlas-env.local.ps1
+deploy/.env
+
+# Test scratch output (transient pytest redirects)
+test_output.txt
+test_errors.txt
+.venv.broken-*/
+
+# Docker compose secrets (HOWTO-docker writes tokens here)
+.env
+
+# scheduled-task run logs (run-market-watch.ps1)
+deploy/logs/
+
+# private scrub pairs and any other identifier-bearing local config
+*.local.json
+
+# A corpus kept inside the clone (AGENT-INSTALL step 4, ATLAS_MEMORY_ROOT=<clone>/memory):
+# the human's notes and transcripts must never be one `git add -A` from a commit.
+/memory/
+/state/
+/.memory/

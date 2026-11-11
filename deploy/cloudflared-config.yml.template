@@ -1,0 +1,31 @@
+# Cloudflared config template -- moves the tunnel OFF the plaintext --token on
+# the service command line (audit finding H2/R2) and onto a credentials-file.
+#
+# Fill in the two <PLACEHOLDERS> and save as (no .template):
+#   Windows: C:\Users\<you>\.cloudflared\config.yml
+#   Linux/macOS: ~/.cloudflared/config.yml
+# then point your cloudflared service/daemon at it: install with
+#   cloudflared service install        (it picks up config.yml automatically)
+# or run in the foreground with
+#   cloudflared tunnel run <TUNNEL_NAME>
+# and confirm the connector no longer passes --token on its command line.
+#
+# How to get the values (Cloudflare dashboard, one time):
+#   Zero Trust -> Networks -> Tunnels -> your Atlas tunnel.
+#   The tunnel UUID is shown there. The credentials JSON is what you downloaded
+#   when the tunnel was created (AccountTag/TunnelID/TunnelSecret). If you no
+#   longer have it, rotate: delete + recreate the tunnel, or use
+#   `cloudflared tunnel token --cred-file <path> <TUNNEL_NAME>` to write a fresh
+#   credentials file. Rotating the connector is exactly the point of H2.
+
+tunnel: <TUNNEL_UUID>
+credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL_UUID>.json
+
+# Only ONE service is exposed: the MCP server on loopback. Do NOT add routes for
+# Brain (8767) or Web (8766) -- Brain can execute tools and must never be
+# internet-reachable (audit section 5).
+ingress:
+  - hostname: atlas-mcp.<YOUR_DOMAIN>
+    service: http://127.0.0.1:8765
+  # Everything else is refused at the connector.
+  - service: http_status:404

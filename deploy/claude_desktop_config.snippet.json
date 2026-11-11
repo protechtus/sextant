@@ -1,0 +1,17 @@
+{
+  "_note": "Merge the mcpServers block into claude_desktop_config.json, replacing every <PLACEHOLDER>. The command below is the Linux/macOS venv python; on WINDOWS use <ATLAS_PLUS_DIR>/.venv/Scripts/python.exe instead. EASIER: `sextant setup` prints this block already filled in for your install (interpreter path, JSON escaping, ATLAS_* variables); a pipx/uv-tool install has no deploy/ folder and uses that command instead.",
+  "mcpServers": {
+    "sextant": {
+      "command": "<ATLAS_PLUS_DIR>/.venv/bin/python",
+      "args": [
+        "-m",
+        "atlas_plus.mcp.memory_server.server",
+        "--stdio"
+      ],
+      "env": {
+        "ATLAS_MEMORY_ROOT": "<ATLAS_MEMORY_ROOT>",
+        "ATLAS_STATE_DIR": "<ATLAS_STATE_DIR>"
+      }
+    }
+  }
+}

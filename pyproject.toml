@@ -1,0 +1,134 @@
+[project]
+name = "sextant-ai"
+version = "0.1.0"
+description = "Sextant: self-hosted AI memory and orchestration -- MCP memory server, temporal knowledge graph, transcript capture, local Brain task queue"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "protechtus" }]
+maintainers = [{ name = "protechtus" }]
+requires-python = ">=3.11"
+keywords = ["mcp", "memory", "ai-agents", "knowledge-graph", "self-hosted", "claude", "llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "fastapi>=0.115.0",
+  # Security floors (2026-10-05 private-env audit): fastapi's range alone
+  # permits starlette/python-multipart versions with known CVEs on the
+  # network surfaces this engine exposes. Floors = the lowest fixed
+  # releases (starlette PYSEC-2026-248/249 et al.; multipart
+  # PYSEC-2026-3036/3040). Declared directly on purpose.
+  "starlette>=1.3.1",
+  "python-multipart>=0.0.31",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic>=2.10.0",
+  "httpx>=0.28.0",
+  "typer>=0.12.5",
+  "rich>=13.9.0",
+  "watchdog>=4.0.0",
+  "aiosqlite>=0.20.0",
+  "apscheduler>=3.10.4",
+  "jinja2>=3.1.4",
+  "pyyaml>=6.0.2",
+  "mcp>=1.28.1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+]
+summarizer = [
+  "anthropic>=0.40.0",
+]
+telegram = [
+  "python-telegram-bot>=21.0",
+]
+
+[project.scripts]
+atlas-plus = "atlas_plus.cli:app"
+sextant = "atlas_plus.cli:app"
+atlas-init = "atlas_plus.init_cmd:main"
+sextant-init = "atlas_plus.init_cmd:main"
+atlas-transcripts = "atlas_plus.transcripts.cli:app"
+sextant-transcripts = "atlas_plus.transcripts.cli:app"
+atlas-memory-mcp = "atlas_plus.mcp.memory_server.server:main"
+sextant-mcp = "atlas_plus.mcp.memory_server.server:main"
+atlas-fts-rebuild = "atlas_plus.mcp.memory_server.fts:main"
+atlas-backup = "atlas_plus.backup:app"
+sextant-backup = "atlas_plus.backup:app"
+atlas-summarize-session = "atlas_plus.summarizer.cli:app"
+atlas-review-memory = "atlas_plus.curation.cli:app"
+atlas-tickets = "atlas_plus.tickets.cli:app"
+atlas-telegram-bot = "atlas_plus.telegram.bot:main"
+atlas-job-poller = "atlas_plus.telegram.job_poller:main"
+atlas-ntfy-listener = "atlas_plus.ntfy.inbound:main"
+atlas-web-ui = "atlas_plus.web.app:main"
+sextant-web = "atlas_plus.web.app:main"
+atlas-session-start = "atlas_plus.hooks.session_start:main"
+atlas-pre-compact = "atlas_plus.hooks.pre_compact:main"
+atlas-prime = "atlas_plus.hooks.prime:main"
+atlas-suggest-facts = "atlas_plus.curation.suggest_facts:main"
+atlas-temporal = "atlas_plus.temporal_graph.cli:main"
+atlas-contradiction-check = "atlas_plus.curation.nightly_contradiction_check:main"
+atlas-reflexion-loop = "atlas_plus.curation.reflexion_loop:main"
+atlas-weekly-synthesis = "atlas_plus.curation.weekly_synthesis:main"
+atlas-dream = "atlas_plus.curation.dream_mode:main"
+sextant-dream = "atlas_plus.curation.dream_mode:main"
+atlas-brain = "atlas_plus.brain.server:main"
+sextant-brain = "atlas_plus.brain.server:main"
+atlas-brain-chat = "atlas_plus.brain.cli:main"
+atlas-brain-worker = "atlas_plus.brain.worker:main"
+atlas-doctor = "atlas_plus.doctor.cli:main"
+sextant-doctor = "atlas_plus.doctor.cli:main"
+atlas-db-backup = "atlas_plus.db_backup.cli:main"
+atlas-rederive = "atlas_plus.curation.cli:app"
+atlas-narrative = "atlas_plus.session_narrative:run_narrative"
+atlas-sprint-summary = "atlas_plus.sprint_summary:main"
+atlas-sync = "atlas_plus.sync.cli:main"
+sextant-sync = "atlas_plus.sync.cli:main"
+atlas-uninstall = "atlas_plus.uninstall_cmd:main"
+sextant-uninstall = "atlas_plus.uninstall_cmd:main"
+atlas-reset = "atlas_plus.reset_cmd:main"
+sextant-reset = "atlas_plus.reset_cmd:main"
+atlas-embed-index = "atlas_plus.mcp.memory_server.embeddings:main"
+sextant-embed-index = "atlas_plus.mcp.memory_server.embeddings:main"
+atlas-import = "atlas_plus.import_cmd:main"
+sextant-import = "atlas_plus.import_cmd:main"
+atlas-intake = "atlas_plus.intake.cli:main"
+sextant-intake = "atlas_plus.intake.cli:main"
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Non-Python files the installed package needs (wheel/sdist audit 2026-11-09).
+"atlas_plus.summarizer" = ["templates/*.j2"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "ollama: requires Ollama running locally with qwen2.5:7b pulled",
+  "claude: requires ANTHROPIC_API_KEY set",
+]
+
+[project.urls]
+Homepage = "https://github.com/protechtus/sextant"
+Repository = "https://github.com/protechtus/sextant"
+Issues = "https://github.com/protechtus/sextant/issues"
+Changelog = "https://github.com/protechtus/sextant/blob/main/CHANGELOG.md"

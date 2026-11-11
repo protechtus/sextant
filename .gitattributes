@@ -1,0 +1,13 @@
+# Normalize line endings on commit
+* text=auto
+
+# Keep PowerShell scripts with CRLF on Windows checkout
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.exe binary
+*.dll binary
+*.db  binary
+*.sqlite binary

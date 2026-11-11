@@ -1,0 +1,14 @@
+# gitleaks config for atlas-memory+ / Sextant.
+# Extends the default ruleset; allowlists only the redaction-engine tests,
+# which PLANT synthetic secrets on purpose to prove they get masked
+# (hunter2hunter2, s3cr3t-tok-..., etc.). Verified synthetic 2026-07-05.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Redaction tests plant fake secrets to test the redactor"
+paths = [
+    '''tests/test_redaction\.py''',
+    '''tests/test_worker_redaction\.py''',
+]

@@ -1,0 +1,30 @@
+name: Bug report
+description: Something broke or behaved wrong
+labels: [bug, needs-triage]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: |
+        1. Ran `sextant-init`
+        2. Expected ...
+        3. Got ...
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS + Python version (e.g. "Ubuntu 24.04, Python 3.11")
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: sextant-doctor output (if the install works at all)
+      description: Paste the relevant lines; redact anything personal.
+      render: text
+    validations:
+      required: false

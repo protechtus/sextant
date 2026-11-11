@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/protechtus/sextant/security/advisories/new
+    about: Never open a public issue for a security problem. Use private vulnerability reporting; see SECURITY.md for scope.
+  - name: Release notes by email
+    url: https://usesextant.com/#h-signup
+    about: Occasional notes on releases and what broke. Announcements only, not a support channel.

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sextant Clip settings</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; color: #e2e8f0; background: #0f172a; }
+    label { display: block; margin-top: 1rem; font-size: 0.85rem; color: #94a3b8; }
+    input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; box-sizing: border-box; }
+    button { margin-top: 1.25rem; padding: 0.5rem 1.25rem; background: #0891b2; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+    #status { margin-left: 0.75rem; font-size: 0.85rem; color: #4ade80; }
+    p.hint { font-size: 0.8rem; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h2>Sextant Clip</h2>
+  <p class="hint">Everything stays on your machine: the extension only talks to
+  the endpoint below. The key is your <code>ATLAS_WEB_API_KEY</code>.</p>
+  <label>Inbox endpoint
+    <input id="endpoint" placeholder="http://127.0.0.1:8766/api/inbox/conversation">
+  </label>
+  <label>API key
+    <input id="apiKey" type="password" placeholder="your ATLAS_WEB_API_KEY">
+  </label>
+  <button id="save">Save</button><span id="status"></span>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+"""P2-T6: Render and write session log + updates.txt with version-before-edit."""
+
+from __future__ import annotations
+
+import os
+import shutil
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from atlas_plus.autonomous import is_session_autonomous
+from atlas_plus import paths as atlas_paths
+
+MEMORY_SESSIONS_DIR = atlas_paths.memory_root() / "sessions"
+UPDATES_TXT = atlas_paths.updates_file()
+VERSIONS_DIR = atlas_paths.memory_root() / "versions" / "sessions"
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """tmp-and-replace with fsync: a crash never leaves a truncated file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _version_file(path: Path) -> Path | None:
+    """Copy path to versions/<name>_YYYY-MM-DD_vN.ext. Returns version path."""
+    if not path.exists():
+        return None
+    date_str = date.today().isoformat()
+    stem = path.stem
+    suffix = path.suffix
+    # Session logs version into the corpus; the updates file versions BESIDE
+    # itself (the state dir by default) -- never into ~/versions.
+    dest_dir = VERSIONS_DIR if path.is_relative_to(MEMORY_SESSIONS_DIR) else path.parent / "versions"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        dest = dest_dir / f"{stem}_{date_str}_v{n}{suffix}"
+        if not dest.exists():
+            break
+        n += 1
+    shutil.copy2(path, dest)
+    return dest
+
+
+def write_outputs(
+    session_log_text: str,
+    updates_text: str,
+    date: str,
+    dry_run: bool = False,
+) -> dict[str, str]:
+    """Write session log and updates.txt. Returns paths written."""
+    if not dry_run and not is_session_autonomous():
+        raise RuntimeError(
+            "Session log write blocked. Set ATLAS_SESSION_AUTONOMOUS=on or ATLAS_AUTONOMOUS=on."
+        )
+
+    session_file = MEMORY_SESSIONS_DIR / f"{date}.md"
+    result: dict[str, str] = {}
+
+    if dry_run:
+        result["session_log"] = str(session_file)
+        result["updates_txt"] = str(UPDATES_TXT)
+        return result
+
+    # version-before-edit
+    _version_file(session_file)
+    _version_file(UPDATES_TXT)
+
+    # write session log (prepend if file exists, else create)
+    MEMORY_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    if session_file.exists():
+        existing = session_file.read_text(encoding="utf-8")
+        _atomic_write(session_file, session_log_text + "\n\n" + existing)
+    else:
+        _atomic_write(session_file, session_log_text)
+    result["session_log"] = str(session_file)
+
+    # prepend to updates.txt
+    if UPDATES_TXT.exists():
+        header_end = UPDATES_TXT.read_text(encoding="utf-8", errors="replace")
+        # find end of header block (first blank line after the header)
+        lines = header_end.splitlines(keepends=True)
+        insert_at = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith("===="):
+                insert_at = i + 1
+                break
+        new_content = (
+            "".join(lines[: insert_at])
+            + "\n"
+            + updates_text
+            + "".join(lines[insert_at:])
+        )
+        _atomic_write(UPDATES_TXT, new_content)
+    else:
+        _atomic_write(UPDATES_TXT, updates_text)
+    result["updates_txt"] = str(UPDATES_TXT)
+
+    return result

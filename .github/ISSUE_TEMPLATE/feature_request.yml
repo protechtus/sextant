@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose a change or an addition (issue first, then PR)
+labels: [enhancement, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sextant is a curated cut of a personal system, so not every good idea
+        fits. Small, focused additions are welcome and can go straight to a PR
+        after a quick nod here. Anything large or architectural is discussed in
+        this issue first so nobody spends a weekend on a direction the engine
+        will not take. Out of scope by design: required cloud dependencies,
+        a hosted or multi-tenant mode, and changes to the markdown corpus
+        format without an agreed migration.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that Sextant makes hard or impossible today?
+      placeholder: "When I ..., I have to ... because ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What would you like to happen instead? A command, a flag, a tool, a config key, a doc?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, or other designs you rejected and why.
+    validations:
+      required: false
+  - type: dropdown
+    id: size
+    attributes:
+      label: Rough size
+      description: Your best guess; it decides whether this needs discussion before code.
+      options:
+        - Small (one PR, one test, no new surface)
+        - Medium (new flag, tool, or config key)
+        - Large or architectural (touches the corpus format, shared state, or more than one subsystem)
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and ROADMAP.md and did not find this already.
+          required: true
+        - label: I read the ground rules in CONTRIBUTING.md.
+          required: true
+        - label: I am willing to implement this myself if it is accepted.
+          required: false

@@ -1,0 +1,84 @@
+# Sextant via Docker Compose. Quickstart:
+#
+#   python3 -c "import secrets; print(f'ATLAS_MCP_TOKEN={secrets.token_urlsafe(32)}'); print(f'ATLAS_WEB_API_KEY={secrets.token_urlsafe(32)}')" > .env
+#   (compose auto-loads .env; a variable exported in the shell overrides the file)
+#   docker compose up -d mcp web
+#   docker compose run --rm mcp sextant-init
+#
+# Full walkthrough (incl. sync pairing + optional local-LLM brain profile):
+# docs/HOWTO-docker.md. Ports bind to 127.0.0.1 on the HOST by default --
+# remote exposure stays a deliberate ingress choice (see HOWTO-self-hosting).
+
+x-sextant: &sextant
+  build: .
+  image: sextant:latest
+  restart: unless-stopped
+  volumes:
+    - sextant-data:/data
+  environment: &sextant-env
+    ATLAS_MCP_TOKEN: ${ATLAS_MCP_TOKEN:?set ATLAS_MCP_TOKEN in the environment}
+    ATLAS_WEB_API_KEY: ${ATLAS_WEB_API_KEY:?set ATLAS_WEB_API_KEY in the environment}
+    ATLAS_BRAIN_API_KEY: ${ATLAS_BRAIN_API_KEY:-}
+
+services:
+  mcp:
+    <<: *sextant
+    command: sextant-mcp
+    environment:
+      <<: *sextant-env
+      ATLAS_MCP_HOST: 0.0.0.0
+      HEALTH_PORT: "8765"
+    ports:
+      - "127.0.0.1:8765:8765"
+
+  web:
+    <<: *sextant
+    command: sextant-web
+    environment:
+      <<: *sextant-env
+      ATLAS_WEB_HOST: 0.0.0.0
+      HEALTH_PORT: "8766"
+      ATLAS_BRAIN_URL: http://brain:8767   # the dashboard's Brain rows (profile brain)
+    ports:
+      - "127.0.0.1:8766:8766"
+
+  sync:
+    <<: *sextant
+    # Pair the first device BEFORE starting sync (its safety guard refuses a
+    # non-loopback bind with an empty device registry):
+    #   docker compose run --rm sync sextant-sync pair laptop
+    command: sextant-sync serve --host 0.0.0.0
+    environment:
+      <<: *sextant-env
+      HEALTH_PORT: "8768"
+      HEALTH_PATH: /sync/v1/health
+    ports:
+      - "127.0.0.1:8768:8768"
+    profiles: ["sync"]
+
+  # Optional local-LLM layer: `docker compose --profile brain up -d`
+  # (needs ATLAS_BRAIN_API_KEY in the environment; the brain refuses to start without it)
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    profiles: ["brain"]
+
+  brain:
+    <<: *sextant
+    command: sextant-brain
+    environment:
+      <<: *sextant-env
+      ATLAS_BRAIN_HOST: 0.0.0.0
+      ATLAS_BRAIN_OLLAMA_URL: http://ollama:11434
+      HEALTH_PORT: "8767"
+    ports:
+      - "127.0.0.1:8767:8767"
+    depends_on:
+      - ollama
+    profiles: ["brain"]
+
+volumes:
+  sextant-data:
+  ollama-models:

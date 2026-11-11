@@ -1,0 +1,3 @@
+## {{ date }} - {{ summary.title }}
+
+{{ summary.completed | join('. ') }}{% if summary.pending %} Pending: {{ summary.pending | join('; ') }}.{% endif %}

@@ -1,0 +1,10 @@
+--------------------------------------------------------------------------------
+{{ date }} | {{ summary.title }}
+--------------------------------------------------------------------------------
+{% if summary.completed %}COMPLETED:
+{% for item in summary.completed %}  - {{ item }}
+{% endfor %}{% endif %}{% if summary.files_touched %}FILES:
+{% for f in summary.files_touched %}  {{ f }}
+{% endfor %}{% endif %}{% if summary.pending %}NEXT:
+{% for item in summary.pending %}  - {{ item }}
+{% endfor %}{% endif %}
