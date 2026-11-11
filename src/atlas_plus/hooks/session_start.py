@@ -87,6 +87,9 @@ def _git_summary(project_dir: Path) -> str:
             ["git", "log", "--oneline", "-3", "--no-decorate"], project_dir).strip()
         return f"branch: {branch} | {dirty}\nrecent commits:\n" + "\n".join(f"  {l}" for l in log.splitlines())
     except Exception:
+        import shutil as _sh
+        if _sh.which("git"):
+            return "(git repository without a commit yet, or git error)"
         return "(git unavailable)"
 
 

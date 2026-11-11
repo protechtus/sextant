@@ -6,7 +6,7 @@ order, run the verify command after each one, and stop to ask the human at every
 marked **ASK**. Do not skip verifies. Do not install system packages or change files outside
 the install directory without asking. Do not set `ATLAS_AUTONOMOUS`, do not edit the human's
 hooks or settings files without an explicit yes, and never `pip install sextant` (an unrelated
-package). The whole run takes 5 to 10 minutes.
+package). The whole run takes 5 to 10 minutes, plus 2 to 4 minutes if you run the test suite.
 
 Already installed as a package (`pipx install sextant-ai`, `uv tool install sextant-ai`, pip
 from PyPI, or `pip install "sextant-ai[telegram,summarizer] @ git+https://github.com/protechtus/sextant.git"`),
@@ -114,8 +114,9 @@ Use the venv's Python explicitly (do not rely on `activate`; it is shell-specifi
 <venv-python> -m pip install -e ".[dev,telegram,summarizer]"
 ```
 
-Verify: `<venv-python> -m pip show sextant-ai` prints the version, and
-`<venv-python> -m atlas_plus --version` prints it too.
+Verify: `<venv-python> -m atlas_plus --version` prints the version (`<venv-python> -m pip show
+sextant-ai` does too, except in a `uv venv` made without `--seed`, which has no pip: use
+`uv pip show sextant-ai` there).
 
 Known failure: a dependency resolver conflict. Retry with the pinned set:
 `<venv-python> -m pip install -e ".[dev,telegram,summarizer]" -c constraints.txt`.
@@ -143,7 +144,11 @@ Rules that are easy to miss:
 - If you run one shell per command (most agent harnesses do), write the variables to a file
   once (`env.sh` with `export` lines, or `env.ps1` with `$env:` lines) and source or
   dot-source it at the start of every later command. The verify in step 6 fails against the
-  wrong corpus otherwise.
+  wrong corpus otherwise. Save `env.ps1` as UTF-8 WITH a byte-order mark when a path has
+  non-ASCII letters: PowerShell 5.1 reads a BOM-less file as ANSI and silently mangles the
+  path, and init would then scaffold a second corpus under a misspelled folder.
+- Run `sextant verify` only after init. Before it, the server still creates `.atlas/logs` and
+  `search.sqlite` and the round-trip fails; init recognises those as its own and proceeds.
 
 Then:
 
@@ -170,11 +175,14 @@ registration, with the step 4 variables still set:
 It prints, filled in for this interpreter and this environment: the one-line Claude Code
 command (paths quoted, every `ATLAS_*` path variable you set baked in as `-e`), the JSON
 `mcpServers` entry for Claude Desktop, Cursor and other clients, and the optional hook
-entries. `--json` gives the same as data; `--client claude-code` prints only the command.
+entries. `--json` gives the same as data; `--client claude-code` prints only the command, and
+`--client claude-desktop`, `cursor`, `json` or `hooks` one block each. On Windows, when a path
+has non-ASCII letters, capture the text from a UTF-8 console or take the JSON forms (the
+human-readable text is corrupted by a cp437/cp850 console).
 The `-e` variables matter: a client launched from the Start menu or the Dock has no shell
 and the server would otherwise serve `~/.memory`.
 
-**Claude Code**: run the printed `claude mcp add -s user sextant ...` line as-is (it does
+**Claude Code**: run the printed `claude mcp add -s user sextant ...` line as-is in PowerShell or Git Bash (the Windows form is single-quoted, literal in both; cmd.exe takes the JSON block instead) (it does
 not depend on the current directory). Writing it by hand instead: the interpreter is the
 venv's Python, quoted (a path with a space breaks without quotes), and each variable goes
 **after the server name** as `-e "NAME=value"`, quoted the same way; `-e` before the name
@@ -204,7 +212,7 @@ servers already there. The same block, with placeholders instead of real paths, 
 editing that file; show the diff.
 
 **Cursor and other MCP clients**: same command and arguments as above, in the client's MCP
-settings. The server name `sextant` must be unique per machine; a second install needs a
+settings (Cursor: `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project). The server name `sextant` must be unique per machine; a second install needs a
 different name.
 
 **Session-start priming for Claude Code** (optional; only after the human says yes):
@@ -219,10 +227,11 @@ nothing until the human sets `ATLAS_AUTONOMOUS=on`.
 Hooks are separate processes: the `env` block of the MCP registration applies to the MCP
 server only, not to them. If you set `ATLAS_MEMORY_ROOT` / `ATLAS_STATE_DIR` /
 `ATLAS_PROJECTS_ROOT` in the registration rather than in the user's environment, the hook
-would read a different corpus. Either set the same variables user-wide (`setx` on Windows,
-the shell profile on POSIX) or put them on the hook command itself
-(`ATLAS_MEMORY_ROOT=/path python -m atlas_plus.hooks.session_start` on POSIX; a one-line
-`.cmd` wrapper on Windows). The round-trip in step 6 plus a session-start run from a
+would read a different corpus. The hook block from `setup` therefore carries the same
+variables on each command (`set "NAME=value" && ...` on Windows, where Claude Code runs hooks
+through cmd.exe; `NAME=value ...` on POSIX), so nothing user-wide is needed. Avoid `.cmd`
+wrappers (a `%` in a path must be doubled there) and treat `setx` as an ASK point (it changes
+the human's user environment). The round-trip in step 6 plus a session-start run from a
 project directory should show the same identity note from both.
 
 ## 6. Prove it works (the round-trip)
@@ -238,9 +247,15 @@ It starts the server over stdio, does the MCP handshake, and runs the three call
 printing each result as JSON and ending with `ROUND-TRIP: OK`. Paste that output into your
 report. Check the `memory_root` in the `memory_health` line: it must be the corpus from
 step 4, not a leftover `~/.memory`. (In a clone, `scripts/mcp_roundtrip.py` runs the same
-check. From Windows against a WSL install, add
-`--command "wsl -d <Distro> -- /home/<user>/<install>/.venv/bin/python"` to test the exact
-launcher the registration uses.)
+check.) From Windows against a WSL install, run the `Verify from Windows` line that
+`sextant setup` printed inside WSL: `wsl -d <Distro> -- env ATLAS_WORKSPACE_ROOT=<linux path>
+/home/<user>/<install>/.venv/bin/python -m atlas_plus verify` (no Windows Python needed). With
+a Windows Python, `scripts/mcp_roundtrip.py --env ATLAS_WORKSPACE_ROOT=<linux path>
+--command "wsl -d <Distro> -- /home/<user>/<install>/.venv/bin/python"` runs the exact
+launcher the registration uses: `--env` carries the registration's variables and adds them
+to WSLENV, as the `-e` flags do. Without `--env` the server inside WSL falls back to its own
+`~/.memory` and the round-trip proves the wrong corpus. An interpreter path with spaces goes
+in `--python`, or inside double quotes within `--command`.
 
 If the human prefers to see it through their connected client, do the same three calls there.
 Exact call shapes (parameter names matter):
@@ -271,7 +286,7 @@ package install those live at https://github.com/protechtus/sextant/tree/main/do
 | :- | :- | :- |
 | `Invalid environment variable format: sextant` from `claude mcp add` | `-e` placed before the server name | put the name first, then `-e KEY=VAL`, then `--` |
 | `Scope 'reference' requires a topic` | bare scope | use `reference:<topic>` |
-| Session start says "not in a known project directory" | the hook primes a project note only when the working directory is a project under `ATLAS_PROJECTS_ROOT` (default `~/projects`) | set `ATLAS_PROJECTS_ROOT`, or use `atlas-prime <task>` for task context |
+| Session start says "not in a known project directory" | the hook primes a project note only when the working directory is inside a git repository under `ATLAS_PROJECTS_ROOT` (default `~/projects`) | set `ATLAS_PROJECTS_ROOT`, or use `atlas-prime <task>` for task context |
 | HTTP server refuses to start | `sextant-mcp` over HTTP needs `ATLAS_MCP_TOKEN`; stdio mode does not | use stdio for clients; set the token only for HTTP |
 | Corpus "vanished" | `ATLAS_WORKSPACE_ROOT` was set after init | set it before init, or unset it |
 | `memory_health` says `ok` but its `memory_root` is `~/.memory`, not the chosen corpus | the `-e` variables never reached the server (GUI-launched client, or Windows to WSL without `WSLENV`) | re-register with the command `setup` prints |
@@ -279,9 +294,23 @@ package install those live at https://github.com/protechtus/sextant/tree/main/do
 | `venv` fails with ensurepip error (Debian/Ubuntu) | `python3-venv` not installed | ask, then `sudo apt-get install -y python3-venv`, or `--without-pip` |
 | Test suite: one cookie test fails on a fresh resolve | fixed in current main; older clones pin `-c constraints.txt` | pull, or install with the constraints file |
 
+## Updating an existing install
+
+Do not clone again. In the existing clone: `git pull` (it fast-forwards; with local edits,
+`git stash` first and `git stash pop` after), then the same `pip install -e` as step 3 with
+the same interpreter, then `<venv-python> -m atlas_plus.init_cmd` once (idempotent; it adds
+anything a newer build expects), `<venv-python> -m atlas_plus setup --client claude-code` to
+compare with the registration (unchanged unless the venv moved; to replace it,
+`claude mcp remove -s user sextant` first, since `add` refuses an existing name), and
+`<venv-python> -m atlas_plus verify --project upgrade-check`. The corpus is never touched by
+an update; verify the human's notes are byte-identical if they ask (hash the corpus before and
+after). A package install updates with `pip install -U sextant-ai` (or the `git+` form) and
+the same three commands. Details: docs/GETTING-STARTED.md, "Updating Sextant".
+
 ## Uninstall
 
-Run the report first; it lists exactly what exists and what still references the install:
+Run the report first; it lists exactly what exists and what still references the install
+(Claude Code's user config, including a `CLAUDE_CONFIG_DIR`, Claude Desktop's and Cursor's files):
 
 ```
 <venv-python> -m atlas_plus.uninstall_cmd

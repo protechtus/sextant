@@ -15,6 +15,9 @@ import os
 import typer
 
 from atlas_plus import __version__
+from atlas_plus._console import utf8_stdout_when_piped as _utf8_when_piped
+
+_utf8_when_piped()  # captured output keeps non-ASCII paths intact (AG1, pipeline sweep 2026-11-11)
 from atlas_plus import paths as atlas_paths
 
 app = typer.Typer(

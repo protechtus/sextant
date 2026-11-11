@@ -944,6 +944,31 @@ _ALERT_NTFY_URL = os.environ.get("ATLAS_NTFY_URL", "")
 _LOCKOUT_THRESHOLD = int(os.environ.get("ATLAS_MCP_LOCKOUT_THRESHOLD", "10"))
 _LOCKOUT_SECONDS = float(os.environ.get("ATLAS_MCP_LOCKOUT_SECONDS", "300"))
 _LOCKED_OUT: dict[str, float] = {}
+# Peers the operator owns (IPs or CIDRs, comma-separated): never locked out and their failures
+# are not counted, like loopback. A container published on the host's loopback sees every host
+# client as the Docker bridge gateway (172.17.0.1), so one client's stale token locked out the
+# operator's correct one for five minutes (AG4, pipeline sweep 2026-11-11).
+_TRUSTED_PEERS_RAW = os.environ.get("ATLAS_MCP_TRUSTED_PEERS", "")
+
+
+def _trusted_peer(peer: str) -> bool:
+    if not _TRUSTED_PEERS_RAW or not peer:
+        return False
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    for entry in _TRUSTED_PEERS_RAW.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 _LOOPBACK_PEERS = {"127.0.0.1", "::1", "localhost"}
@@ -1047,13 +1072,15 @@ def _make_auth_middleware(token: str):
             # 2026-11-10). Failures from a forwarded or non-loopback source still count.
             from atlas_plus.auth import LOOPBACK_PEERS as _LB, forwarded_ip as _fwd
             _peer = request.client.host if request.client else ""
-            _trusted_local = _peer in _LB and not _fwd(request.headers, _peer)
+            _trusted_local = (_peer in _LB or _trusted_peer(_peer)) and not _fwd(request.headers, _peer)
             remaining = 0.0 if _trusted_local else _lockout_remaining(ip)
             if remaining > 0:
                 # Brute-force cooldown: this IP tripped the lockout threshold. Block
                 # every request (even a now-correct token) until the window clears.
                 return Response(
-                    "Too many failed attempts. Try again later.",
+                    f"Too many failed attempts from this source. Try again in {int(remaining) + 1} s. "
+                    "Clients behind one NAT (Docker's bridge gateway included) share this counter; "
+                    "ATLAS_MCP_TRUSTED_PEERS=<ip or cidr> exempts a peer you own.",
                     status_code=429,
                     headers={"Retry-After": str(int(remaining) + 1)},
                 )
@@ -1071,6 +1098,10 @@ def _make_auth_middleware(token: str):
                     status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            # A correct token clears this source's failure history: an operator who fixed a
+            # client's header should not carry nine old failures into the next typo.
+            _AUTH_FAILURES.pop(ip, None)
+            _AUTH_ALERTED.discard(ip)
             return await call_next(request)
 
     return BearerAuthMiddleware

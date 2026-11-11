@@ -8,4 +8,20 @@ versioned per the workspace version-before-edit rule.
 See `README.md` and `docs/HOWTO-development.md` for the build map and rules.
 """
 
-__version__ = "0.1.0"
+
+def _installed_version() -> str:
+    """The version pip installed (sextant-ai publicly, atlas-plus privately), so an upgrade reports
+    itself instead of a constant (AG2, pipeline sweep 2026-11-11)."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        for dist in ("sextant-ai", "atlas-plus"):
+            try:
+                return version(dist)
+            except PackageNotFoundError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return "0.1.0"
+
+
+__version__ = _installed_version()

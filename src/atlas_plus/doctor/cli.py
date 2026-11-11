@@ -1315,6 +1315,30 @@ def _fmt_ok(v: bool) -> str:
     return "\033[32mon\033[0m" if v else "\033[31moff\033[0m"
 
 
+_ANSI_RE = None
+
+
+def _plain(text: str) -> str:
+    """The dashboard without colour codes."""
+    global _ANSI_RE
+    if _ANSI_RE is None:
+        import re
+        _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+    return _ANSI_RE.sub("", text)
+
+
+def _plain_if_piped(text: str) -> str:
+    """Colour only on a terminal; a captured report or NO_COLOR gets plain text (AG1 and AG2,
+    pipeline sweep 2026-11-11: agents saw raw escapes)."""
+    try:
+        tty = sys.stdout.isatty()
+    except Exception:  # noqa: BLE001
+        tty = False
+    if os.environ.get("NO_COLOR") or not tty:
+        return _plain(text)
+    return text
+
+
 def render_text(data: dict) -> str:
     """Format a collect() snapshot as a colour-coded ANSI text dashboard string."""
     # Brand-aware header: invoked as sextant-doctor (public alias), speak
@@ -2086,7 +2110,7 @@ def main() -> int:
         if args.json:
             print(json.dumps(data, indent=2))
         else:
-            print(render_text(data))
+            print(_plain_if_piped(render_text(data)))
         return data
 
     data = run_once()

@@ -56,7 +56,7 @@ registration reaches only the MCP server process, not the hooks.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ATLAS_MCP_HOST` / `ATLAS_MCP_PORT` | `127.0.0.1` / `8765` | MCP memory server (HTTP mode). |
+| `ATLAS_MCP_HOST` / `ATLAS_MCP_PORT` | `127.0.0.1` / `8765` | MCP memory server (HTTP mode). In a container set `ATLAS_MCP_HOST=0.0.0.0` and publish the port on the host's loopback only (`-p 127.0.0.1:8765:8765`); the default bind is unreachable through a port publish. |
 | `ATLAS_WEB_HOST` / `ATLAS_WEB_PORT` | `127.0.0.1` / `8766` | Web dashboard. |
 | `ATLAS_BRAIN_HOST` / `ATLAS_BRAIN_PORT` | `127.0.0.1` / `8767` | Brain task-queue API. |
 | `ATLAS_SYNC_HOST` / `ATLAS_SYNC_PORT` | `127.0.0.1` / `8768` | Device-sync hub. |
@@ -79,7 +79,10 @@ the README before exposing anything.
 | `ATLAS_SYNC_DEVICE_TOKEN` | -- | This device's token when talking to a sync hub. |
 | `ATLAS_BRAIN_RATE_LIMIT_RPM` | code default | Brain request rate limit. |
 | `ATLAS_FORWARDED_IP_HEADER` | `Cf-Connecting-Ip` | Header a loopback proxy uses to report the real client address for failed-auth throttling (then the last non-loopback hop of `X-Forwarded-For`); `none` ignores every forwarded header. See SECURITY.md, "Behind a reverse proxy". |
-| `ATLAS_MCP_LOCKOUT_THRESHOLD` / `ATLAS_MCP_LOCKOUT_SECONDS` / `ATLAS_MCP_ALERT_THRESHOLD` | code defaults | Failed-auth lockout and alerting on the MCP surface. |
+| `ATLAS_MCP_LOCKOUT_THRESHOLD` / `ATLAS_MCP_LOCKOUT_SECONDS` / `ATLAS_MCP_ALERT_THRESHOLD` | `10` / `300` / code default | Failed-auth lockout and alerting on the MCP surface: after the threshold of failures in the window a source gets 429 for the lockout period, correct token included. A correct token clears the source's failure count. |
+| `ATLAS_MCP_TRUSTED_PEERS` | unset | Comma-separated IPs or CIDRs treated like loopback by the lockout (never locked out, failures not counted). Every client behind one NAT shares one counter, and a container published on the host's loopback sees all host clients as the Docker bridge gateway (`172.17.0.1`): list that gateway when the port is published on `127.0.0.1` only. Never list a public range. |
+| `CLAUDE_CONFIG_DIR` | unset | Read only by the uninstall report, which lists the Claude Code config files that still reference the install; Claude Code itself honours it. |
+| `NO_COLOR` | unset | Any value makes `sextant doctor` print plain text; piped output is plain regardless. |
 
 ## Write consent (the two switches)
 

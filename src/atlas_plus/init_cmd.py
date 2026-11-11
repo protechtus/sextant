@@ -117,6 +117,8 @@ def run_init(dry_run: bool = False) -> dict:
 
 def main() -> None:
     """Entry point for atlas-init / sextant-init."""
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     parser = argparse.ArgumentParser(
         description="Create the memory corpus skeleton and state directory (first run).",
     )

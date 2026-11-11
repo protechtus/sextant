@@ -52,11 +52,27 @@ STATE_SIGNATURE = ("state.sqlite", "transcripts", "intake", "weekly-draft.md", "
                    "embeddings", "sync", "backups")
 
 
+# What the server itself creates on first contact, before init ever ran: `sextant verify` or an
+# MCP client connecting early leaves exactly these. A directory holding nothing else is Sextant's
+# own (AG1 and AG2, pipeline sweep 2026-11-11: init refused its own default directory after a
+# failed verify and sent the user to a nested state dir that nothing else knew about).
+RUNTIME_ARTIFACTS = ("logs", "search.sqlite", "search.sqlite-journal", "search.sqlite-wal",
+                     "search.sqlite-shm", "state.sqlite-journal", "state.sqlite-wal", "state.sqlite-shm",
+                     "mcp-search.ndjson", "activity.ndjson", STATE_MARKER)
+
+
 def looks_like_sextant_state(path: Path) -> bool:
-    """Marker present, or the directory already holds Sextant-only entries (pre-marker installs)."""
+    """Marker present, the directory already holds Sextant-only entries (pre-marker installs), or
+    it holds nothing but the server's own runtime artifacts (a verify that ran before init)."""
     if (path / STATE_MARKER).exists():
         return True
-    return any((path / name).exists() for name in STATE_SIGNATURE)
+    if any((path / name).exists() for name in STATE_SIGNATURE):
+        return True
+    try:
+        names = [p.name for p in path.iterdir()]
+    except OSError:
+        return False
+    return bool(names) and all(n in RUNTIME_ARTIFACTS for n in names)
 
 # Non-derived subtrees the report names so nobody mistakes the state dir for a cache.
 NON_DERIVED_STATE = (
@@ -156,7 +172,20 @@ def _client_config_references() -> list[str]:
         home / ".claude" / "settings.json",
         Path.cwd() / ".mcp.json",
         Path.cwd() / ".claude" / "settings.json",
+        home / ".cursor" / "mcp.json",
     ]
+    # Claude Code honours CLAUDE_CONFIG_DIR; Claude Desktop keeps its own file (AG2, pipeline
+    # sweep 2026-11-11: both were invisible to this report).
+    cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if cfg_dir:
+        candidates += [Path(cfg_dir) / ".claude.json", Path(cfg_dir) / "settings.json"]
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "").strip()
+        if appdata:
+            candidates.append(Path(appdata) / "Claude" / "claude_desktop_config.json")
+    else:
+        candidates += [home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+                       home / ".config" / "Claude" / "claude_desktop_config.json"]
     # Only count a config that points at THIS install (its venv or its source tree), not any
     # Sextant mention: a second install on the same machine must not be told to unhook the
     # first one (agent-runbook rerun 2026-11-09).
@@ -164,7 +193,9 @@ def _client_config_references() -> list[str]:
     markers = {str(Path(_sys.prefix).resolve()), str(Path(__file__).resolve().parents[1])}
 
     def _norm(p: str) -> str:
-        return p.replace("\\", "/").lower()
+        # JSON stores a Windows path with doubled backslashes: fold the escaped form first, or no
+        # registration in a JSON file ever matched on Windows (pipeline sweep 2026-11-11).
+        return p.replace("\\\\", "/").replace("\\", "/").lower()
 
     norm_markers = [_norm(m) for m in markers]
     for cfg in candidates:
@@ -504,7 +535,9 @@ def main() -> None:
     do_state = args.state or args.all
     do_corpus = args.corpus or args.all
     if not do_state and not do_corpus:
-        print("\nReport only. Nothing was changed. (--state / --corpus / --all to remove.)")
+        print("\nReport only. Nothing was changed. To remove: --state, --corpus or --all, each with --yes;\n"
+              "the corpus also needs --confirm-path <corpus path> and the state dir --confirm-state-path\n"
+              "<state path> typed back exactly (see --help). Unhook the client first.")
         return
 
     if do_corpus and c["exists"]:

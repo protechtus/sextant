@@ -5,6 +5,7 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:   # a run GitHub never queues (2026-11-11, run 43097835166) can be retriggered by hand
 
 jobs:
   test:

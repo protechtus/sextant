@@ -21,6 +21,14 @@ project:<name>; `--skip-remember` only searches and reports the hit count withou
 ``--command`` runs the server through any launcher instead of ``<python> -m ...``, which is
 how a Windows client reaches a WSL install (``--command "wsl -d Ubuntu --
 /home/me/sextant/.venv/bin/python"``): the module and ``--stdio`` are appended.
+
+``--url http://host:8765/mcp --token <token>`` proves an HTTP install from the client machine
+(the same three calls over Streamable HTTP; nothing is started here).
+
+``--env NAME=VALUE`` (repeatable) gives the server the variables the registration bakes in
+with ``-e``; with a ``wsl`` launcher the names are also added to WSLENV so they cross into the
+distro. Without it a WSL server started from Windows reads the distro's ``~/.memory`` and the
+round-trip proves the wrong corpus (AG3, pipeline sweep 2026-11-11).
 """
 from __future__ import annotations
 
@@ -76,6 +84,166 @@ def server_command(python: str | None = None, command: str | None = None) -> lis
     return [python or sys.executable, "-m", SERVER_MODULE, "--stdio"]
 
 
+def _is_wsl_launcher(exe: str) -> bool:
+    return Path(exe).name.lower() in ("wsl", "wsl.exe")
+
+
+def _wslenv_with(existing: str, names: list[str]) -> str:
+    """WSLENV with ``names`` appended: empty entries dropped (a trailing colon is common),
+    nothing listed twice (an entry may carry a flag suffix such as ``NAME/u``)."""
+    parts = [p for p in existing.split(":") if p]
+    present = {p.split("/", 1)[0] for p in parts}
+    for n in names:
+        if n not in present:
+            parts.append(n)
+            present.add(n)
+    return ":".join(parts)
+
+
+def _decode_log(data: bytes) -> str:
+    """wsl.exe writes its own errors as UTF-16; everything else is UTF-8."""
+    if b"\x00" in data[:200]:
+        return data.decode("utf-16-le", errors="replace")
+    return data.decode("utf-8", errors="replace")
+
+
+def _sse_payloads(content_type: str, body: str) -> list[str]:
+    """The JSON texts in an HTTP reply: one per `data:` line of an event stream, else the body."""
+    if "text/event-stream" in (content_type or ""):
+        return [ln[5:].strip() for ln in body.splitlines() if ln.startswith("data:")]
+    return [body] if body.strip() else []
+
+
+def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
+    """A JSON-RPC sender over Streamable HTTP (one POST per message, the session id echoed),
+    so an HTTP install can be proven from the client machine (AG4, pipeline sweep 2026-11-11)."""
+    import urllib.error
+    import urllib.request
+    state = {"next_id": 0, "session": None}
+
+    def _headers(extra: dict | None = None) -> dict:
+        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        if token:
+            h["Authorization"] = f"Bearer {token}"
+        if state["session"]:
+            h["mcp-session-id"] = state["session"]
+        h.update(extra or {})
+        return h
+
+    def rpc(method: str, params: dict | None = None, notify: bool = False) -> dict | None:
+        msg: dict = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
+        if not notify:
+            state["next_id"] += 1
+            msg["id"] = state["next_id"]
+        req = urllib.request.Request(url, data=json.dumps(msg).encode("utf-8"), headers=_headers(),
+                                     method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                sid = resp.headers.get("mcp-session-id")
+                if sid:
+                    state["session"] = sid
+                ctype = resp.headers.get("Content-Type", "")
+                body = resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:300]
+            hint = ""
+            if exc.code == 401:
+                hint = " (token missing or wrong: --token or ATLAS_MCP_TOKEN)"
+            elif exc.code == 429:
+                hint = " (this source is locked out after failed attempts; wait, or see ATLAS_MCP_TRUSTED_PEERS)"
+            elif exc.code == 404:
+                hint = " (the MCP path is /mcp)"
+            raise RuntimeError(f"{method}: HTTP {exc.code}{hint}: {detail}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise RuntimeError(f"{method}: could not reach {url}: {exc} (in a container the server must "
+                               f"bind ATLAS_MCP_HOST=0.0.0.0; it takes about 8 s to start)") from exc
+        if notify:
+            return None
+        for text in _sse_payloads(ctype, body):
+            try:
+                reply = json.loads(text)
+            except json.JSONDecodeError:
+                skipped.append(text[:200])
+                continue
+            if (isinstance(reply, dict) and reply.get("id") == state["next_id"] and "method" not in reply
+                    and ("result" in reply or "error" in reply)):
+                return reply
+            skipped.append(text[:200])
+        raise RuntimeError(f"no reply to {method} in the HTTP response ({ctype!r}); skipped: {skipped[-3:]}")
+
+    def close() -> None:
+        if not state["session"]:
+            return
+        try:
+            req = urllib.request.Request(url, headers=_headers(), method="DELETE")
+            urllib.request.urlopen(req, timeout=10).close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return rpc, close
+
+
+def _run_calls(rpc, args, fact: str, where: dict) -> bool:
+    """The handshake and the three calls; prints one JSON line per step; True when all passed."""
+    ok = True
+
+    def call(tool: str, arguments: dict) -> dict:
+        reply = rpc("tools/call", {"name": tool, "arguments": arguments})
+        if reply is None or "error" in reply:
+            raise RuntimeError(f"{tool} failed: {json.dumps(reply)[:600]}")
+        content = reply["result"].get("content", [])
+        text = next((c.get("text") for c in content if c.get("type") == "text"), None)
+        try:
+            return json.loads(text) if text else reply["result"]
+        except json.JSONDecodeError:
+            return {"raw": text}
+
+    init = rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                              "clientInfo": {"name": "sextant-verify", "version": "1"}})
+    rpc("notifications/initialized", notify=True)
+    server_name = (init or {}).get("result", {}).get("serverInfo", {}).get("name", "?")
+    tools = rpc("tools/list") or {}
+    names = [t["name"] for t in tools.get("result", {}).get("tools", [])]
+    print(json.dumps({"step": "handshake", "server": server_name, "tool_count": len(names), **where}))
+
+    health = call("memory_health", {})
+    print(json.dumps({"step": "memory_health", "result": health}))
+    if health.get("status") != "ok":
+        ok = False
+
+    written_file = None
+    if not args.skip_remember:
+        written = call("memory_remember_tool", {"scope": f"project:{args.project}", "fact": fact})
+        print(json.dumps({"step": "memory_remember_tool", "result": written}))
+        if written.get("ok") is False or written.get("error"):
+            ok = False
+        written_file = written.get("file")
+    if args.pause:
+        import time
+        time.sleep(args.pause)
+
+    found = call("memory_search_tool", {"query": fact.split(" on ")[0], "limit": 10})
+    hits = found.get("results") or found.get("hits") or []
+    # The proof is that THIS write came back: a hit whose path is the file the write named
+    # (an older identical fact from a previous run must not pass for it).
+    this_hit = None
+    if written_file:
+        want = str(written_file).replace("\\", "/").lower()
+        for h in hits:
+            p = str(h.get("path", "")).replace("\\", "/").lower()
+            if p and want.endswith(p):
+                this_hit = h
+                break
+    print(json.dumps({"step": "memory_search_tool", "confidence": found.get("confidence"),
+                      "hits": len(hits), "found_this_write": bool(this_hit) if written_file else None,
+                      "first": (this_hit or (hits[0] if hits else None))}))
+    if written_file and not this_hit:
+        ok = False
+    return ok
+
+
 def _timeout_seconds() -> int:
     raw = os.environ.get("ATLAS_VERIFY_TIMEOUT", "").strip()
     try:
@@ -100,6 +268,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--command", default=None,
                     help='launcher that reaches the interpreter, e.g. "wsl -d Ubuntu -- '
                          '/home/me/sextant/.venv/bin/python" (the module is appended)')
+    ap.add_argument("--url", default=None,
+                    help="prove an HTTP install instead: the MCP endpoint, e.g. http://host:8765/mcp "
+                         "(no server is started here)")
+    ap.add_argument("--token", default=None,
+                    help="bearer token for --url (default: ATLAS_MCP_TOKEN from the environment)")
+    ap.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
+                    help="variable for the server, repeatable (the registration's -e values); with a "
+                         "wsl launcher the names are added to WSLENV so they cross into the distro")
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds to wait between calls (diagnostics)")
     ap.add_argument("--skip-remember", action="store_true",
@@ -107,12 +283,38 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     fact = args.fact or f"Sextant installed by an agent on {date.today().isoformat()}."
 
+    if args.url:
+        skipped_http: list[str] = []
+        token = args.token if args.token is not None else os.environ.get("ATLAS_MCP_TOKEN", "")
+        rpc_http, close_http = _http_rpc(args.url, token, _timeout_seconds(), skipped_http)
+        try:
+            ok = _run_calls(rpc_http, args, fact, {"url": args.url, "auth": bool(token)})
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"step": "error", "error": str(exc)[:800]}))
+            ok = False
+        finally:
+            close_http()
+        print("ROUND-TRIP: " + ("OK" if ok else "FAILED"))
+        return 0 if ok else 1
+
     try:
         cmd = server_command(args.python, args.command)
     except ValueError as exc:
         print(json.dumps({"step": "start", "error": str(exc)}))
         print("ROUND-TRIP: FAILED")
         return 1
+    env = os.environ.copy()
+    extra: dict[str, str] = {}
+    for item in args.env:
+        if "=" not in item:
+            print(json.dumps({"step": "start", "error": f"--env needs NAME=VALUE, got {item!r}"}))
+            print("ROUND-TRIP: FAILED")
+            return 1
+        k, v = item.split("=", 1)
+        extra[k] = v
+    env.update(extra)
+    if extra and _is_wsl_launcher(cmd[0]):
+        env["WSLENV"] = _wslenv_with(env.get("WSLENV", ""), list(extra))
 
     # Server logs go to a file, never a pipe: a full pipe buffer would deadlock the server.
     errlog = tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".log", delete=False)
@@ -130,10 +332,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog,
                                 text=True, encoding="utf-8", errors="replace", bufsize=1,
-                                env=os.environ.copy())
+                                env=env)
     except OSError as exc:
         _discard_log()
-        print(json.dumps({"step": "start", "error": f"could not start {cmd[0]!r}: {exc}", "command": cmd}))
+        print(json.dumps({"step": "start", "error": f"could not start {cmd[0]!r}: {exc}", "command": cmd,
+                          "hint": "an interpreter path with spaces goes in --python, or inside double quotes "
+                                  "within --command; single quotes do not group on Windows"}))
         print("ROUND-TRIP: FAILED")
         return 1
     next_id = 0
@@ -158,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
     def _stderr_tail() -> str:
         try:
             errlog.flush()
-            return Path(errlog.name).read_text(encoding="utf-8", errors="replace")[-800:]
+            return _decode_log(Path(errlog.name).read_bytes())[-800:]
         except OSError:
             return ""
 
@@ -197,61 +401,8 @@ def main(argv: list[str] | None = None) -> int:
                 return reply
             skipped.append(line[:200])
 
-    def call(tool: str, arguments: dict) -> dict:
-        reply = rpc("tools/call", {"name": tool, "arguments": arguments})
-        if reply is None or "error" in reply:
-            raise RuntimeError(f"{tool} failed: {json.dumps(reply)[:600]}")
-        content = reply["result"].get("content", [])
-        text = next((c.get("text") for c in content if c.get("type") == "text"), None)
-        try:
-            return json.loads(text) if text else reply["result"]
-        except json.JSONDecodeError:
-            return {"raw": text}
-
-    ok = True
     try:
-        init = rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                  "clientInfo": {"name": "sextant-verify", "version": "1"}})
-        rpc("notifications/initialized", notify=True)
-        server_name = (init or {}).get("result", {}).get("serverInfo", {}).get("name", "?")
-        tools = rpc("tools/list") or {}
-        names = [t["name"] for t in tools.get("result", {}).get("tools", [])]
-        print(json.dumps({"step": "handshake", "server": server_name, "tool_count": len(names),
-                          "command": cmd}))
-
-        health = call("memory_health", {})
-        print(json.dumps({"step": "memory_health", "result": health}))
-        if health.get("status") != "ok":
-            ok = False
-
-        written_file = None
-        if not args.skip_remember:
-            written = call("memory_remember_tool", {"scope": f"project:{args.project}", "fact": fact})
-            print(json.dumps({"step": "memory_remember_tool", "result": written}))
-            if written.get("ok") is False or written.get("error"):
-                ok = False
-            written_file = written.get("file")
-        if args.pause:
-            import time
-            time.sleep(args.pause)
-
-        found = call("memory_search_tool", {"query": fact.split(" on ")[0], "limit": 10})
-        hits = found.get("results") or found.get("hits") or []
-        # The proof is that THIS write came back: a hit whose path is the file the write named
-        # (an older identical fact from a previous run must not pass for it).
-        this_hit = None
-        if written_file:
-            want = str(written_file).replace("\\", "/").lower()
-            for h in hits:
-                p = str(h.get("path", "")).replace("\\", "/").lower()
-                if p and want.endswith(p):
-                    this_hit = h
-                    break
-        print(json.dumps({"step": "memory_search_tool", "confidence": found.get("confidence"),
-                          "hits": len(hits), "found_this_write": bool(this_hit) if written_file else None,
-                          "first": (this_hit or (hits[0] if hits else None))}))
-        if written_file and not this_hit:
-            ok = False
+        ok = _run_calls(rpc, args, fact, {"command": cmd})
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"step": "error", "error": str(exc)[:800]}))
         ok = False

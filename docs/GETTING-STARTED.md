@@ -356,14 +356,20 @@ corpus are what the writing build stamped; the `made` date on decisions is
 local time since 0.1.0 (earlier builds used UTC, so a decision written late
 in the evening may carry the next day's date). Your `claude mcp add` registration survives too -- it points at the
 venv's python by absolute path, and the update below reuses that venv
-(if you ever recreate the venv instead, re-run the registration). The pip
+(if you ever recreate the venv instead, `claude mcp remove -s user sextant`
+and then re-run the registration: `claude mcp add` refuses a name that
+already exists). The pip
 reinstall is what makes any NEW `sextant-*` commands appear, so do not
-skip it. Local edits in the clone? `git stash` before pulling.
+skip it. Local edits in the clone? `git stash` before pulling, `git stash pop`
+after. If the pop reports a conflict (`UU <file>`), the upstream change and
+yours touched the same lines: `git checkout --theirs <file>` keeps the new
+release's version, `git stash drop` discards your copy, and you re-apply your
+edit by hand.
 
 After the reinstall, three short commands: `sextant-init` once more (it is
 idempotent and adds anything a newer build expects, for example the state-dir
-ownership marker that builds before 0.1.0 did not write and the uninstaller
-now requires); `sextant setup --client claude-code` to compare with your
+ownership marker that builds before 2026-11-10 did not write and the
+uninstaller now requires); `sextant setup --client claude-code` to compare with your
 registration (unchanged unless you moved the venv); and
 `sextant verify --project upgrade-check` to prove the round-trip (it writes
 one dated fact under that project; `--skip-remember` only reads).
@@ -376,7 +382,13 @@ cd sextant
 git pull
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,telegram,summarizer]"
 .\.venv\Scripts\python.exe -m pytest tests -q   # optional but recommended
+.\.venv\Scripts\sextant-init
+.\.venv\Scripts\sextant setup --client claude-code
+.\.venv\Scripts\sextant verify --project upgrade-check
 ```
+
+(The three `sextant` commands are on PATH only inside an activated venv; the
+`.venv\Scripts\` prefix works from any shell.)
 
 Linux / macOS:
 
@@ -384,6 +396,9 @@ Linux / macOS:
 cd sextant && git pull
 .venv/bin/python -m pip install -e ".[dev,telegram,summarizer]"
 .venv/bin/python -m pytest tests -q   # optional but recommended
+.venv/bin/sextant-init
+.venv/bin/sextant setup --client claude-code
+.venv/bin/sextant verify --project upgrade-check
 ```
 
 Then restart whatever services you run. Docker users:

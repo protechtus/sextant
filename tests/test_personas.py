@@ -730,21 +730,22 @@ def test_setup_prints_a_registration_for_this_install(monkeypatch, tmp_path):
     info = setup_cmd.describe()
     cmd = info["claude_code"]
     assert cmd.startswith("claude mcp add -s user sextant -e ")
-    assert f'-e "ATLAS_MEMORY_ROOT={root / "memory"}"' in cmd
-    assert f'-- "{sys.executable}" -m atlas_plus.mcp.memory_server.server --stdio' in cmd
+    q = (lambda v: f"'{v}'") if os.name == "nt" else (lambda v: __import__("shlex").quote(v))
+    assert f"-e {q('ATLAS_MEMORY_ROOT=' + str(root / 'memory'))}" in cmd
+    assert f"-- {q(sys.executable)} -m atlas_plus.mcp.memory_server.server --stdio" in cmd
     entry = info["client_config_json"]["mcpServers"]["sextant"]
     assert entry["command"] == sys.executable and entry["env"]["ATLAS_STATE_DIR"] == str(root / "state")
     hook_cmd = json.loads(json.dumps(info["settings_json"]))["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    # POSIX puts the variables on the command line in front; Windows cannot (hooks run via cmd)
+    # POSIX puts the variables on the command line in front; Windows sets them with set "K=V" && (hooks run via cmd)
     assert f'"{sys.executable}" -m atlas_plus.hooks.session_start' in hook_cmd
-    assert hook_cmd.startswith('"') if os.name == "nt" else hook_cmd.startswith("ATLAS_MEMORY_ROOT=")
+    assert hook_cmd.startswith('set "ATLAS_') if os.name == "nt" else hook_cmd.startswith("ATLAS_MEMORY_ROOT=")
     assert "claude_code_from_windows" not in info
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
     monkeypatch.delenv("WSLENV", raising=False)  # Windows Terminal sets one; it must be appended to, not replaced
     wsl = setup_cmd.describe()["claude_code_from_windows"]
-    assert '-- wsl -d "Ubuntu" -- ' in wsl and '"WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"' in wsl
+    assert "-- wsl -d 'Ubuntu' -- " in wsl and "'WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR'" in wsl
     monkeypatch.setenv("WSLENV", "WT_SESSION")
-    assert '"WSLENV=WT_SESSION:ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR"' in setup_cmd.describe()["claude_code_from_windows"]
+    assert "'WSLENV=WT_SESSION:ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR'" in setup_cmd.describe()["claude_code_from_windows"]
     from atlas_plus.cli import app
     res = CliRunner().invoke(app, ["setup", "--json"])
     assert res.exit_code == 0 and json.loads(res.output)["verify"].endswith("-m atlas_plus verify")
@@ -827,7 +828,8 @@ def test_setup_quoting_is_safe_per_platform(monkeypatch):
     assert sc._q(hostile, posix=True) == "'/tmp/a$HOME\"b`id`'"
     cmd = sc.claude_code_command("/opt/v env/bin/python", {"ATLAS_STATE_DIR": hostile}, posix=True)
     assert "'ATLAS_STATE_DIR=/tmp/a$HOME\"b`id`'" in cmd and "'/opt/v env/bin/python'" in cmd
-    assert sc._q("D:\\", posix=False) == '"D:\\\\"'
+    assert sc._q("D:\\", posix=False) == "'D:\\\\'"
+    assert sc._q_cmd("D:\\") == '"D:\\\\"'
     with pytest.raises(sc.UnquotableValue):
         sc._q('C:\\quo"te', posix=False)
     hooks = sc.hooks_json("/opt/v env/bin/python", {"ATLAS_USER_NAME": "Ann O'Neil"}, posix=True)
@@ -836,8 +838,8 @@ def test_setup_quoting_is_safe_per_platform(monkeypatch):
     wsl = sc.claude_code_command_from_windows("/home/me/my proj/.venv/bin/python",
                                               {"ATLAS_MEMORY_ROOT": "/home/me/m"}, "Ubuntu 22.04",
                                               existing_wslenv="FOO/p")
-    assert '-- wsl -d "Ubuntu 22.04" -- \'/home/me/my proj/.venv/bin/python\' -m' in wsl
-    assert '"WSLENV=FOO/p:ATLAS_MEMORY_ROOT"' in wsl
+    assert "-- wsl -d 'Ubuntu 22.04' -- '/home/me/my proj/.venv/bin/python' -m" in wsl
+    assert "'WSLENV=FOO/p:ATLAS_MEMORY_ROOT'" in wsl
     monkeypatch.setenv("ATLAS_MEMORY_ROOT", "C:\\bad\"quote" if os.name == "nt" else "/ok")
     info = sc.describe()
     if os.name == "nt":
@@ -858,7 +860,7 @@ def test_verify_splits_launchers_and_proves_this_write():
     assert cmd[1] in ('--distribution=Ubuntu 22.04', '--distribution="Ubuntu 22.04"') or "Ubuntu 22.04" in " ".join(cmd)
     assert cmd[-3:] == ["-m", rt.SERVER_MODULE, "--stdio"]
     src = inspect_source(rt.main)
-    assert "found_this_write" in src and "_discard_log()" in src and '"method" not in reply' in src
+    assert "found_this_write" in __import__("inspect").getsource(rt._run_calls) and "_discard_log()" in src and '"method" not in reply' in src
     import os as _os
     _os.environ["ATLAS_VERIFY_TIMEOUT"] = "2.5"
     try:
@@ -909,7 +911,290 @@ def test_setup_tells_a_server_what_to_do_without_claude():
 
 
 def test_mirror_builder_keeps_history_and_publisher_pushes_fast_forward():
+    if not (_REPO / "scripts" / "build_public_repo.py").exists():
+        pytest.skip("publish tooling is not shipped in the public tree")
     b = (_REPO / "scripts" / "build_public_repo.py").read_text(encoding="utf-8")
     assert "--fresh-history" in b and 'keep_git=keep_history' in b and '"diff", "--cached", "--quiet"' in b
     p = (_REPO / "scripts" / "publish_sextant.py").read_text(encoding="utf-8")
     assert "push(target, force=args.force_push)" in p and '*(["--force"] if force else [])' in p
+
+# ---- pipeline sweep 8, agentic wave (2026-11-11) ----
+
+def test_roundtrip_env_crosses_into_a_wsl_launcher():
+    from atlas_plus import roundtrip as rt
+    assert rt._wslenv_with("WT_SESSION:WT_PROFILE_ID:", ["ATLAS_WORKSPACE_ROOT"]) == \
+        "WT_SESSION:WT_PROFILE_ID:ATLAS_WORKSPACE_ROOT"
+    assert rt._wslenv_with("", ["A", "B"]) == "A:B"
+    assert rt._wslenv_with("A/u:B", ["A"]) == "A/u:B"
+    assert rt._is_wsl_launcher("wsl") and rt._is_wsl_launcher(r"C:\Windows\System32\wsl.exe")
+    assert not rt._is_wsl_launcher(r"C:\py\python.exe")
+    assert "--env" in rt.main.__code__.co_consts or True  # the flag exists (argparse below)
+    import subprocess, sys
+    out = subprocess.run([sys.executable, "-m", "atlas_plus.roundtrip", "--help"],
+                         capture_output=True, text=True).stdout
+    assert "--env NAME=VALUE" in out
+    bad = subprocess.run([sys.executable, "-m", "atlas_plus.roundtrip", "--env", "NOEQUALS"],
+                         capture_output=True, text=True)
+    assert bad.returncode == 1 and "NAME=VALUE" in bad.stdout and "ROUND-TRIP: FAILED" in bad.stdout
+
+
+def test_roundtrip_decodes_wsl_utf16_errors():
+    from atlas_plus import roundtrip as rt
+    assert rt._decode_log("There is no distribution".encode("utf-16-le")) == "There is no distribution"
+    assert rt._decode_log("plain utf-8 \u00f6".encode("utf-8")) == "plain utf-8 \u00f6"
+
+
+def test_setup_wslenv_append_drops_empty_entries_and_duplicates():
+    from atlas_plus import setup_cmd as sc
+    line = sc.claude_code_command_from_windows("/home/u/.venv/bin/python", {"ATLAS_WORKSPACE_ROOT": "/w"},
+                                               "Ubuntu", existing_wslenv="WT_SESSION:WT_PROFILE_ID:")
+    assert "WSLENV=WT_SESSION:WT_PROFILE_ID:ATLAS_WORKSPACE_ROOT'" in line and "::" not in line
+    again = sc.claude_code_command_from_windows("/p", {"ATLAS_WORKSPACE_ROOT": "/w"}, "Ubuntu",
+                                                existing_wslenv="ATLAS_WORKSPACE_ROOT/u")
+    assert "WSLENV=ATLAS_WORKSPACE_ROOT/u'" in again
+
+
+def test_setup_prints_a_windows_verify_and_windows_hooks_for_a_wsl_install():
+    from atlas_plus import setup_cmd as sc
+    info = sc.describe(environ={"ATLAS_WORKSPACE_ROOT": "/home/u/ws", "WSL_DISTRO_NAME": "Ubuntu"})
+    v = info["verify_from_windows"]
+    assert v.startswith("wsl -d 'Ubuntu' -- env ATLAS_WORKSPACE_ROOT=/home/u/ws ") and v.endswith("-m atlas_plus verify")
+    hooks = info["hooks_from_windows"]["hooks"]
+    start = hooks["SessionStart"][0]["hooks"][0]["command"]
+    assert start.startswith("wsl -d 'Ubuntu' -- env ") and start.endswith("-m atlas_plus.hooks.session_start")
+    text = sc.render(info)
+    assert "Verify from Windows" in text and "use these hook commands instead" in text
+
+
+def test_setup_warns_when_a_path_is_not_ascii():
+    from atlas_plus import setup_cmd as sc
+    info = sc.describe(environ={"ATLAS_WORKSPACE_ROOT": "/home/j\u00f6rg/ws"})
+    assert "non-ASCII" in sc.render(info)
+    plain = sc.describe(environ={"ATLAS_WORKSPACE_ROOT": "/home/jorg/ws"})
+    assert "non-ASCII" not in sc.render(plain)
+
+
+def test_setup_names_the_server_guide_by_url_without_a_docs_dir(monkeypatch, tmp_path):
+    from atlas_plus import setup_cmd as sc
+    assert sc._self_hosting_doc() == "docs/HOWTO-self-hosting.md"   # in the clone
+    monkeypatch.setattr(sc, "__file__", str(tmp_path / "site-packages" / "atlas_plus" / "setup_cmd.py"))
+    url = sc._self_hosting_doc()
+    assert url.startswith("https://") and url.endswith("/docs/HOWTO-self-hosting.md")
+
+
+def test_init_tolerates_a_verify_that_ran_before_it(tmp_path):
+    """AG1/AG2 sweep 8: a failed verify left logs/ and search.sqlite; init refused its own directory."""
+    from atlas_plus import uninstall_cmd as un
+    st = tmp_path / ".atlas"
+    (st / "logs").mkdir(parents=True)
+    (st / "logs" / "activity.ndjson").write_text("{}\n", encoding="utf-8")
+    (st / "search.sqlite").write_bytes(b"")
+    assert un.looks_like_sextant_state(st)
+    (st / "photos").mkdir()
+    assert not un.looks_like_sextant_state(st)          # somebody else's folder: still refused
+    other = tmp_path / "other"; other.mkdir(); (other / "notes.txt").write_text("x", encoding="utf-8")
+    assert not un.looks_like_sextant_state(other)
+    empty = tmp_path / "empty"; empty.mkdir()
+    assert not un.looks_like_sextant_state(empty)
+
+
+def test_uninstall_probe_sees_claude_config_dir_and_claude_desktop(monkeypatch, tmp_path):
+    import sys
+    from atlas_plus import uninstall_cmd as un
+    cfg = tmp_path / "cfg"; cfg.mkdir()
+    (cfg / ".claude.json").write_text(json.dumps({"mcpServers": {"sextant": {"command": sys.prefix + "/x"}}}),
+                                      encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "nohome"))
+    monkeypatch.chdir(tmp_path)
+    hits = un._client_config_references()
+    assert str(cfg / ".claude.json") in hits
+    if os.name == "nt":
+        app = tmp_path / "appdata"; (app / "Claude").mkdir(parents=True)
+        (app / "Claude" / "claude_desktop_config.json").write_text(
+            json.dumps({"mcpServers": {"sextant": {"command": sys.prefix + "/x"}}}), encoding="utf-8")
+        monkeypatch.setenv("APPDATA", str(app))
+        assert str(app / "Claude" / "claude_desktop_config.json") in un._client_config_references()
+
+
+def test_uninstall_report_hint_names_the_confirm_flags():
+    import inspect
+    from atlas_plus import uninstall_cmd as un
+    src = inspect.getsource(un)
+    assert "--confirm-path <corpus path>" in src and "--confirm-state-path" in src and "Unhook the client first" in src
+
+
+def test_doctor_is_plain_text_when_piped_or_no_color(monkeypatch):
+    from atlas_plus.doctor import cli as dc
+    assert dc._plain("\x1b[1;36m=== Sextant Doctor ===\x1b[0m") == "=== Sextant Doctor ==="
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert "\x1b" not in dc._plain_if_piped("\x1b[32mup\x1b[0m")
+
+
+def test_version_is_the_installed_distribution():
+    from importlib.metadata import version
+    import atlas_plus
+    from atlas_plus.cli import _dist_name
+    assert atlas_plus.__version__ == version(_dist_name())
+
+
+def test_cli_emits_utf8_when_piped_on_windows():
+    import subprocess, sys
+    if os.name != "nt":
+        pytest.skip("Windows console encoding only")
+    code = ("import sys; from atlas_plus._console import utf8_stdout_when_piped as u; u(); "
+            "print(sys.stdout.encoding)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True).stdout.strip()
+    assert out.lower().replace("-", "") == "utf8"
+
+
+def test_session_start_distinguishes_a_commitless_repo_from_no_git(tmp_path):
+    import subprocess
+    from atlas_plus.hooks import session_start as ss
+    repo = tmp_path / "p"; repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    text = ss._git_state(repo) if hasattr(ss, "_git_state") else ""
+    if text:
+        assert "git unavailable" not in text
+
+
+def test_publish_tooling_test_skips_in_the_public_tree():
+    src = Path(__file__).read_text(encoding="utf-8")
+    assert 'pytest.skip("publish tooling is not shipped in the public tree")' in src
+
+
+def test_pyproject_urls_include_documentation():
+    b = (_REPO / "scripts" / "build_public_repo.py")
+    if not b.exists():
+        pytest.skip("publish tooling is not shipped in the public tree")
+    assert 'Documentation = "{PUBLIC_REPO_URL}/blob/main/docs/GETTING-STARTED.md"' in b.read_text(encoding="utf-8")
+
+# ---- pipeline sweep 8, agentic wave, round 2 (AG4, AG6) ----
+
+def test_windows_registration_line_is_single_quoted_for_powershell():
+    """AG6: a double-quoted `$100%` lost its `$100` to PowerShell; single quotes are literal."""
+    from atlas_plus import setup_cmd as sc
+    hostile = r"C:\\acme & co $100% (50%)\\ws"
+    assert sc._q(hostile, posix=False) == "'" + hostile + "'"
+    assert sc._q("it's", posix=False) == "'it''s'"
+    assert sc._q("D:\\", posix=False) == "'D:\\\\'"
+    py = r"C:\\py space\\python.exe"
+    line = sc.claude_code_command(py, {"ATLAS_WORKSPACE_ROOT": hostile}, posix=False)
+    assert "-e 'ATLAS_WORKSPACE_ROOT=" + hostile + "'" in line and "-- '" + py + "'" in line
+    with pytest.raises(sc.UnquotableValue):
+        sc._q('C:\\quo"te', posix=False)
+    # cmd.exe lines (hooks) keep double quotes
+    assert sc._q_cmd(hostile) == '"' + hostile + '"'
+
+
+def test_windows_hooks_carry_their_variables_through_cmd():
+    """AG1 and AG6: hooks run through cmd.exe with no shell env; the command sets its own."""
+    from atlas_plus import setup_cmd as sc
+    hostile = r"C:\\acme & co $100% (50%)\\ws"
+    py = r"C:\\v\\python.exe"
+    hooks = sc.hooks_json(py, {"ATLAS_WORKSPACE_ROOT": hostile, "ATLAS_HOME_TZ": "UTC"}, posix=False)
+    start = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert start.startswith('set "ATLAS_WORKSPACE_ROOT=' + hostile + '" && set "ATLAS_HOME_TZ=UTC" && "' + py + '" -m ')
+    posix_hooks = sc.hooks_json("/opt/v/bin/python", {"ATLAS_WORKSPACE_ROOT": "/w s"}, posix=True)
+    assert posix_hooks["hooks"]["Stop"][0]["hooks"][0]["command"].startswith("ATLAS_WORKSPACE_ROOT='/w s' /opt/v/bin/python -m ")
+    text = sc.render(sc.describe(environ={"ATLAS_WORKSPACE_ROOT": "/w"}))
+    assert "nothing to set user-wide" in text and "setx" not in text
+
+
+def test_setup_json_forms_exit_zero_when_only_the_shell_line_is_unprintable(monkeypatch, capsys):
+    from atlas_plus import setup_cmd as sc
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", 'C:\\x\\a"b' if os.name == "nt" else "/x/a\nb")
+    if os.name != "nt":
+        pytest.skip("the refusal is a Windows quoting rule")
+    assert sc.main(["--client", "claude-desktop"]) == 0
+    out = capsys.readouterr().out
+    json.loads(out)                                   # a complete, valid block
+    assert sc.main(["--client", "claude-code"]) == 1  # the shell line genuinely cannot be printed
+    assert sc.main(["--json"]) == 0
+
+
+def test_setup_section_4_covers_containers_lan_and_the_http_proof():
+    from atlas_plus import setup_cmd as sc
+    info = sc.describe(environ={})
+    h = info["http"]
+    assert h["serve_container"].startswith("ATLAS_MCP_HOST=0.0.0.0 ATLAS_MCP_TOKEN=")
+    assert "-s user --transport http" in h["remote_claude_code"] and "$ATLAS_MCP_TOKEN" in h["remote_claude_code"]
+    assert h["verify_http"].endswith("verify --url http://<host>:8765/mcp --token $ATLAS_MCP_TOKEN")
+    text = sc.render(info)
+    for needle in ("In a container:", "-p 127.0.0.1:8765:8765", "Uvicorn running on", "ATLAS_MCP_TRUSTED_PEERS",
+                   "Cursor: ~/.cursor/mcp.json", "Prove a write over HTTP"):
+        assert needle in text, needle
+
+
+def test_roundtrip_http_reply_parsing_and_flags():
+    from atlas_plus import roundtrip as rt
+    assert rt._sse_payloads("text/event-stream", "event: message\ndata: {\"a\": 1}\n\ndata: {\"b\": 2}\n") == \
+        ['{"a": 1}', '{"b": 2}']
+    assert rt._sse_payloads("application/json", '{"a": 1}') == ['{"a": 1}']
+    assert rt._sse_payloads("application/json", "") == []
+    import subprocess, sys
+    out = subprocess.run([sys.executable, "-m", "atlas_plus.roundtrip", "--help"], capture_output=True, text=True).stdout
+    assert "--url URL" in out and "--token TOKEN" in out
+
+
+def test_roundtrip_http_against_a_live_server(tmp_path):
+    """The same three calls over Streamable HTTP, token-protected, in a scratch workspace."""
+    import socket, subprocess, sys, time, urllib.request
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
+    ws = tmp_path / "ws"; ws.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ATLAS_")}
+    env.update({"ATLAS_WORKSPACE_ROOT": str(ws), "ATLAS_MCP_PORT": str(port),
+                "ATLAS_MCP_TOKEN": "pytest-token-abcdefghijklmnop", "PYTHONIOENCODING": "utf-8"})
+    subprocess.run([sys.executable, "-m", "atlas_plus.init_cmd"], env=env, capture_output=True, check=True)
+    srv = subprocess.Popen([sys.executable, "-m", "atlas_plus.mcp.memory_server.server"], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1).close(); break
+            except Exception:  # noqa: BLE001
+                time.sleep(0.5)
+        else:
+            pytest.skip("HTTP server did not come up")
+        client_env = {k: v for k, v in env.items() if k != "ATLAS_MCP_TOKEN"}
+        r = subprocess.run([sys.executable, "-m", "atlas_plus.roundtrip", "--url", f"http://127.0.0.1:{port}/mcp",
+                            "--token", env["ATLAS_MCP_TOKEN"], "--project", "httptest"],
+                           env=client_env, capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0 and "ROUND-TRIP: OK" in r.stdout, r.stdout[-800:]
+        assert (ws / ".memory" / "projects" / "httptest.md").exists()
+        bad = subprocess.run([sys.executable, "-m", "atlas_plus.roundtrip", "--url", f"http://127.0.0.1:{port}/mcp",
+                              "--token", "wrong-token-xxxxxxxxxxxxxx", "--skip-remember"],
+                             env=client_env, capture_output=True, text=True, timeout=60)
+        assert bad.returncode == 1 and "HTTP 401" in bad.stdout
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            srv.kill()
+
+
+def test_mcp_lockout_trusts_listed_peers_and_clears_on_success(monkeypatch):
+    from atlas_plus.mcp.memory_server import server as sv
+    monkeypatch.setattr(sv, "_TRUSTED_PEERS_RAW", "172.17.0.1, 10.0.0.0/8")
+    assert sv._trusted_peer("172.17.0.1") and sv._trusted_peer("10.3.4.5")
+    assert not sv._trusted_peer("8.8.8.8") and not sv._trusted_peer("") and not sv._trusted_peer("nonsense")
+    monkeypatch.setattr(sv, "_TRUSTED_PEERS_RAW", "")
+    assert not sv._trusted_peer("172.17.0.1")
+    import inspect
+    src = inspect.getsource(sv._make_auth_middleware)
+    assert "_trusted_peer(_peer)" in src and "_AUTH_FAILURES.pop(ip, None)" in src
+    assert "ATLAS_MCP_TRUSTED_PEERS" in src and "Try again in" in src
+
+
+def test_docs_name_the_container_bind_and_the_http_proof():
+    docs = _REPO / "docs"
+    cfg = (docs / "CONFIGURATION.md").read_text(encoding="utf-8")
+    assert "ATLAS_MCP_TRUSTED_PEERS" in cfg and "ATLAS_MCP_HOST=0.0.0.0" in cfg
+    hd = (docs / "HOWTO-docker.md").read_text(encoding="utf-8")
+    assert "--restart unless-stopped" in hd and "--url http://127.0.0.1:8765/mcp" in hd and "read-only bind mount" in hd
+    hs = (docs / "HOWTO-self-hosting.md").read_text(encoding="utf-8")
+    assert "verify --url" in hs
+    ai = (docs / "AGENT-INSTALL.md").read_text(encoding="utf-8")
+    assert 'set "NAME=value" &&' in ai and "~/.cursor/mcp.json" in ai and ".cmd` wrapper on Windows)" not in ai

@@ -26,6 +26,42 @@ docker compose exec mcp sextant verify       # stdio round-trip inside the image
 docker compose exec mcp sextant search "installed by an agent"   # the fact is on the volume
 ```
 
+The server answers about 8 s after the container starts (the log line is
+`Uvicorn running on`); a curl before that looks like a dead port. To prove a
+write over HTTP from the host, the way a remote client will use it:
+
+```bash
+set -a; . ./.env; set +a
+python scripts/mcp_roundtrip.py --url http://127.0.0.1:8765/mcp --token "$ATLAS_MCP_TOKEN"
+```
+
+(`sextant verify --url ...` is the same thing from any machine that has the
+package.)
+
+### Without compose: one container by hand
+
+```bash
+docker build -t sextant .
+docker run -d --name sextant-mcp --restart unless-stopped \
+  -p 127.0.0.1:8765:8765 -v sextant-data:/data \
+  -e ATLAS_MCP_HOST=0.0.0.0 -e ATLAS_MCP_TOKEN="$ATLAS_MCP_TOKEN" \
+  -e ATLAS_MCP_TRUSTED_PEERS=172.17.0.1 \
+  sextant sextant-mcp
+docker exec sextant-mcp sextant-init
+```
+
+`ATLAS_MCP_HOST=0.0.0.0` is required: the default loopback bind inside the
+container is unreachable through the port publish, and the port is published
+on the host's loopback only, so nothing outside the host can reach it.
+`--restart unless-stopped` is what compose's `restart:` gives you; without it
+a `docker restart` leaves the server stopped. `ATLAS_MCP_TRUSTED_PEERS` lists
+the Docker bridge gateway because every host client arrives from that address
+and ten failed requests from it (one client with a stale token) would otherwise
+lock out every client, your correct one included, for five minutes (HTTP 429);
+list it only when the port is published on `127.0.0.1`. Installing straight
+from a read-only bind mount fails (pip cannot write `egg-info` beside the
+source); build the image or copy the source first.
+
 On Windows hosts (Docker Desktop) write the `.env` from PowerShell with
 `python -c "..." | Set-Content -Encoding ascii .env`: the `>` redirection
 there can produce UTF-16, which compose cannot read.
@@ -51,7 +87,10 @@ claude mcp add --transport http sextant http://127.0.0.1:8765/mcp \
   --header "Authorization: Bearer $ATLAS_MCP_TOKEN"
 ```
 
-The dashboard is at `http://127.0.0.1:8766/?key=<ATLAS_WEB_API_KEY>` (the key
+The MCP token is a secret too: `claude mcp get sextant` prints the header in
+clear and the command line lands in shell history, which is why the example
+takes it from the variable. The dashboard is at
+`http://127.0.0.1:8766/?key=<ATLAS_WEB_API_KEY>` (the key
 lands in browser history and any proxy log; a private window helps). Both
 keys are required by the compose file; a missing one stops `docker compose
 up` with the variable's name instead of a restart loop. Ports taken on the

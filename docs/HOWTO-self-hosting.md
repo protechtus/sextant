@@ -183,7 +183,14 @@ Hardening notes for a public deployment:
 - Everything stays useless without the bearer keys; still, prefer exposing
   ONLY what you use (delete the `/mcp*` block if no remote MCP client).
 - The web dashboard and MCP server rate-limit and lock out repeated auth
-  failures per source; watch them in the dashboard's security panel.
+  failures per source (MCP: ten failures, then HTTP 429 for five minutes, the
+  correct token included); watch them in the dashboard's security panel. Every
+  client behind one NAT shares a counter; `ATLAS_MCP_TRUSTED_PEERS` exempts a
+  peer you own (never a public range).
+- Prove the remote path from a client machine, not only `claude mcp list`:
+  `sextant verify --url https://sextant.example.com/mcp --token "$ATLAS_MCP_TOKEN"`
+  (or `python scripts/mcp_roundtrip.py --url ...` from a clone) writes one
+  fact and searches it back over HTTP.
 - Keep the corpus backed up OFF the VPS: `sextant-backup` (rclone, any
   remote) or a nightly `tar` of `~/.memory` pulled by another machine --
   the corpus is plain markdown, so any file backup works.

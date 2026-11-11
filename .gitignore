@@ -38,3 +38,4 @@ deploy/logs/
 /memory/
 /state/
 /.memory/
+uv.lock

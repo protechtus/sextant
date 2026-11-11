@@ -7,7 +7,7 @@
 
 [![CI](https://github.com/protechtus/sextant/actions/workflows/ci.yml/badge.svg)](https://github.com/protechtus/sextant/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/protechtus/sextant/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 > Every LLM session should start with the context of every previous session -- without manual priming.
 
@@ -78,8 +78,8 @@ ways once you know what you want:
 main without a clone (with the optional layers:
 `pip install "sextant-ai[telegram,summarizer] @ git+https://github.com/protechtus/sextant.git"`;
 `sextant setup` and `sextant verify` then replace every clone-only step), and
-`pip install sextant-ai` will install the released
-package from PyPI once v0.1.0 is published (not before). Do NOT `pip install
+`pip install sextant-ai` installs the released
+package from PyPI (v0.1.0 and later). Do NOT `pip install
 sextant` -- that is an unrelated third-party package (a helm-charts CLI), not
 this project.
 
