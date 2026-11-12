@@ -1343,11 +1343,18 @@ def test_confirm_path_help_no_longer_promises_case_tolerance_everywhere():
         assert "case only where the filesystem ignores it" in inspect.getsource(mod)
 
 
-def test_readme_privacy_claim_matches_the_code():
+def _public_readme() -> str:
+    """The private tree keeps the public README at docs/README-PUBLIC.md; the mirror ships
+    it as README.md. Every README test must go through here (CI went red twice, 2026-11-11
+    and 2026-11-12, on a test that read the private path)."""
     src = _REPO / "docs" / "README-PUBLIC.md"
     if not src.exists():
-        src = _REPO / "README.md"   # the public tree ships it as README.md
-    readme = src.read_text(encoding="utf-8")
+        src = _REPO / "README.md"
+    return src.read_text(encoding="utf-8")
+
+
+def test_readme_privacy_claim_matches_the_code():
+    readme = _public_readme()
     assert "falls back to the Anthropic API when" not in readme and "ATLAS_LOCAL_ONLY=off" in readme
 
 # ---- pipeline sweep 9, manual wave, round 2 (MN4, MN5, MN6) ----
@@ -1472,7 +1479,7 @@ def test_docs_carry_the_manual_wave_fixes():
 def test_readme_names_the_python_floor_before_each_quickstart_block():
     """MN2 (impatient, Python 3.10): a plain `python -m venv` fails before the trailing
     comment on the `py -3` line is ever read, so both quickstart blocks open with the floor."""
-    readme = (_REPO / "docs" / "README-PUBLIC.md").read_text(encoding="utf-8")
+    readme = _public_readme()
     win = readme.index("Windows (PowerShell):")
     nix = readme.index("Linux / macOS:")
     win_block = readme[win:readme.index("```powershell", win)]
