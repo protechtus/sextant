@@ -140,6 +140,8 @@ def _common(p: argparse.ArgumentParser, *, run_flags: bool = True) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     from atlas_plus.branding import prog as _prog
 
     parser = argparse.ArgumentParser(prog=_prog("atlas-intake"),

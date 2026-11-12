@@ -752,7 +752,9 @@ def test_setup_prints_a_registration_for_this_install(monkeypatch, tmp_path):
     res = CliRunner().invoke(app, ["setup", "--client", "claude-code"])
     assert res.exit_code == 0 and res.output.strip().startswith("claude mcp add -s user sextant")
     res = CliRunner().invoke(app, ["setup", "--client", "claude-desktop"])
-    assert res.exit_code == 0 and json.loads(res.output)["mcpServers"]["sextant"]["type"] == "stdio"
+    # stdout is the pure JSON block; the where-to-paste hint goes to stderr (AG13, sweep 11)
+    assert res.exit_code == 0 and json.loads(res.stdout)["mcpServers"]["sextant"]["type"] == "stdio"
+    assert "claude_desktop_config.json" in res.stderr and "restart the client" in res.stderr
 
 
 def test_remember_refuses_a_corpus_that_does_not_exist(tmp_path, monkeypatch):

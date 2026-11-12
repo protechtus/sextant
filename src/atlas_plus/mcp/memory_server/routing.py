@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 import json as _json
+import logging as _logging
 import os
 import re as _re
 from pathlib import Path
@@ -23,6 +24,8 @@ from typing import Callable, Optional
 import yaml
 
 from .config import MEMORY_ROOT
+
+log = _logging.getLogger(__name__)
 from atlas_plus.autonomous import require_autonomous_writes
 
 ROUTING_CONFIG = MEMORY_ROOT / "_atlas" / "routing.yaml"
@@ -197,6 +200,9 @@ def locked_atomic_rewrite(target: Path, fn: "Callable[[str], str]") -> None:
             current = target.read_text(encoding="utf-8")
         except FileNotFoundError:
             current = ""
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"{target} is not UTF-8 (byte {exc.start}): re-save the note as UTF-8 and "
+                             "retry; nothing was written") from None
         updated = fn(current)
         if updated == current and target.exists():
             return
@@ -208,6 +214,61 @@ def locked_atomic_rewrite(target: Path, fn: "Callable[[str], str]") -> None:
 # last milliseconds; STALE only needs to be far above that.
 _LOCK_TIMEOUT = 10.0
 _LOCK_STALE = 30.0
+
+
+def _lock_host() -> str:
+    import socket as _socket
+    try:
+        return _re.sub(r"[^A-Za-z0-9.-]", "", _socket.gethostname())[:60] or "host"
+    except OSError:
+        return "host"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Is a process with this id running on this machine? Unknown counts as alive."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ctypes.get_last_error() == 5      # access denied: it exists
+            try:
+                code = ctypes.c_ulong()
+                if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return code.value == 259             # STILL_ACTIVE
+                return True
+            finally:
+                k32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def _lock_holder_dead(lock_path: Path) -> bool:
+    """True when the lock's token names a process on THIS machine that no longer runs. A lock
+    left by a killed writer stalled the next write for 30 s with no word (AG15, sweep 11)."""
+    try:
+        token = lock_path.read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return False
+    parts = token.strip().split(":")
+    if len(parts) < 3 or parts[2] != _lock_host():
+        return False   # another machine's lock (shared corpus): only the stale rule applies
+    try:
+        return not _pid_alive(int(parts[0]))
+    except ValueError:
+        return False
 
 
 _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
@@ -315,6 +376,9 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
     timeout = _LOCK_TIMEOUT if timeout is None else timeout
     stale = _LOCK_STALE if stale is None else stale
     lock_dir = MEMORY_ROOT / "_atlas" / ".locks"
+    if not _atlas_dir_ok():
+        raise ValueError(f"{MEMORY_ROOT / '_atlas'} is a link that leaves the corpus; the corpus must be a "
+                         "plain directory tree (nothing was written)")
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / (_hashlib.sha256(_lock_key(target).encode("utf-8")).hexdigest()[:16] + ".lock")
     # The deadline must be able to OUTLAST one full stale-observation window,
@@ -331,8 +395,10 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
     # Each acquirer writes its token into the file; release only unlinks
     # if the file still carries OUR token.
     import uuid as _uuid
-    owner_token = f"{os.getpid()}:{_uuid.uuid4().hex}"
+    owner_token = f"{os.getpid()}:{_uuid.uuid4().hex}:{_lock_host()}"
     first_seen: tuple[float, float] | None = None  # (observed_at_monotonic, mtime)
+    last_holder_check = 0.0
+    waited_notice = 0.0
     fd = None
     # Windows delete-pending EACCES clears within milliseconds; a lock dir
     # that is GENUINELY unwritable (container uid mismatch, ACL deny) does
@@ -369,6 +435,26 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                 continue
             eacces_no_lock = 0
             now = _time.monotonic()
+            # Probe the holder only once the lock has sat unchanged for 2 s: reading the file
+            # while a live holder releases it makes the unlink fail on Windows (no delete
+            # sharing on a read handle), which left the lock behind for the full stale window.
+            if (first_seen is not None and first_seen[1] == mtime and now - first_seen[0] >= 2.0
+                    and now - last_holder_check >= 1.0):
+                last_holder_check = now
+                if _lock_holder_dead(lock_path):
+                    log.info("write lock on %s was left by a process that no longer runs; clearing it",
+                             target.name)
+                    try:
+                        lock_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    first_seen = None
+                    continue
+            if first_seen is not None and now - first_seen[0] > 5 and now - waited_notice > 5:
+                waited_notice = now
+                log.warning("still waiting for the write lock on %s (held for %.0f s by another writer; "
+                            "a lock a crashed writer left is broken after %.0f s)",
+                            target.name, now - first_seen[0], stale)
             if first_seen is None or first_seen[1] != mtime:
                 first_seen = (now, mtime)  # new holder (or first sighting)
             elif now - first_seen[0] > stale:
@@ -397,11 +483,17 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
             # replaced the file, its token is in there, not ours -- leaving
             # it alone is the difference between one stolen lock and a
             # three-writer pileup.
-            try:
-                if lock_path.read_text(encoding="ascii", errors="replace") == owner_token:
-                    lock_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            for _attempt in range(50):
+                try:
+                    if lock_path.read_text(encoding="ascii", errors="replace") == owner_token:
+                        lock_path.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    # A waiter's read handle (Windows: no delete sharing) refuses the unlink for
+                    # a moment; a lock left behind here cost every writer the stale window.
+                    _time.sleep(0.01)
+                except OSError:
+                    break
 
 
 # Built-in routes used when no _atlas/routing.yaml exists (2026-08-26): a
@@ -426,14 +518,86 @@ _BUILTIN_ROUTES: dict = {
 }
 
 
+_CORPUS_INTERNAL_DIRS = frozenset({"_atlas", "versions", "_sync", "archive", ".locks"})
+
+
+def _truthy(value) -> bool:
+    """YAML `create_if_missing: "false"` (a string) counted as true (AG16, sweep 11)."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on", "y")
+    return bool(value)
+
+
+def _atlas_dir_ok() -> bool:
+    """The corpus's `_atlas` directory must be a plain directory inside the corpus: through a
+    junction it loaded routes from outside and created locks outside (AG16, sweep 11)."""
+    from atlas_plus._fsutil import inside, is_link
+    atlas_dir = MEMORY_ROOT / "_atlas"
+    if not atlas_dir.exists():
+        return True
+    return not is_link(atlas_dir) and inside(atlas_dir, MEMORY_ROOT)
+
+
 def _load_routes() -> dict:
     if not ROUTING_CONFIG.exists():
         return {"routes": _BUILTIN_ROUTES}
+    if not _atlas_dir_ok():
+        log.warning("%s is ignored: _atlas resolves outside the corpus (a link); built-in routes apply",
+                    ROUTING_CONFIG)
+        return {"routes": _BUILTIN_ROUTES}
     try:
         loaded = yaml.safe_load(ROUTING_CONFIG.read_text(encoding="utf-8")) or {}
-        return loaded if loaded.get("routes") else {"routes": _BUILTIN_ROUTES}
     except Exception:
         return {"routes": _BUILTIN_ROUTES}
+    routes = loaded.get("routes") if isinstance(loaded, dict) else None
+    if not isinstance(routes, dict) or not routes:
+        return {"routes": _BUILTIN_ROUTES}
+    # A rule that is not a mapping, or whose target is not a string, used to raise
+    # AttributeError/TypeError out of every write (AG16, sweep 11): such rules are dropped.
+    clean: dict = {}
+    for name, rule in routes.items():
+        if not isinstance(name, str) or not isinstance(rule, dict) or not isinstance(rule.get("target"), str):
+            log.warning("routing.yaml: route %r is not a mapping with a string target; ignored", name)
+            continue
+        fm = rule.get("frontmatter_template", None)
+        if fm is not None and not isinstance(fm, dict):
+            log.warning("routing.yaml: route %r has a frontmatter_template that is not a mapping; ignored", name)
+            rule = {k: v for k, v in rule.items() if k != "frontmatter_template"}
+        clean[name] = rule
+    if not clean:
+        return {"routes": _BUILTIN_ROUTES}
+    out = dict(loaded)
+    out["routes"] = clean
+    return out
+
+
+def _check_template_parts(template: str, scope: str) -> None:
+    """Every component of the resolved route target is checked the way a scope name is: a
+    route that named `reference/CON.md` opened the console device and froze the MCP server for
+    good; `{topic}/x.md` with `evil:_atlas` wrote into the index directory (AG16, sweep 11)."""
+    parts = template.split("/")
+    if not template.lower().endswith(".md") or len(parts) < 1 or not parts[-1][:-3]:
+        raise ValueError(f"Route for {scope!r} must name a .md file inside the corpus (target {template!r}).")
+    if template.startswith("/") or template.startswith("\\"):
+        raise ValueError(f"Route for {scope!r} must be a relative path inside the corpus (target {template!r}).")
+    for i, part in enumerate(parts):
+        if part in ("", ".", ".."):
+            raise ValueError(f"Route for {scope!r} has an empty, '.' or '..' component (target {template!r}).")
+        if ":" in part or "\\" in part:
+            raise ValueError(f"Route for {scope!r}: ':' and '\\' cannot appear in a target component "
+                             f"(target {template!r}).")
+        if part.endswith(".") or part.endswith(" "):
+            raise ValueError(f"Route for {scope!r}: a component must not end with a dot or a space "
+                             f"(Windows drops it; target {template!r}).")
+        if _is_reserved_device_name(part):
+            raise ValueError(f"Route for {scope!r}: {part!r} is a reserved device name on Windows "
+                             f"(target {template!r}).")
+        if any(_ud.category(c) in _FORBIDDEN_CATEGORIES for c in part) or any(c in part for c in '*?"<>|'):
+            raise ValueError(f"Route for {scope!r}: a target component carries characters a file name "
+                             f"cannot (target {template!r}).")
+    if parts[0] in _CORPUS_INTERNAL_DIRS:
+        raise ValueError(f"Route for {scope!r} targets {parts[0]}/, which is Sextant's own directory "
+                         f"(index, history, locks): notes there are never searched (target {template!r}).")
 
 
 def _is_reparse_point(path: Path) -> bool:
@@ -547,6 +711,7 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
             raise ValueError(f"Scope '{key}' requires a name, e.g. '{key}:atlas-memory-plus'")
         template = template.replace("{name}", param)
 
+    _check_template_parts(template, scope)
     # YAML templates use "/" (portable); convert to the OS path separator.
     target = MEMORY_ROOT / Path(*template.split("/"))
 
@@ -578,7 +743,7 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
                 f"({probe}); the corpus must be a plain directory tree."
             )
 
-    create_ok = rule.get("create_if_missing", False)
+    create_ok = _truthy(rule.get("create_if_missing", False))
 
     # for_read: a SEARCH scoped to a not-yet-written file is a valid question with an empty
     # answer, not an error; only writers need the create_if_missing check (2026-11-09).
@@ -588,7 +753,8 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
             "Create the file first or use a different scope."
         )
 
-    fm_template = dict(rule.get("frontmatter_template", _DEFAULT_FRONTMATTER))
+    fm_raw = rule.get("frontmatter_template", _DEFAULT_FRONTMATTER)
+    fm_template = dict(fm_raw) if isinstance(fm_raw, dict) else dict(_DEFAULT_FRONTMATTER)
     return target, fm_template
 
 
@@ -678,7 +844,12 @@ def append_fact(
             return
 
         # Existing file: update provenance fields + append under dated header
-        raw = target.read_text(encoding="utf-8")
+        try:
+            raw = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            # The old message was the codec's own line with no file name (AG17, sweep 11).
+            raise ValueError(f"{target} is not UTF-8 (byte {exc.start}): re-save the note as UTF-8 and "
+                             "retry; nothing was written") from None
         raw = _update_frontmatter_field(raw, "updated", date_str)
         raw = _update_frontmatter_field(raw, "last_confirmed", date_str)
 

@@ -113,8 +113,13 @@ Prefer editing config by hand, or using Claude Desktop? The snippets in
 - **Claude Code**: `.mcp.json` in your project directory (shared with the
   project) or `~/.claude.json` (personal, all projects).
 - **Claude Desktop**: `%APPDATA%\Claude\claude_desktop_config.json` on
-  Windows; `~/Library/Application Support/Claude/claude_desktop_config.json`
-  on macOS.
+  Windows (the Microsoft Store build keeps it under
+  `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\` instead; if
+  `%APPDATA%\Claude` does not exist, look there); `~/Library/Application
+  Support/Claude/claude_desktop_config.json` on macOS.
+- **Cursor**: `~/.cursor/mcp.json` (every project) or `.cursor/mcp.json`
+  inside a project. `sextant setup --client cursor` prints the block;
+  `sextant uninstall` reports both locations.
 
 Restart the client and you have 30 memory tools available in-session.
 Ask your assistant to call `memory_health` -- the healthy reply is
@@ -148,9 +153,13 @@ both filled in:
 Neither has Claude Code's session hooks. The server's MCP `instructions`
 tell their agent to search memory first, and `sextant-session-start` prints
 the same priming text the Claude Code hook injects (identity, clock, house
-rules, the current project) for pasting into `AGENTS.md`, opencode's
-`instructions`, or any system prompt; `atlas-prime "<task words>"` prints
-task-matched facts the same way. End-of-session summaries exist only through
+rules from `identity/house-rules.md` when that file exists, the current
+project) for pasting into `AGENTS.md`, opencode's `instructions`, a Claude
+Desktop project's instructions, a Cursor rule, or any system prompt;
+`atlas-prime "<task words>"` prints task-matched facts the same way. Both
+are snapshots: the clock line is the moment you ran them, so re-run and
+re-paste when the identity or rules change rather than treating the text
+as live. End-of-session summaries exist only through
 the Claude Code Stop hook. Before any client is involved, `sextant verify`
 starts the stdio server, writes one fact and searches it back
 (`ROUND-TRIP: OK`); `sextant verify --command "<the command in your
@@ -178,13 +187,22 @@ atlas-review-memory summary    # corpus health at a glance
 
 ```bash
 sextant-import --source obsidian --path ~/MyVault        # report first ($HOME\MyVault in PowerShell; it does not expand ~)
-sextant-import --source chatgpt --path conversations.json --yes
+sextant-import --source chatgpt --path conversations.json --yes   # or the export .zip as delivered
+sextant-import --source claude --path data-export.zip --yes       # claude.ai export (zip or its conversations.json)
 ```
 
 Imports are structural and provenance-stamped (never overwrite anything);
 a note you changed in the vault lands as a new `_2` copy next to the earlier
-import (nothing is ever overwritten); archive the stale one. Keyword
-search picks imported notes up on its own; if you run Ollama, refresh the
+import (nothing is ever overwritten) and the report names the older copy as
+superseded; archive it. A note you renamed or moved in the vault is
+recognised by its content and skipped (the report says where it already
+is). The report also lists every link the import did not follow (links can
+point outside the vault), every binary or undecodable file it skipped, and
+the first twenty destinations. A ChatGPT export keeps only the live branch
+of each conversation (regenerated or edited answers are left out). Keyword
+search picks imported notes up on its own (Chinese, Japanese and Korean text is
+matched character by character, so `東京` finds `東京都`; full-width letters and
+half-width katakana match their ordinary forms); if you run Ollama, refresh the
 semantic index with `sextant-embed-index` to enable semantic search
 (`ollama pull nomic-embed-text` once, then searches understand meaning,
 not just keywords; without it, keyword search works exactly as before).
@@ -233,7 +251,10 @@ not just keywords; without it, keyword search works exactly as before).
 - **Web dashboard**: needs a key first --
   `python -c "import secrets; print(secrets.token_urlsafe(32))"`,
   set it as `ATLAS_WEB_API_KEY` (persistently: see docs/CONFIGURATION.md's
-  note on setting variables), then `sextant-web` and open
+  note on setting variables), then `sextant-web` and open. The page itself
+  loads two UI libraries (htmx, Tailwind) from public CDNs in your browser:
+  offline or with those hosts blocked, every panel stays at "loading..." and
+  the page says so; the server's JSON endpoints still answer. Open
   `http://127.0.0.1:8766/?key=<your key>` once; that exchanges the key for a
   session cookie and the bare URL works from then on (without the cookie it
   answers 401, on purpose). Without the key the server refuses to start.
@@ -257,7 +278,7 @@ Your corpus is a directory of plain markdown -- backing it up is copying a
 folder. Zip it, sync it with any tool you already trust (rclone, Syncthing,
 a cloud-drive client), or make it a git repo and push it somewhere private.
 Everything else (`~/.atlas`, the FTS and embedding indexes) is derived state
-that `atlas-fts-rebuild` and `sextant-embed-index` rebuild from the markdown,
+that `sextant-fts-rebuild` (alias `atlas-fts-rebuild`) and `sextant-embed-index` rebuild from the markdown,
 so the corpus is the only thing you need to protect. If you back up to a
 shared or cloud location, encrypt first (e.g. an rclone crypt remote) --
 your memory is the most personal data on the machine.
@@ -452,10 +473,17 @@ if you roll back.
   `project:<name>` lands in `projects/<name>.md`, `reference:<topic>` in
   `reference/<topic>.md`, and `preference:<topic>` in `feedback/<topic>.md`. The same
   grammar works as the `scope` of a search.
-- **Two small folders appear inside the corpus later:** `versions/` (a copy of every file
+- **Two folders appear inside the corpus later:** `versions/` (a copy of every file
   before it is rewritten; it appears the first time an existing note is changed, not at init)
-  and `_atlas/.locks/` (cross-process write locks, created on the first locked write). Both are
-  Sextant's; leave them.
+  and `_atlas/.locks/` (cross-process write locks, created on the first locked write; a lock a
+  crashed writer left on this machine is cleared by the next write, one from another machine is
+  broken after 30 s of waiting, and doctor names locks older than a minute). Both are
+  Sextant's. `versions/` is your undo history and it grows by one full copy of a note per
+  write: 500 short facts across ten notes made about 2 MB of history for an 89 KB corpus, and a
+  200 KB note rewritten fifty times adds 10 MB. `sextant versions` reports the size and the
+  biggest notes; `sextant versions --prune --older-than 90 --keep-last 3` plans a prune (copies
+  older than 90 days, always keeping the newest three of every note) and `--yes` deletes them.
+  The live notes are never touched by it.
 - **What gets primed at session start.** The session-start hook injects your identity, the
   clock, your own house rules (from `identity/house-rules.md`, if you wrote any), and the
   project note whose name matches the current directory under `ATLAS_PROJECTS_ROOT`

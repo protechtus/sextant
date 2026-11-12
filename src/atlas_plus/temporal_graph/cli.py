@@ -288,6 +288,8 @@ def reset_cmd(
 
 def main():
     """Entry point for the atlas-temporal CLI (Typer app)."""
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     app()
 
 

@@ -552,6 +552,7 @@ class MemoryFile:
     parts: tuple         # relative path parts
     name: str            # file name
     text: Optional[str]  # full file text, or None if unreadable
+    not_utf8: bool = False   # decoded with replacement characters (a cp932/latin-1 note, AG17)
 
 
 def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
@@ -562,6 +563,7 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
     each file once instead of once per check. Never raises; unreadable files get text=None.
     """
     from atlas_plus.curation.scan import is_excluded_mirror
+    from atlas_plus._fsutil import inside, is_link
 
     base = root if root is not None else MEMORY_ROOT
     out: list[MemoryFile] = []
@@ -572,10 +574,18 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
             rel_path = md.relative_to(base)
         except ValueError:
             continue
+        if is_link(md) or not inside(md, base):
+            continue   # a linked note is not part of this corpus (the indexer skips it too)
         if any(p in _SCAN_SKIP_DIRS for p in rel_path.parts) or is_excluded_mirror(rel_path.parts):
             continue
+        not_utf8 = False
         try:
-            text: Optional[str] = md.read_text(encoding="utf-8", errors="replace")
+            raw = md.read_bytes()
+            try:
+                text: Optional[str] = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-8", errors="replace")
+                not_utf8 = True
         except OSError:
             text = None
         out.append(MemoryFile(
@@ -583,6 +593,7 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
             parts=rel_path.parts,
             name=md.name,
             text=text,
+            not_utf8=not_utf8,
         ))
     return out
 
@@ -604,6 +615,32 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         "md_files": len(files),
         "identity_present": identity_present,
     }
+    bad = [f.rel for f in files if f.not_utf8]
+    if bad:
+        # A cp932-saved note primed as mojibake and refused writes with an unnamed error (AG17).
+        result["not_utf8"] = bad[:10]
+        result["not_utf8_hint"] = (f"{len(bad)} note(s) are not UTF-8 (search shows them as garbage and "
+                                   f"writes to them are refused): re-save as UTF-8: " + ", ".join(bad[:5])
+                                   + (" ..." if len(bad) > 5 else ""))
+    try:
+        locks_dir = root / "_atlas" / ".locks"
+        if locks_dir.is_dir():
+            import time as _t
+            ages = []
+            for lk in locks_dir.iterdir():
+                try:
+                    ages.append(_t.time() - lk.stat().st_mtime)
+                except OSError:
+                    continue
+            if ages:
+                result["locks"] = {"count": len(ages), "oldest_s": int(max(ages))}
+                if max(ages) > 60:
+                    result["locks_hint"] = (f"{len(ages)} write lock file(s) under {locks_dir}, the oldest "
+                                            f"{int(max(ages))} s old: a lock left by a crashed writer on this "
+                                            "machine is cleared by the next write; one from another machine "
+                                            "is broken after 30 s of waiting")
+    except OSError:
+        pass
     try:
         from atlas_plus.mcp.memory_server import fts as _fts
         from atlas_plus.mcp.memory_server.embeddings import index_status
@@ -1445,6 +1482,9 @@ def render_text(data: dict) -> str:
             lines.append(f"  \033[33mempty\033[0m  root: {mc.get('root')}")
         if mc.get("hint"):
             lines.append(f"  \033[33m{mc['hint']}\033[0m")
+        for extra_key in ("not_utf8_hint", "locks_hint"):
+            if mc.get(extra_key):
+                lines.append(f"  \033[33m{mc[extra_key]}\033[0m")
         emb = mc.get("embed_index") or {}
         if emb.get("indexed"):
             gap = emb.get("corpus_files", 0) - emb.get("indexed", 0)
@@ -2076,7 +2116,10 @@ def main() -> int:
     """Entry point for the atlas-doctor CLI: collect and render (or JSON-dump) system health."""
     import argparse
     # Windows pipes default to cp1252, which cannot encode the sparkline glyphs;
-    # never let an encoding gap crash a health report.
+    # never let an encoding gap crash a health report. UTF-8 when piped: the launcher printed
+    # a Japanese corpus path as `?? ??` while `sextant doctor` printed it right (AG17).
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(errors="replace")

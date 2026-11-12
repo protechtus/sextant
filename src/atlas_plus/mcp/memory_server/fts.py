@@ -14,7 +14,9 @@ Scope authority multiplier: 1.2x for feedback/ and identity/ files.
 import json
 import logging
 import os
+import re
 import sqlite3
+import unicodedata
 import threading
 import time
 from datetime import datetime, timezone
@@ -38,6 +40,40 @@ CREATE TABLE IF NOT EXISTS atlas_meta (
 # connect time and the index is rebuilt, since the virtual table bakes the tokenizer in.
 _TOKENIZER = "porter unicode61 remove_diacritics 2"
 _TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1"   # SQLite before 3.27
+# Index text format tag, stored with the tokenizer name in atlas_meta: a change here rebuilds
+# every existing index once (the format is baked into the stored text, like the tokenizer).
+_INDEX_TAG = " +cjk1"
+
+# unicode61 has no notion of CJK word boundaries: a run of ideographs between spaces was ONE
+# token, so `東京都` never matched `東京` and `人口` found nothing inside a sentence (AG17,
+# sweep 11). The index stores a WORD JOINER (U+2060, a separator to unicode61 and invisible on
+# screen) between adjacent CJK characters, and a query turns each CJK run into a phrase of those
+# characters, so consecutive-character matching works the way CJK readers expect. Text is also
+# NFKC-folded on both sides (full-width ABC, half-width katakana).
+_CJK_SEP = "\u2060"
+_CJK_RE = re.compile(
+    "[\u1100-\u11ff\u2e80-\u2fdf\u3040-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u4dbf"
+    "\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\U00020000-\U0003134f]")
+_CJK_RUN_RE = re.compile(_CJK_RE.pattern + "{2,}")
+
+
+def _cjk_split(text: str) -> str:
+    """Insert the separator between adjacent CJK characters."""
+    return _CJK_RUN_RE.sub(lambda m: _CJK_SEP.join(m.group(0)), text)
+
+
+def _norm_index_text(text: str) -> str:
+    return _cjk_split(unicodedata.normalize("NFKC", text))
+
+
+def _prepare_query(query: str) -> str:
+    """NFKC-fold the query and turn every CJK run into a phrase of its characters."""
+    q = unicodedata.normalize("NFKC", query)
+    return _CJK_RE.sub(lambda m: m.group(0), q) if not _CJK_RE.search(q) else _CJK_RUN_OR_CHAR_RE.sub(
+        lambda m: '"' + _CJK_SEP.join(m.group(0)) + '"', q)
+
+
+_CJK_RUN_OR_CHAR_RE = re.compile(_CJK_RE.pattern + "+")
 _CREATE_FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
 USING fts5(path, frontmatter_json, body, tokenize='{tokenizer}');
@@ -135,7 +171,7 @@ def _connect() -> sqlite3.Connection:
         conn.execute(_CREATE_META)
         conn.execute(_CREATE_FILES)
         row = conn.execute("SELECT value FROM atlas_meta WHERE key='tokenizer'").fetchone()
-        if row is None or row[0] not in (_TOKENIZER, _TOKENIZER_FALLBACK):
+        if row is None or row[0] not in (_TOKENIZER + _INDEX_TAG, _TOKENIZER_FALLBACK + _INDEX_TAG):
             # First run on an index built with another tokenizer: drop it and forget every
             # file's mtime so the next update_incremental rebuilds from the corpus.
             # One transaction: DDL does not open an implicit one in sqlite3, so a crash between
@@ -155,9 +191,10 @@ def _connect() -> sqlite3.Connection:
                     raise
                 chosen = _TOKENIZER_FALLBACK
                 conn.execute(_CREATE_FTS.format(tokenizer=_TOKENIZER_FALLBACK))
-            conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('tokenizer',?)", (chosen,))
+            conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('tokenizer',?)",
+                         (chosen + _INDEX_TAG,))
         else:
-            conn.execute(_CREATE_FTS.format(tokenizer=row[0]))
+            conn.execute(_CREATE_FTS.format(tokenizer=row[0].removesuffix(_INDEX_TAG)))
         # Safe migration: add last_confirmed column if it doesn't exist yet
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(memory_files)")}
         if "last_confirmed" not in existing_cols:
@@ -180,13 +217,30 @@ def _walk_memory():
     results and bloats the rebuild. (Single source of truth: curation.scan.)
     """
     from atlas_plus.curation.scan import is_excluded_mirror
-    for p in MEMORY_ROOT.rglob("*.md"):
-        parts = p.relative_to(MEMORY_ROOT).parts
-        if parts and (parts[0] in EXCLUDED_DIRS or is_excluded_mirror(parts)):
+    from atlas_plus._fsutil import is_link
+    # Links are never followed: a symlinked `creds.md` put a file from outside the corpus into
+    # search results while the read tool refused it (AG16, sweep 11).
+    for dirpath, dirnames, filenames in os.walk(MEMORY_ROOT, followlinks=False):
+        d = Path(dirpath)
+        try:
+            rel_parts = d.relative_to(MEMORY_ROOT).parts
+        except ValueError:
+            dirnames[:] = []
             continue
-        if p.name == "_README.md":  # sextant-init scaffolding notes, not memories (persona pass 2026-11-10)
-            continue
-        yield str(p.relative_to(MEMORY_ROOT)).replace("\\", "/"), p
+        keep = []
+        for name in sorted(dirnames):
+            parts = rel_parts + (name,)
+            if (not rel_parts and name in EXCLUDED_DIRS) or is_excluded_mirror(parts) or is_link(d / name):
+                continue
+            keep.append(name)
+        dirnames[:] = keep
+        for name in sorted(filenames):
+            if not name.endswith(".md") or name == "_README.md":
+                continue   # _README.md: sextant-init scaffolding notes, not memories (persona pass 2026-11-10)
+            p = d / name
+            if is_link(p):
+                continue
+            yield "/".join(rel_parts + (name,)), p
 
 
 def _walk_memory_stats():
@@ -218,8 +272,11 @@ def _walk_memory_stats():
                 name = entry.name
                 try:
                     is_dir = entry.is_dir(follow_symlinks=False)
+                    st0 = entry.stat(follow_symlinks=False)
                 except OSError:
                     continue
+                if entry.is_symlink() or getattr(st0, "st_reparse_tag", 0) & 0x20000000:
+                    continue   # links are never followed (parity with _walk_memory)
                 if not is_dir and not name.endswith(".md"):
                     continue
                 rel = prefix + name
@@ -331,7 +388,7 @@ def update_incremental() -> int:
                 conn.execute("DELETE FROM memory_fts WHERE path=?", (rel,))
                 conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
-                    (rel, frontmatter_json, body),
+                    (rel, _norm_index_text(frontmatter_json), _norm_index_text(body)),
                 )
                 conn.execute(
                     "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size)"
@@ -438,7 +495,7 @@ def rebuild(force: bool = False) -> int:
 
                 conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
-                    (rel, frontmatter_json, body),
+                    (rel, _norm_index_text(frontmatter_json), _norm_index_text(body)),
                 )
                 st = abs_path.stat()
                 conn.execute(
@@ -460,13 +517,15 @@ def rebuild(force: bool = False) -> int:
 
 
 def main() -> None:
-    """Console entry point for ``atlas-fts-rebuild``.
+    """Console entry point for ``atlas-fts-rebuild`` / ``sextant-fts-rebuild``.
 
     The bare ``rebuild()`` is unsuitable as an entry point: console_scripts run
     ``sys.exit(func())``, and rebuild() returns the indexed-file COUNT (a nonzero
     "failure" exit code) -- or -1 (a no-op) when the index is already fresh. This
     wrapper forces a full rebuild by default, prints the count, and exits 0.
     """
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -524,8 +583,11 @@ def mark_dirty() -> None:
 
 
 def search(query: str, scope: str = "", limit: int = 10,
-           _healed: bool = False, _fallback_stage: int = 0) -> list[dict]:
+           _healed: bool = False, _fallback_stage: int = 0, _raw: str | None = None) -> list[dict]:
     """FTS search. Returns list of {path, snippet, score}."""
+    if _raw is None:
+        _raw = query
+        query = _prepare_query(query)
     # Freshness on search: incremental -- only changed files are
     # re-read/re-indexed (a stat sweep when nothing changed). The old
     # full-rebuild-on-any-change was the large-corpus cliff (ROADMAP 4).
@@ -565,7 +627,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             return []
         if not _healed and _heal_malformed():
             log.error("FTS DB was corrupt at connect (%s) -- self-healed; retrying query once", exc)
-            return search(query, scope=scope, limit=limit, _healed=True)
+            return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw)
         log.error("FTS connect failed on a corrupt DB and self-heal did not recover: %s", exc)
         return []
     try:
@@ -612,6 +674,7 @@ def search(query: str, scope: str = "", limit: int = 10,
         seen: dict[str, dict] = {}
         for r in rows:
             p, snip, sc = r[0], r[1], r[2]
+            snip = (snip or "").replace(_CJK_SEP, "")
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}
 
@@ -679,18 +742,19 @@ def search(query: str, scope: str = "", limit: int = 10,
             # punctuated token ("config.toml AppData") used to drop straight to a literal
             # phrase, which only matches the words adjacent in that order and so returned
             # nothing although every word was on disk (deep install lanes 2026-11-09).
-            tokens = [t for t in query.split() if t]
+            folded = unicodedata.normalize("NFKC", _raw)
+            tokens = [t for t in folded.split() if t]
             if len(tokens) > 1:
-                tokenized = " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+                tokenized = " ".join('"' + _cjk_split(t).replace('"', '""') + '"' for t in tokens)
                 log.info("FTS query was not valid FTS5 syntax; retrying with each token quoted")
                 conn.close()
-                return search(tokenized, scope=scope, limit=limit, _fallback_stage=1)
+                return search(tokenized, scope=scope, limit=limit, _fallback_stage=1, _raw=_raw)
             _fallback_stage = 1  # single token: go straight to the phrase form
         if syntax and _fallback_stage == 1:
-            phrase = '"' + query.replace('"', '""') + '"'
+            phrase = '"' + _cjk_split(unicodedata.normalize("NFKC", _raw)).replace('"', '""') + '"'
             log.info("FTS query still not valid FTS5 syntax; retrying as one literal phrase")
             conn.close()
-            return search(phrase, scope=scope, limit=limit, _fallback_stage=2)
+            return search(phrase, scope=scope, limit=limit, _fallback_stage=2, _raw=_raw)
         # Genuinely unexpected: table missing or corrupted DB.
         log.warning("FTS search failed (index missing or corrupt): %s -- returning empty results", exc)
         return []
@@ -709,7 +773,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             return []
         if not _healed and _heal_malformed():
             log.error("FTS index was corrupt (%s) -- self-healed by rebuild; retrying query once", exc)
-            return search(query, scope=scope, limit=limit, _healed=True)
+            return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw)
         log.error("FTS search failed on a corrupt index and self-heal did not recover: %s", exc)
         return []
     finally:

@@ -229,6 +229,14 @@ def cmd_ingest(ctx: typer.Context) -> None:
     _tapp()
 
 
+@app.command("versions", **_PASSTHROUGH)
+def cmd_versions(ctx: typer.Context) -> None:
+    """Report the corpus history (versions/) and prune old copies (same as sextant-versions)."""
+    from atlas_plus.versions_cmd import main as versions_main
+
+    _delegate(versions_main, "sextant versions", ctx.args)
+
+
 @app.command("uninstall", **_PASSTHROUGH)
 def cmd_uninstall(ctx: typer.Context) -> None:
     """Report or remove Sextant's data (same as sextant-uninstall)."""

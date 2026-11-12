@@ -695,7 +695,8 @@ async def agents_html(request: Request):
     except httpx.ConnectError:
         return HTMLResponse(
             '<div class="text-red-400 text-xs">Brain not running.'
-            '<br>Start: <code>.venv\\Scripts\\python.exe -m atlas_plus.brain.server</code></div>'
+            '<br>Start: <code>' + (".venv\\Scripts\\python.exe" if os.name == "nt" else ".venv/bin/python")
+            + ' -m atlas_plus.brain.server</code></div>'
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 401:
@@ -3877,6 +3878,12 @@ async def memory_search(request: Request, q: str = ""):
             if "_inbox" in md_file.parts:
                 continue
             try:
+                rel_parts = md_file.relative_to(MEMORY_ROOT).parts
+            except ValueError:
+                rel_parts = ()
+            if any(p in ("versions", "_atlas", "_sync", "archive") for p in rel_parts):
+                continue   # the grep listed one hit per version copy (AG17, sweep 11)
+            try:
                 text = md_file.read_text(encoding="utf-8", errors="replace")
                 if q_lower not in text.lower():
                     continue
@@ -4455,6 +4462,15 @@ button{{font-family:inherit;cursor:pointer}}
 </style>
 </head>
 <body hx-headers='{{"X-Sextant-Request": "1"}}'>
+<div id="cdn-missing" style="display:none;margin:8px;padding:10px 14px;border:1px solid #b45309;background:#431407;color:#fde68a;font:14px system-ui,sans-serif;border-radius:6px">
+This dashboard loads two UI libraries (htmx from unpkg.com, Tailwind from cdn.tailwindcss.com) in your browser.
+They did not load, so every panel stays at "loading..." and nothing is styled: you are offline, or those hosts are blocked.
+The server itself is fine; its JSON endpoints (for example <code>/api/stats/summary</code>) answer without them.
+</div>
+<script>
+// Offline, the page was a permanent "loading..." shell with no explanation (AG18, sweep 11).
+window.addEventListener("DOMContentLoaded",function(){{if(typeof htmx==="undefined"){{var b=document.getElementById("cdn-missing");if(b)b.style.display="block";}}}});
+</script>
 
 <!-- Top bar -->
 <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-700 shrink-0">

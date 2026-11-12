@@ -51,9 +51,18 @@ def version_before_write(target: Path, root: Path | None = None) -> Path | None:
         rel = target.relative_to(base)
     except ValueError:
         return None  # outside this corpus: nothing to version here
+    from atlas_plus._fsutil import inside, is_link
+    vroot = base / "versions"
+    if vroot.exists() and (is_link(vroot) or not inside(vroot, base)):
+        # A junctioned versions/ carried every history copy outside the corpus (AG16, sweep 11).
+        raise ValueError(f"{vroot} is a link that leaves the corpus; fix it before writing "
+                         "(nothing was written)")
     try:
         versions_dir = base / "versions" / rel.parent
         versions_dir.mkdir(parents=True, exist_ok=True)
+        if versions_dir != vroot and (is_link(versions_dir) or not inside(versions_dir, base)):
+            raise ValueError(f"{versions_dir} is a link that leaves the corpus; fix it before writing "
+                             "(nothing was written)")
 
         date_str = date.today().isoformat()
         stem = target.stem

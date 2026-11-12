@@ -232,8 +232,9 @@ walkthrough is in the Uninstalling section of
 
 The clone path is load-bearing from here on: the MCP registration, the
 session-hook commands and the editable install all hard-code it. If you
-move or rename the clone later, re-run `pip install -e .` from the new
-location, then `claude mcp remove -s user sextant` and re-add, and fix any
+move or rename the clone later, re-run `python -m pip install -e .` with
+the venv's own interpreter from the new location (the venv's `pip` and
+`sextant` launchers die silently until then), then `claude mcp remove -s user sextant` and re-add, and fix any
 hook paths. (Installing with pipx or `uv tool` instead of a venv? There is
 no `.venv` and no `deploy/` folder then; `sextant setup` prints the
 registration for that install, and `sextant verify` proves it. The short
@@ -427,7 +428,8 @@ What it does not do (know these before you rely on it):
   refuses every cloud provider, everywhere -- including the summarizer's
   own fallback path, enforced in code on both. Separately, the web
   dashboard loads two UI libraries (htmx, Tailwind) from public CDNs:
-  your browser contacts them, the data path stays local.
+  your browser contacts them, the data path stays local; offline, the page
+  says so and its panels stay empty while the JSON endpoints keep working.
 - **Two opt-in features make their own outbound calls.** The Brain's
   research executor queries a web search API (DuckDuckGo by default, or
   your own SearXNG instance) with the research topic, only when

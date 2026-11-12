@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import stat
 import sys
@@ -205,7 +206,10 @@ def _client_config_references() -> list[str]:
     A deleted clone with a live registration means a failed MCP launch and a
     dead Stop hook on every session; surface it so the user unhooks first.
     """
-    hits: list[str] = []
+    return _scan_client_configs()
+
+
+def _client_config_candidates() -> list[Path]:
     home = Path.home()
     candidates = [
         home / ".claude.json",
@@ -213,6 +217,7 @@ def _client_config_references() -> list[str]:
         Path.cwd() / ".mcp.json",
         Path.cwd() / ".claude" / "settings.json",
         home / ".cursor" / "mcp.json",
+        Path.cwd() / ".cursor" / "mcp.json",   # the project form setup names (AG13, sweep 11)
     ]
     # Claude Code honours CLAUDE_CONFIG_DIR; Claude Desktop keeps its own file (AG2, pipeline
     # sweep 2026-11-11: both were invisible to this report).
@@ -232,9 +237,24 @@ def _client_config_references() -> list[str]:
         appdata = os.environ.get("APPDATA", "").strip()
         if appdata:
             candidates.append(Path(appdata) / "Claude" / "claude_desktop_config.json")
+        # The Microsoft Store (MSIX) build keeps its roaming files under the package's
+        # LocalCache, not %APPDATA% (AG13, sweep 11).
+        localappdata = os.environ.get("LOCALAPPDATA", "").strip()
+        if localappdata:
+            try:
+                for pkg in (Path(localappdata) / "Packages").glob("Claude_*"):
+                    candidates.append(pkg / "LocalCache" / "Roaming" / "Claude" / "claude_desktop_config.json")
+            except OSError:
+                pass
     else:
         candidates += [home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
                        home / ".config" / "Claude" / "claude_desktop_config.json"]
+    return candidates
+
+
+def _scan_client_configs() -> list[str]:
+    hits: list[str] = []
+    candidates = _client_config_candidates()
     # Only count a config that points at THIS install (its venv or its source tree), not any
     # Sextant mention: a second install on the same machine must not be told to unhook the
     # first one (agent-runbook rerun 2026-11-09).
@@ -260,6 +280,59 @@ def _client_config_references() -> list[str]:
     return hits
 
 
+_CMD_PATH_RE = re.compile(r'(?:"command"\s*:|\bcommand\s*=)\s*"((?:[^"\\]|\\.)+)"')
+
+
+def _running_hints(corpus: Path) -> list[str]:
+    """Signs that a server or writer is still using this install: the report said nothing while
+    a live writing server had its corpus deleted from under it (AG15, sweep 11)."""
+    import socket
+    import time as _time
+    hints: list[str] = []
+    try:
+        port = int(os.environ.get("ATLAS_MCP_PORT") or 8765)
+    except ValueError:
+        port = 8765
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            hints.append(f"something answers on 127.0.0.1:{port} (ATLAS_MCP_PORT): if it is this install's "
+                         "MCP server, stop it before removing data")
+    except OSError:
+        pass
+    try:
+        locks = corpus / "_atlas" / ".locks"
+        if locks.is_dir():
+            fresh = [p for p in locks.iterdir() if _time.time() - p.stat().st_mtime < 120]
+            if fresh:
+                hints.append(f"{len(fresh)} write lock(s) touched in the last two minutes under {locks}: "
+                             "a writer may still be running")
+    except OSError:
+        pass
+    return hints
+
+
+def _stale_client_references() -> list[str]:
+    """Client configs whose Sextant command points at a path that no longer exists: after a
+    moved or deleted venv the registration matched nothing and went unreported (AG13)."""
+    out: list[str] = []
+    for cfg in _client_config_candidates():
+        try:
+            if not cfg.is_file() or cfg.stat().st_size > 4_000_000:
+                continue
+            text = cfg.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _CMD_PATH_RE.finditer(text):
+            raw = m.group(1).replace("\\\\", "\\")
+            low = raw.lower()
+            if "sextant" not in low and "atlas_plus" not in low and "atlas-memory" not in low:
+                continue
+            if os.sep in raw or "/" in raw:
+                if not Path(raw).exists():
+                    out.append(f"{cfg} -> {raw}")
+    return out
+
+
 def report() -> dict:
     """Inventory everything a Sextant install leaves on a machine."""
     corpus = atlas_paths.memory_root()
@@ -282,6 +355,8 @@ def report() -> dict:
         },
         "session_log": _session_log_info(),
         "client_configs": _client_config_references(),
+        "stale_client_configs": _stale_client_references(),
+        "running": _running_hints(corpus),
         # A command run before the variables were set (components, search) creates the HOME
         # defaults; with the variables set, this report never mentioned them (MN6, pipeline
         # sweep 2026-11-11).
@@ -573,6 +648,8 @@ def _prog() -> str:
 
 
 def main() -> None:
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     parser = argparse.ArgumentParser(
         prog=_prog(),
         description="Report and (only when explicitly told) remove Sextant data.",
@@ -581,6 +658,8 @@ def main() -> None:
                         help="remove the state dir (transcripts, task DB, ledger, sync, reports: NOT a cache; asks for its path)")
     parser.add_argument("--corpus", action="store_true", help="remove the memory corpus (YOUR DATA)")
     parser.add_argument("--all", action="store_true", help="remove both")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="report only (already the default; accepted for habit)")
     parser.add_argument("--yes", "-y", action="store_true", help="required for any deletion")
     parser.add_argument(
         "--confirm-path",
@@ -617,6 +696,12 @@ def main() -> None:
         print("           your own notes, so this command never deletes it -- review by hand.")
     for cfg in info["client_configs"]:
         print(f"  client config still references this install: {cfg}")
+    for hint in info.get("running", []):
+        print(f"  running?  {hint}")
+    for stale in info.get("stale_client_configs", []):
+        print(f"  client config points at a Sextant command that no longer exists (moved or deleted "
+              f"venv?): {stale}")
+        print("           re-run `sextant setup` from the live install and replace that entry.")
     for stray in info.get("stray_defaults", []):
         print(f"  also on this machine: the default {stray['kind']} location {stray['path']} "
               f"({stray['files']} file(s), {_fmt_size(stray['size'])}) is not the configured one: either a "

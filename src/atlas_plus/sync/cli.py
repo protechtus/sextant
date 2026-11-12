@@ -264,6 +264,8 @@ def cmd_checkin(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     from atlas_plus.branding import prog as _prog
     parser = argparse.ArgumentParser(
         prog=_prog("atlas-sync"), description="Sextant Sync: devices, hub, and corpus sync"

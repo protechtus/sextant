@@ -244,7 +244,9 @@ class TestImportAutodetect:
     def test_zip_is_claude(self, tmp_path):
         from atlas_plus.import_cmd import _detect_source
         z = tmp_path / "e.zip"; z.write_bytes(b"PK")
-        assert _detect_source(z) == "claude"
+        # A zip whose conversations.json cannot be read is ambiguous now: ChatGPT delivers a zip
+        # too (AG14, sweep 11), so the shape inside decides and junk is "pass --source".
+        assert _detect_source(z) is None
 
     def test_json_shapes(self, tmp_path):
         import json as _json

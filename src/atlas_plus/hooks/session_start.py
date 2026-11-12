@@ -15,6 +15,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from atlas_plus import paths as atlas_paths
+from atlas_plus.hooks._quote import quote_note as _q
 
 
 def _under_projects(path: Path) -> bool:
@@ -289,6 +290,8 @@ def _open_tickets(project_name: str, tickets: list | None = None) -> str:
 
 
 def main() -> None:
+    from atlas_plus._console import utf8_stdout_when_piped
+    utf8_stdout_when_piped()
     """Claude Code session-start hook: emit Atlas identity, project state, and last-session summary to the context window."""
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print("Usage: atlas-session-start\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
@@ -336,12 +339,12 @@ def main() -> None:
             lines += ["## Identity", "(not filled in yet: identity/user.md still holds the sextant-init "
                       "template; edit it, or ask the assistant to remember who you are)", ""]
         else:
-            lines += ["## Identity"] + ([f"Name: {name}"] if name else []) + [identity, ""]
+            lines += ["## Identity"] + ([f"Name: {_q(name)[2:]}"] if name else []) + [_q(identity), ""]
 
     # --- House rules (only when the user's corpus defines any) ---
     _rules = _house_rules()
     if _rules:
-        lines += ["## House rules", _rules, ""]
+        lines += ["## House rules", _q(_rules), ""]
 
     # --- Current time (temporal sensor) ---
     clock = _world_clock()
@@ -374,17 +377,17 @@ def main() -> None:
                     break
         if project_file.exists():
             proj_text = _read_file(project_file, max_chars=500)
-            lines += ["### Project notes", proj_text, ""]
+            lines += ["### Project notes", _q(proj_text), ""]
 
         lines += ["### Open tickets", _open_tickets(name, _tickets), ""]
 
         anti = _anti_memory(name)
         if anti:
-            lines += ["### Do NOT suggest (rejected by user)", anti, ""]
+            lines += ["### Do NOT suggest (rejected by user)", _q(anti), ""]
 
         temporal = _temporal_snapshot(name)
         if temporal:
-            lines += ["### Temporal context (current)", temporal, ""]
+            lines += ["### Temporal context (current)", _q(temporal), ""]
 
         # Session pattern predictions: projects that frequently co-occur with this one.
         try:
@@ -408,7 +411,7 @@ def main() -> None:
             state = json.loads(SESSION_STATE_FILE.read_text(encoding="utf-8"))
             ts = state.get("timestamp", "unknown time")
             summary = state.get("summary", "")
-            lines += ["## Resumed after compaction", f"Compacted at: {ts}", summary, ""]
+            lines += ["## Resumed after compaction", f"Compacted at: {ts}", _q(str(summary)), ""]
         except Exception:
             pass
 
@@ -420,7 +423,7 @@ def main() -> None:
         idx = text.find("\n## ")
         if idx != -1:
             entry = text[idx:idx + 600].strip()
-            lines += ["## Last session", entry, ""]
+            lines += ["## Last session", _q(entry), ""]
 
     lines.append("=== END ATLAS CONTEXT ===")
     sys.stdout.buffer.write("\n".join(lines).encode("utf-8"))

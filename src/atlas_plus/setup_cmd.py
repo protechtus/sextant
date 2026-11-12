@@ -369,9 +369,11 @@ def render(info: dict, client: str = "all") -> str:
             lines.append("2. Claude Desktop, Cursor, or any MCP client that takes JSON: merge "
                          "this `mcpServers` entry into the client's config")
             lines.append("   (Claude Desktop: %APPDATA%\\Claude\\claude_desktop_config.json on "
-                         "Windows, ~/Library/Application Support/Claude/claude_desktop_config.json "
+                         "Windows, or for the Microsoft Store build "
+                         "%LOCALAPPDATA%\\Packages\\Claude_*\\LocalCache\\Roaming\\Claude\\; "
+                         "~/Library/Application Support/Claude/claude_desktop_config.json "
                          "on macOS; Cursor: ~/.cursor/mcp.json, or .cursor/mcp.json in a project; "
-                         "keep any servers already there):")
+                         "keep any servers already there, then restart the client):")
         lines += [json.dumps(info["client_config_json"], indent=2), ""]
     if client in ("all", "codex"):
         if client == "all":
@@ -470,7 +472,18 @@ def main(argv: list[str] | None = None) -> int:
                   "(claude-desktop and cursor print the JSON block)", file=sys.stderr)
             return 2
     args = ap.parse_args(argv)
-    if args.client in ("claude-desktop", "cursor"):
+    if args.client in ("claude-desktop", "cursor", "json"):
+        # The bare JSON forms said nothing about where it goes; a whole-file paste would drop
+        # the user's other servers (AG13, sweep 11). stdout stays pure JSON; this is stderr.
+        where = {
+            "claude-desktop": "%APPDATA%\\Claude\\claude_desktop_config.json (Microsoft Store build: "
+                              "%LOCALAPPDATA%\\Packages\\Claude_*\\LocalCache\\Roaming\\Claude\\) on Windows, "
+                              "~/Library/Application Support/Claude/claude_desktop_config.json on macOS",
+            "cursor": "~/.cursor/mcp.json, or .cursor/mcp.json inside the project",
+            "json": "your MCP client's config file",
+        }[args.client]
+        print(f"sextant setup: merge the `mcpServers` entry below into {where}; keep any servers already "
+              "there, then restart the client.", file=sys.stderr)
         args.client = "json"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.name):
         print(f"sextant setup: --name {args.name!r} must be letters, digits, '.', '_' or '-' (64 max)",

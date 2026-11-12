@@ -99,6 +99,18 @@ def _ref_fields(kwargs: dict) -> dict:
     return {"ref": " ".join(refs)[:200]} if refs else {}
 
 
+_TOOL_LIMITER = None
+
+
+def _tool_limiter():
+    """At most eight tool calls in worker threads at once (created inside the running loop)."""
+    global _TOOL_LIMITER
+    if _TOOL_LIMITER is None:
+        import anyio
+        _TOOL_LIMITER = anyio.CapacityLimiter(8)
+    return _TOOL_LIMITER
+
+
 def _recording_tool(*dargs, **dkwargs):
     register = _original_tool(*dargs, **dkwargs)
 
@@ -120,6 +132,10 @@ def _recording_tool(*dargs, **dkwargs):
                         **_ref_fields(kwargs),
                     )
         else:
+            # A synchronous tool ran ON the event loop: one writer waiting for a lock froze
+            # /health and every other client's call for the whole wait (AG15, sweep 11).
+            # Sync tools now run in a worker thread; the cross-process write lock already
+            # serialises writers, threads included.
             @functools.wraps(fn)
             def _wrapped(*args, **kwargs):
                 t0 = time.perf_counter()
@@ -135,6 +151,17 @@ def _recording_tool(*dargs, **dkwargs):
                         ms=round((time.perf_counter() - t0) * 1000, 1),
                         **_ref_fields(kwargs),
                     )
+
+            @functools.wraps(fn)
+            async def _threaded(*args, **kwargs):
+                import anyio
+                return await anyio.to_thread.run_sync(
+                    functools.partial(_wrapped, *args, **kwargs), limiter=_tool_limiter())
+
+            # FastMCP gets the threaded form; the module keeps the plain callable, so in-process
+            # callers (the CLI, verify, the tests) call the tool as a function.
+            register(_threaded)
+            return _wrapped
         return register(_wrapped)
 
     return _decorator
@@ -1173,6 +1200,14 @@ def _run_http_with_auth(token: str) -> None:
             if os.name != "nt":   # on Windows SO_REUSEADDR would let the probe steal a live port
                 _s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
             _s.bind((host, MCP_PORT))
+        # Binding 0.0.0.0 succeeds beside a 127.0.0.1 listener on Windows (AG15, sweep 11): a
+        # connect probe to loopback catches the server the bind did not.
+        probe_host = "::1" if ":" in host else "127.0.0.1"
+        try:
+            with _socket.create_connection((probe_host, MCP_PORT), timeout=0.3):
+                raise OSError(f"something already answers on {probe_host}:{MCP_PORT}")
+        except (ConnectionRefusedError, TimeoutError, _socket.timeout):
+            pass
     except OSError as exc:
         log.error("cannot bind %s:%d (%s): another server, maybe another Sextant install, holds "
                   "that port. Set ATLAS_MCP_PORT=<free port> for this install (its clients then "
