@@ -73,7 +73,7 @@ the README before exposing anything.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ATLAS_MCP_TOKEN` | -- | Bearer token for the MCP HTTP surface. |
+| `ATLAS_MCP_TOKEN` | -- | Bearer token for the MCP HTTP surface. To rotate it: restart the server with the new value; a client that still holds a session gets 401 with the old token and `Session not found` with the new one until it initializes again (every HTTP client re-initializes after a rotation). |
 | `ATLAS_WEB_API_KEY` | -- | Bearer token for the dashboard. `sextant-web` refuses to start without it (generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"`; `--no-auth` allows loopback-only dev). Scripts send it as `Authorization: Bearer <key>` (an `X-Atlas-Key: <key>` header is also accepted). |
 | `ATLAS_BRAIN_API_KEY` | -- | Bearer token for the Brain API. |
 | `ATLAS_SYNC_DEVICE_TOKEN` | -- | This device's token when talking to a sync hub. |

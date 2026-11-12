@@ -255,6 +255,33 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _proc_start(pid: int) -> str:
+    """An identifier of WHEN this process started (empty when unknown). A restarted container runs
+    the server as PID 1 again, so a lock left by the crashed PID 1 looked alive and the first write
+    waited 30 s (MN18, sweep 11); the start time tells the two apart."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = k32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return ""
+            try:
+                ft = (wintypes.FILETIME * 4)()
+                if k32.GetProcessTimes(handle, ctypes.byref(ft[0]), ctypes.byref(ft[1]),
+                                       ctypes.byref(ft[2]), ctypes.byref(ft[3])):
+                    return str((ft[0].dwHighDateTime << 32) | ft[0].dwLowDateTime)
+                return ""
+            finally:
+                k32.CloseHandle(handle)
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+        # field 22 (1-based) is starttime in clock ticks since boot; the comm field may hold spaces
+        return stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError, ValueError):
+        return ""
+
+
 def _lock_holder_dead(lock_path: Path) -> bool:
     """True when the lock's token names a process on THIS machine that no longer runs. A lock
     left by a killed writer stalled the next write for 30 s with no word (AG15, sweep 11)."""
@@ -266,9 +293,16 @@ def _lock_holder_dead(lock_path: Path) -> bool:
     if len(parts) < 3 or parts[2] != _lock_host():
         return False   # another machine's lock (shared corpus): only the stale rule applies
     try:
-        return not _pid_alive(int(parts[0]))
+        pid = int(parts[0])
     except ValueError:
         return False
+    if not _pid_alive(pid):
+        return True
+    if len(parts) >= 4 and parts[3]:
+        started = _proc_start(pid)
+        if started and started != parts[3]:
+            return True   # the pid was reused by a later process (a restarted container's PID 1)
+    return False
 
 
 _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
@@ -395,7 +429,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
     # Each acquirer writes its token into the file; release only unlinks
     # if the file still carries OUR token.
     import uuid as _uuid
-    owner_token = f"{os.getpid()}:{_uuid.uuid4().hex}:{_lock_host()}"
+    owner_token = f"{os.getpid()}:{_uuid.uuid4().hex}:{_lock_host()}:{_proc_start(os.getpid())}"
     first_seen: tuple[float, float] | None = None  # (observed_at_monotonic, mtime)
     last_holder_check = 0.0
     waited_notice = 0.0
@@ -409,7 +443,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
     eacces_no_lock = 0
     while True:
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             os.write(fd, owner_token.encode("ascii"))
             os.fsync(fd)
             break

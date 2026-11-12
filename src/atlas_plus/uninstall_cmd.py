@@ -291,16 +291,21 @@ def _running_hints(corpus: Path) -> list[str]:
     import socket
     import time as _time
     hints: list[str] = []
-    try:
-        port = int(os.environ.get("ATLAS_MCP_PORT") or 8765)
-    except ValueError:
-        port = 8765
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
-            hints.append(f"something answers on 127.0.0.1:{port} (ATLAS_MCP_PORT): if it is this install's "
-                         "MCP server, stop it before removing data")
-    except OSError:
-        pass
+    # Both servers read the corpus; the port names say whether the value is set or the default
+    # (MN18: the hint named ATLAS_MCP_PORT while it was unset, and never looked at the dashboard).
+    for var, default, what in (("ATLAS_MCP_PORT", 8765, "MCP server"), ("ATLAS_WEB_PORT", 8766, "dashboard")):
+        raw = os.environ.get(var)
+        try:
+            port = int(raw) if raw else default
+        except ValueError:
+            port = default
+        label = f"{var}={port}" if raw else f"the default {what} port {port}; {var} is not set in this shell"
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                hints.append(f"something answers on 127.0.0.1:{port} ({label}): if it is this install's "
+                             f"{what}, stop it before removing data")
+        except OSError:
+            pass
     try:
         locks = corpus / "_atlas" / ".locks"
         if locks.is_dir():
