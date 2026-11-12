@@ -21,6 +21,18 @@ QUERY_KEEP = 300            # characters of the query kept per record (AG10: a 5
 ROTATE_BYTES = 5_000_000    # the log rotates to .1 past this size; load_log reads the whole file
 
 
+def _is_link(p: Path) -> bool:
+    try:
+        st = p.lstat()
+    except OSError:
+        return False
+    import stat as _stat
+    if _stat.S_ISLNK(st.st_mode):
+        return True
+    attrs = getattr(st, "st_file_attributes", 0)
+    return bool(attrs & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
 def _rotate_if_large() -> None:
     try:
         if LOG_FILE.exists() and LOG_FILE.stat().st_size > ROTATE_BYTES:
@@ -40,6 +52,8 @@ def log_search(
     """Append a search record. Non-blocking: silently swallows errors."""
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if _is_link(LOG_FILE.parent) or _is_link(LOG_FILE):
+            return   # a symlinked logs dir or log file would carry the rotation outside the state dir (MN12)
         _rotate_if_large()
         is_miss = result_count == 0 or top_score < MISS_THRESHOLD
         record = {

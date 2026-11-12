@@ -305,6 +305,20 @@ def cmd_web() -> None:
     cmd_dashboard()
 
 
+@app.command("context", hidden=True)
+def cmd_context() -> None:
+    """Where the priming text is (for `sextant context` / `prime` guessers)."""
+    console.print("The session priming text is printed by [bold]sextant-session-start[/bold] (what the "
+                  "Claude Code hook injects; paste it into AGENTS.md or another client's instructions) and "
+                  "task-matched facts by [bold]atlas-prime \"<task words>\"[/bold].")
+
+
+@app.command("prime", hidden=True)
+def cmd_prime() -> None:
+    """Alias of `context` (hint only)."""
+    cmd_context()
+
+
 @app.command("serve", hidden=True)
 def cmd_serve() -> None:
     """Alias of `dashboard` (hint only)."""

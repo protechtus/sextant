@@ -225,6 +225,13 @@ def _is_reserved_device_name(name: str) -> bool:
     return False
 
 
+def _looks_like_short_name(name: str) -> bool:
+    for i, c in enumerate(name):
+        if c == "~" and i + 1 < len(name) and name[i + 1].isdigit():
+            return True
+    return False
+
+
 def _scrub_controls(text: str) -> str:
     """Drop C0/C1 control characters except tab, newline and carriage return, and replace lone
     surrogates: ESC/BEL/OSC sequences stored in a note reached the operator's terminal through
@@ -473,6 +480,11 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
             raise ValueError(f"Invalid scope parameter {param!r}: control or invisible characters are not allowed.")
         if any(c in param for c in '*?"<>|'):
             raise ValueError(f"Invalid scope parameter {param!r}: the characters * ? \" < > | cannot be used in a file name.")
+        if _looks_like_short_name(param):
+            # `PROJEC~1` is NTFS's 8.3 alias of another file: writing through it renamed the
+            # long-named note (MN12, sweep 10). No real name needs a tilde followed by a digit.
+            raise ValueError(f"Invalid scope parameter {param!r}: a tilde followed by a digit is a Windows "
+                             "short-name alias of another file.")
         if param and (param.strip(".") == "" or param.startswith(".")):
             raise ValueError(f"Invalid scope parameter {param!r}: must not start with a dot.")
         if param and param.endswith("."):

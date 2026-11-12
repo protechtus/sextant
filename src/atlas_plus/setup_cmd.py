@@ -22,6 +22,7 @@ backslash doubled so it does not escape the closing quote (adversarial review, 2
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import os
 import shlex
@@ -78,11 +79,16 @@ def _q(value: str, posix: bool | None = None) -> str:
     posix = (os.name != "nt") if posix is None else posix
     if posix:
         return shlex.quote(value)
-    if '"' in value or "\n" in value or "\r" in value:
-        raise UnquotableValue(f"a value with a quote or a line break cannot be passed on Windows: {value!r}")
+    if '"' in value or "'" in value or "\n" in value or "\r" in value:
+        # A single quote has no form that both PowerShell ('it''s') and Git Bash ('it'\''s')
+        # read the same way, and the printed line is pasted into either: bash dropped the quote
+        # and registered a path that does not exist (MN12, sweep 10). Refused, like a double
+        # quote; the JSON forms carry any value.
+        raise UnquotableValue(f"a value with a quote or a line break cannot be passed on a Windows "
+                              f"command line: {value!r}")
     if value.endswith("\\"):
         value = value + "\\"
-    return "'" + value.replace("'", "''") + "'"
+    return "'" + value + "'"
 
 
 def _q_cmd(value: str) -> str:
@@ -172,6 +178,10 @@ def _toml_str(value: str) -> str:
     """A TOML string for a path: literal (single-quoted, no escapes) unless it holds a quote,
     then basic with the backslashes doubled. A hand-typed basic string `"C:\\sextant\\..."` made
     Codex refuse its whole config (AG12, sweep 10)."""
+    if "\n" in value or "\r" in value:
+        # Neither TOML string form carries a line break on one line; a broken table took every
+        # other Codex server down with it (MN12, sweep 10).
+        raise UnquotableValue(f"a value with a line break cannot be written into config.toml: {value!r}")
     if "'" not in value:
         return "'" + value + "'"
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -235,9 +245,11 @@ def hooks_json(python: str, env: dict[str, str], posix: bool | None = None) -> d
     }}
 
 
-def describe(environ: dict | None = None) -> dict:
+def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
     """Everything `setup` knows, as data (the --json output). Never raises on a bad value: the
-    piece that cannot be quoted carries an `error` and the others are still printed."""
+    piece that cannot be quoted carries an `error` and the others are still printed. ``name``
+    is the server name every form registers (a second install on one machine needs its own;
+    MN9, sweep 10)."""
     from atlas_plus import paths as atlas_paths
 
     env = path_env(environ)
@@ -252,11 +264,12 @@ def describe(environ: dict | None = None) -> dict:
         "state_dir": str(atlas_paths.state_dir()),
         "env": env,
         "hook_env": henv,
-        "client_config_json": mcp_servers_json(py, env),
+        "client_config_json": mcp_servers_json(py, env, name),
         "verify": verify,
+        "server_name": name,
     }
     try:
-        out["claude_code"] = claude_code_command(py, env)
+        out["claude_code"] = claude_code_command(py, env, name)
     except UnquotableValue as exc:
         out["claude_code"] = None
         out["error"] = str(exc)
@@ -265,12 +278,16 @@ def describe(environ: dict | None = None) -> dict:
     except UnquotableValue as exc:
         out["settings_json"] = None
         out["error"] = str(exc)
-    out["codex_toml"] = codex_toml(py, env)
     try:
-        out["codex"] = codex_command(py, env)
+        out["codex_toml"] = codex_toml(py, env, name)
+    except UnquotableValue as exc:
+        out["codex_toml"] = None
+        out["error"] = str(exc)
+    try:
+        out["codex"] = codex_command(py, env, name)
     except UnquotableValue:
         out["codex"] = None   # the TOML form above needs no shell quoting
-    out["opencode_json"] = opencode_json(py, env)
+    out["opencode_json"] = opencode_json(py, env, name)
     # A server has no Claude Code: remote clients reach HTTP mode behind an ingress.
     out["http"] = {
         "serve": f"ATLAS_MCP_TOKEN=<long random> {verify.split(' -m ')[0]} -m {SERVER_MODULE}",
@@ -288,7 +305,8 @@ def describe(environ: dict | None = None) -> dict:
         out["wsl_distro"] = distro
         try:
             out["claude_code_from_windows"] = claude_code_command_from_windows(
-                py, env, distro, existing_wslenv=(os.environ if environ is None else environ).get("WSLENV", ""))
+                py, env, distro, name=name,
+                existing_wslenv=(os.environ if environ is None else environ).get("WSLENV", ""))
         except UnquotableValue as exc:
             out["claude_code_from_windows"] = None
             out["error"] = str(exc)
@@ -300,7 +318,7 @@ def describe(environ: dict | None = None) -> dict:
 def render(info: dict, client: str = "all") -> str:
     env = info["env"]
     lines: list[str] = []
-    if info.get("error") and client in ("all", "claude-code", "hooks"):
+    if info.get("error") and client in ("all", "claude-code", "hooks", "codex"):
         lines += [f"CANNOT PRINT ONE PIECE: {info['error']}", "   (move the corpus to a plainer path, "
                   "or register by hand with the JSON block, which needs no shell quoting)", ""]
     if client == "all":
@@ -333,6 +351,9 @@ def render(info: dict, client: str = "all") -> str:
             if os.name == "nt":
                 lines.append("   (PowerShell or Git Bash: the single quotes are literal in both; "
                              "from cmd.exe use the JSON block in section 2 instead)")
+            if info.get("server_name", SERVER_NAME) == SERVER_NAME:
+                lines.append("   (a second install on this machine needs its own server name: "
+                             "`sextant setup --name sextant-work` prints every form under that name)")
             lines.append("")
         if info.get("claude_code_from_windows"):
             lines += [f"   Windows Claude Code reaching this WSL install ({info['wsl_distro']}); "
@@ -357,7 +378,8 @@ def render(info: dict, client: str = "all") -> str:
                          "($CODEX_HOME/config.toml if set); then `codex mcp list`:")
         if info.get("codex"):
             lines += ["   " + info["codex"]]
-        lines += [info["codex_toml"], ""]
+        if info.get("codex_toml"):
+            lines += [info["codex_toml"], ""]
     if client in ("all", "opencode"):
         if client == "all":
             lines.append("2c. opencode: merge into opencode.json in the project (or "
@@ -430,14 +452,29 @@ def main(argv: list[str] | None = None) -> int:
                     default="all",
                     help="which piece to print (default: all, with instructions; claude-desktop and "
                          "cursor are the json block; codex is the TOML, opencode its JSON)")
+    ap.add_argument("--name", default=SERVER_NAME, metavar="NAME",
+                    help=f"the server name every form registers (default {SERVER_NAME}); a second "
+                         "install on one machine needs a different one, and `claude mcp remove`/`get` "
+                         "take the same name")
     ap.add_argument("--json", action="store_true", help="machine-readable output of everything")
     ap.add_argument("--out", default=None, metavar="FILE",
                     help="also write the output to FILE as UTF-8 without a byte-order mark (PowerShell's "
                          "> redirect adds one, which JSON parsers reject)")
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if "--client" in raw_argv:
+        guess = raw_argv[raw_argv.index("--client") + 1] if raw_argv.index("--client") + 1 < len(raw_argv) else ""
+        if guess in ("claude", "claude_code", "claudecode"):
+            print(f"sextant setup: --client {guess!r} is not a choice; did you mean --client claude-code? "
+                  "(claude-desktop and cursor print the JSON block)", file=sys.stderr)
+            return 2
     args = ap.parse_args(argv)
     if args.client in ("claude-desktop", "cursor"):
         args.client = "json"
-    info = describe()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.name):
+        print(f"sextant setup: --name {args.name!r} must be letters, digits, '.', '_' or '-' (64 max)",
+              file=sys.stderr)
+        return 2
+    info = describe(name=args.name)
     output = json.dumps(info, indent=2) if args.json else render(info, args.client)
     print(output)
     if args.out:
@@ -454,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.out).write_text(file_text + "\n", encoding="utf-8", newline="\n")
     # Only a requested SHELL line that could not be printed is a failure: the JSON blocks need
     # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11).
-    shell_forms = args.client in ("all", "claude-code", "hooks") and not args.json
+    shell_forms = args.client in ("all", "claude-code", "hooks", "codex") and not args.json
     return 1 if (info.get("error") and shell_forms) else 0
 
 

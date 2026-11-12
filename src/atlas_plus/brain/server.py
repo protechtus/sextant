@@ -672,12 +672,26 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
     # the async generator reads and yields them as SSE frames.
     queue: asyncio.Queue = asyncio.Queue(maxsize=200)
 
+    pending: list = []   # every scheduled progress put; run_chat awaits them before `done`
+
     def progress_fn(event: dict) -> None:
-        """Fire-and-forget: schedule queue.put from thread. Exceptions are silent."""
+        """Schedule queue.put from the worker thread and REMEMBER the future: the terminal event
+        must not overtake a progress event, and neither run_coroutine_threadsafe nor
+        call_soon_threadsafe ordering can be relied on across the thread boundary (on Python
+        3.14/3.15 `done` overtook the tool_call events; MN11, sweep 10). run_chat awaits the
+        pending puts before it posts `done` or `error`."""
         try:
-            asyncio.run_coroutine_threadsafe(queue.put(event), loop)
+            pending.append(asyncio.run_coroutine_threadsafe(queue.put(event), loop))
         except Exception:
             pass
+
+    async def _drain_progress() -> None:
+        for fut in list(pending):
+            try:
+                await asyncio.wrap_future(fut)
+            except Exception:
+                pass
+        pending.clear()
 
     async def event_stream() -> AsyncIterator[str]:
         """Yield SSE frames from the queue until a terminal (done/error) event arrives."""
@@ -692,6 +706,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     caller_identity=caller,
                     progress_fn=progress_fn,
                 )
+                await _drain_progress()
                 await queue.put({
                     "type": "done",
                     "text": result.text,
@@ -701,6 +716,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 })
             except Exception as exc:
                 log.exception("chat/stream failed for session %s", req.session_id)
+                await _drain_progress()
                 await queue.put({"type": "error", "detail": str(exc)})
 
         asyncio.create_task(run_chat())

@@ -140,6 +140,9 @@ def _connect() -> sqlite3.Connection:
             # file's mtime so the next update_incremental rebuilds from the corpus.
             conn.execute("DROP TABLE IF EXISTS memory_fts")
             conn.execute("DELETE FROM memory_files")
+            if row is not None:
+                log.info("FTS tokenizer changed (%s -> %s): the keyword index is rebuilt from the "
+                         "corpus on the next search; the corpus itself is untouched", row[0], _TOKENIZER)
             chosen = _TOKENIZER
             try:
                 conn.execute(_CREATE_FTS.format(tokenizer=_TOKENIZER))

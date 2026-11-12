@@ -1264,6 +1264,8 @@ async def memory_capture(request: Request):
     """Quick capture: write a fact to memory via memory_remember tool."""
     _check_auth(request)
     raw = await request.body()
+    if len(raw) > 1_000_000:
+        raise HTTPException(status_code=413, detail="Capture too large (1 MB cap).")
     if _too_deep(raw):
         raise HTTPException(status_code=400, detail="Body nesting too deep.")
     try:

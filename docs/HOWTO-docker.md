@@ -124,6 +124,19 @@ services:
 published ports that will actually be used, and the curls above then need
 the new ports too.)
 
+## Updating a Compose install
+
+`git checkout main` if the clone is pinned to a commit (a detached-HEAD
+`git pull` prints a help page, exits 0, and the next build silently rebuilds
+the old source), then `git pull && docker compose build && docker compose up -d`.
+The volume is untouched; the first search after the update rebuilds the
+keyword index once when the tokenizer changed (the container log says so),
+and last week's image still reads the new index if you roll back. Ten wrong
+tokens from the host lock the correct client out for five minutes in Compose
+too; set `ATLAS_MCP_TRUSTED_PEERS` on the `mcp` service to the Compose
+network's gateway (`docker network inspect <project>_default`) if your own
+tooling can trip it.
+
 ## Alpine and other base images
 
 The image is `python:3.11-slim` (Debian). `python:3.12-alpine` (musl) works
@@ -175,7 +188,10 @@ the first start, or the first write fails with permission denied.
 `docker compose down` stops and removes the containers and keeps the volume,
 which is why `up -d` later still finds your notes. `docker compose down -v`
 also deletes the volume, corpus included: take the cold backup above first.
-Images are never removed by either; `docker image rm sextant` if you want
+Images are never removed by either; they are named after the Compose
+project (`sextant-mcp`, `sextant-web` for a clone in a folder called
+`sextant`; `docker images | grep sextant` lists them), so two clones never
+overwrite each other's build. `docker image rm sextant-mcp sextant-web` if you want
 that too.
 
 ## Device sync

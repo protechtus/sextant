@@ -238,11 +238,21 @@ class TestSharedTicketScan:
         assert "ATL-100" in result
         assert "OPS-001" not in result  # other project filtered out
 
-    def test_all_tickets_returns_none_on_broken_store(self):
-        from atlas_plus.hooks.session_start import _all_tickets
-        with patch("atlas_plus.tickets.store.list_tickets",
-                   side_effect=Exception("db error")):
-            assert _all_tickets() is None
+    def test_all_tickets_returns_none_on_broken_store(self, tmp_path):
+        from atlas_plus.hooks import session_start as ss
+        (tmp_path / "tickets").mkdir()   # a store exists, and it is broken
+        with patch.object(ss, "MEMORY_ROOT", tmp_path), \
+                patch("atlas_plus.tickets.store.list_tickets", side_effect=Exception("db error")):
+            assert ss._all_tickets() is None
+
+    def test_all_tickets_skips_the_store_when_no_tickets_dir(self, tmp_path):
+        """No tickets directory: no store import (it pulls in yaml, 30 ms of the hook; AG11)."""
+        import sys
+        from atlas_plus.hooks import session_start as ss
+        with patch.object(ss, "MEMORY_ROOT", tmp_path):
+            sys.modules.pop("atlas_plus.tickets.store", None)
+            assert ss._all_tickets() == []
+            assert "atlas_plus.tickets.store" not in sys.modules
 
 
 # ---------------------------------------------------------------------------

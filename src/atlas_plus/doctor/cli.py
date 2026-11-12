@@ -160,9 +160,14 @@ def check_services() -> list[dict]:
     def _check(name_url_token):
         name, url, token = name_url_token
         code, body = _http_get(url, token)
+        # The probed port is named: on a machine with two installs a row says WHOSE service it
+        # saw, and ATLAS_*_PORT in the calling shell moves it (MN9, sweep 10).
+        from urllib.parse import urlsplit as _us
+        _port = _us(url).port or ""
         if code == 200:
             status = "up"
-            detail = f"{len(body.get('models', []))} model(s) loaded" if name == "Ollama" else ""
+            detail = (f"{len(body.get('models', []))} model(s) loaded" if name == "Ollama" else "")
+            detail = (detail + f" (:{_port})").strip() if _port else detail
             # The Brain answers 200 while alive but reports a dead model
             # backend in the body (2026-10-10); surface that instead of
             # calling a half-broken stack "up".

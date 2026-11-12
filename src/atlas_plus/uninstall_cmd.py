@@ -250,6 +250,8 @@ def _client_config_references() -> list[str]:
     for cfg in candidates:
         try:
             if cfg.is_file():
+                if cfg.stat().st_size > 4_000_000:
+                    continue   # no client config is that big; a planted one must not be read whole (MN12)
                 text = _norm(cfg.read_text(encoding="utf-8", errors="replace"))
                 if any(m in text for m in norm_markers):
                     hits.append(str(cfg))
@@ -617,9 +619,10 @@ def main() -> None:
         print(f"  client config still references this install: {cfg}")
     for stray in info.get("stray_defaults", []):
         print(f"  also on this machine: the default {stray['kind']} location {stray['path']} "
-              f"({stray['files']} file(s), {_fmt_size(stray['size'])}) is not the configured one; a command "
-              "run before the variables were set created it. Remove it with ATLAS_" +
-              ("MEMORY_ROOT" if stray["kind"] == "corpus" else "STATE_DIR") + " pointing at it.")
+              f"({stray['files']} file(s), {_fmt_size(stray['size'])}) is not the configured one: either a "
+              "command run before the variables were set created it, or another install on this machine "
+              "uses the defaults. Check which before removing anything (with ATLAS_" +
+              ("MEMORY_ROOT" if stray["kind"] == "corpus" else "STATE_DIR") + " pointing at it).")
     if info["client_configs"]:
         print("           unhook BEFORE deleting the clone, venv or tool install: `claude mcp remove -s user sextant`")
         print("           (with the same CLAUDE_CONFIG_DIR the registration used), `codex mcp remove sextant` for")

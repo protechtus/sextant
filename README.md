@@ -125,13 +125,15 @@ $env:ATLAS_PROJECTS_ROOT  = "$env:ATLAS_WORKSPACE_ROOT\projects"
 # Scaffold your memory corpus there (safe to re-run):
 .\.venv\Scripts\sextant-init.exe
 
-# Optional: run the full test suite (thousands of tests, several minutes):
+# Optional: run the full test suite (thousands of tests, about 3-5 minutes; the telegram and summarizer tests skip unless those extras are installed):
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
 Linux / macOS:
 
-Before the block: you need a Python 3.11+ as `python3`. Stock macOS does not
+Before the block: you need a Python 3.11+ as `python3`, plus git. Fedora and
+other RPM distributions: `sudo dnf install git python3` is the whole
+prerequisite (the venv module and pip come with it). Stock macOS does not
 have one -- the first `git` or `python3` run pops the Xcode Command Line Tools
 dialog (let it finish; its Python is too old anyway), then install from
 [python.org](https://www.python.org/downloads/) or `brew install python@3.12`.
@@ -161,7 +163,7 @@ export ATLAS_PROJECTS_ROOT="$ATLAS_WORKSPACE_ROOT/projects"
 # Scaffold your memory corpus there (safe to re-run):
 .venv/bin/sextant-init
 
-# Optional: run the full test suite (thousands of tests, several minutes):
+# Optional: run the full test suite (thousands of tests, about 3-5 minutes; the telegram and summarizer tests skip unless those extras are installed):
 .venv/bin/python -m pytest tests -q
 ```
 

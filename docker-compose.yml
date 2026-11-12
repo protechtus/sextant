@@ -11,7 +11,9 @@
 
 x-sextant: &sextant
   build: .
-  image: sextant:latest
+  # No fixed image tag: Compose names the image after the project (<project>-mcp, <project>-web),
+  # so two clones or two projects on one machine never overwrite each other's `sextant:latest`
+  # (MN10, sweep 10). `docker images | grep sextant` lists them; the Dockerfile is shared.
   restart: unless-stopped
   volumes:
     - sextant-data:/data

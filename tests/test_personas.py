@@ -1078,7 +1078,8 @@ def test_windows_registration_line_is_single_quoted_for_powershell():
     from atlas_plus import setup_cmd as sc
     hostile = r"C:\\acme & co $100% (50%)\\ws"
     assert sc._q(hostile, posix=False) == "'" + hostile + "'"
-    assert sc._q("it's", posix=False) == "'it''s'"
+    with pytest.raises(sc.UnquotableValue):   # 'it''s' is two strings to Git Bash (MN12, sweep 10)
+        sc._q("it's", posix=False)
     assert sc._q("D:\\", posix=False) == "'D:\\\\'"
     py = r"C:\\py space\\python.exe"
     line = sc.claude_code_command(py, {"ATLAS_WORKSPACE_ROOT": hostile}, posix=False)

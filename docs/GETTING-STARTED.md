@@ -347,7 +347,8 @@ inspect the default locations instead of your real ones.
 4. **Optional layers you set up.** Ollama models pulled for Sextant
    (`ollama rm qwen3:8b nomic-embed-text ...`); Docker:
    `docker compose down -v` deletes the `sextant-data` and `ollama-models`
-   volumes, then `docker image rm sextant:latest`; any systemd units you
+   volumes, then `docker image rm sextant-mcp sextant-web` (the images are named
+   after the Compose project; `docker images | grep sextant`); any systemd units you
    wrote from the self-hosting guide (disable, remove, `daemon-reload`).
 5. **Remove the code.** `pip uninstall sextant-ai` only matters if you
    installed outside the clone's venv; otherwise deleting the clone
@@ -437,7 +438,12 @@ cd sextant && git pull
 ```
 
 Then restart whatever services you run. Docker users:
-`git pull && docker compose build && docker compose up -d`.
+`git pull && docker compose build && docker compose up -d` (on a clone pinned
+to a commit, `git checkout main` first: a detached-HEAD `git pull` prints a
+help page, exits 0, and the build then rebuilds the OLD source). The first
+search after the update rebuilds the keyword index once when the tokenizer
+changed; the log says so, and last week's image still reads the new index
+if you roll back.
 
 ## Good to know (from fresh-install testing)
 
@@ -486,4 +492,8 @@ Then restart whatever services you run. Docker users:
   (plain `sextant-doctor` is a report and always exits 0). On a machine that also runs
   another install, the probes see that install's services; the report says so.
 - **Two installs, one client.** `claude mcp add` registers the server under the name
-  `sextant`; a second install on the same machine must use a different name.
+  `sextant`; a second install on the same machine must use a different name:
+  `sextant setup --name sextant-work` prints every form (Claude Code, JSON,
+  Codex, opencode) under that name, and `claude mcp get` / `remove` take the
+  same name. Two installs also mean two sets of hook commands: Claude Code's
+  settings.json holds one, so pick the install that primes your sessions.
