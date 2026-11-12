@@ -284,7 +284,9 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
         out["codex_toml"] = None
         out["error"] = str(exc)
     try:
-        out["codex"] = codex_command(py, env, name)
+        # No half section: when the TOML cannot carry the value, the `codex mcp add` line (which
+        # would write that same TOML) is withheld too, and CANNOT PRINT names the reason.
+        out["codex"] = codex_command(py, env, name) if out["codex_toml"] else None
     except UnquotableValue:
         out["codex"] = None   # the TOML form above needs no shell quoting
     out["opencode_json"] = opencode_json(py, env, name)
