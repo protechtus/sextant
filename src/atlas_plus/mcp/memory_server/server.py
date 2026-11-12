@@ -73,7 +73,10 @@ def _instructions() -> str:
     return text
 
 
-mcp = FastMCP("atlas-memory", instructions=_instructions())
+# serverInfo.name is what every client shows on first contact; it said atlas-memory while the
+# product is Sextant (known since sweep 8; fixed for the flip, 2026-11-12). The version in
+# serverInfo is the MCP SDK's own, not ours.
+mcp = FastMCP("sextant", instructions=_instructions(), website_url="https://usesextant.com")
 
 # Every tool registration below passes through this wrapper so each call
 # pulses the activity feed (the Helm live map). It records the tool NAME,
