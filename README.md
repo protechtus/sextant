@@ -92,6 +92,15 @@ slashes are fine, and in `claude mcp add` use
 
 Windows (PowerShell):
 
+Before the block: `py --list` must show a 3.11 or newer, and the venv line
+should name it by number (`py -3.12 -m venv .venv`). A plain `python -m venv`
+on an older interpreter fails before Sextant is involved (an `ensurepip ...
+exit status 101` or similar, plus a half-made `.venv` to delete before
+retrying), and `pip install` on an older Python stops with
+`requires a different Python: 3.10.x not in '>=3.11'` and installs nothing.
+Installing with `--no-build-isolation` needs setuptools 77 or newer in that
+environment first (`pip install -U setuptools`).
+
 ```powershell
 git clone https://github.com/protechtus/sextant.git; cd sextant
 py -3 -m venv .venv   # needs Python 3.11+ (check: py --list; install: winget install Python.Python.3.12 or python.org)

@@ -1467,3 +1467,16 @@ def test_docs_carry_the_manual_wave_fixes():
     from atlas_plus import setup_cmd as sc
     text = sc.render(sc.describe(environ={}))
     assert "ATLAS_MCP_HOST=<this" in text and "secrets.token_urlsafe(32)" in text and "that machine's own Python" in text
+
+
+def test_readme_names_the_python_floor_before_each_quickstart_block():
+    """MN2 (impatient, Python 3.10): a plain `python -m venv` fails before the trailing
+    comment on the `py -3` line is ever read, so both quickstart blocks open with the floor."""
+    readme = (_REPO / "docs" / "README-PUBLIC.md").read_text(encoding="utf-8")
+    win = readme.index("Windows (PowerShell):")
+    nix = readme.index("Linux / macOS:")
+    win_block = readme[win:readme.index("```powershell", win)]
+    nix_block = readme[nix:readme.index("```bash", nix)]
+    assert "Before the block" in win_block and "py --list" in win_block
+    assert "requires a different Python" in win_block and "--no-build-isolation" in win_block
+    assert "Before the block" in nix_block and "3.11" in nix_block
