@@ -180,22 +180,17 @@ def hooks_json(python: str, env: dict[str, str], posix: bool | None = None) -> d
     """SessionStart priming and the Stop summarizer, with this interpreter.
 
     Hooks are separate processes: the env block of an MCP registration never reaches them.
-    The variables ride on each command line: `NAME=value` prefixes on POSIX, `set "NAME=value"
-    && ...` on Windows, where Claude Code runs the command through cmd.exe (a `.cmd` wrapper
-    would eat `%` pairs and `setx` changes the human's user environment: AG1 and AG6,
-    pipeline sweep 2026-11-11).
+    Claude Code runs a hook command through sh on POSIX and Git Bash on Windows (PowerShell only
+    when Git Bash is absent; never cmd.exe), so the command is written for bash on every platform
+    and carries the variables as `--env NAME=value` flags that `atlas_plus.hooks.run` applies
+    before any module loads. (A `set "NAME=value" &&` prefix did nothing under Git Bash and the
+    hook primed from the wrong corpus while reporting success: MN1, pipeline sweep 2026-11-11.
+    Single quotes are literal in bash and in PowerShell alike.)
     """
-    posix = (os.name != "nt") if posix is None else posix
-    prefix = ""
-    if env and posix:
-        prefix = " ".join(f"{k}={_q(v, True)}" for k, v in env.items()) + " "
-    elif env:
-        for v in env.values():
-            _q_cmd(v)  # refuse a quote or a line break, as the registration does
-        prefix = " && ".join(f'set "{k}={v}"' for k, v in env.items()) + " && "
-    quote = (lambda v: _q(v, True)) if posix else _q_cmd
-    start = f"{prefix}{quote(python)} -m atlas_plus.hooks.session_start"
-    stop = f"{prefix}{quote(python)} -m atlas_plus.summarizer.hook_entry"
+    del posix  # one form for every platform
+    flags = "".join(f" --env {shlex.quote(f'{k}={v}')}" for k, v in env.items())
+    start = f"{shlex.quote(python)} -m atlas_plus.hooks.run{flags} session-start"
+    stop = f"{shlex.quote(python)} -m atlas_plus.hooks.run{flags} stop"
     return {"hooks": {
         "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": start}]}],
         "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": stop}]}],
@@ -240,8 +235,7 @@ def describe(environ: dict | None = None) -> dict:
         "remote_claude_code": 'claude mcp add -s user --transport http sextant https://<your-host>/mcp '
                               '--header "Authorization: Bearer $ATLAS_MCP_TOKEN"',
         "lan_url": "http://<host>:8765/mcp",
-        "verify_http": f"{verify.split(' -m ')[0]} -m atlas_plus verify --url http://<host>:8765/mcp "
-                       "--token $ATLAS_MCP_TOKEN",
+        "verify_http": "python -m atlas_plus verify --url http://<host>:8765/mcp --token $ATLAS_MCP_TOKEN",
         "docs": _self_hosting_doc(),
     }
     import shutil as _shutil
@@ -289,6 +283,9 @@ def render(info: dict, client: str = "all") -> str:
                          "then restart Claude Code):")
         if info.get("claude_code"):
             lines += ["   " + info["claude_code"]]
+            if Path("/.dockerenv").exists():
+                lines.append("   (this is a container: a client on the host cannot run that command; "
+                             "clients connect over HTTP, section 4)")
             if os.name == "nt":
                 lines.append("   (PowerShell or Git Bash: the single quotes are literal in both; "
                              "from cmd.exe use the JSON block in section 2 instead)")
@@ -316,7 +313,9 @@ def render(info: dict, client: str = "all") -> str:
                          "hooks list. Ask before editing someone else's settings.")
             if info.get("hook_env"):
                 lines.append("   Hooks run outside your shell, so each command below carries the "
-                             "baked-in variables itself; nothing to set user-wide.")
+                             "baked-in variables as --env flags; nothing to set user-wide.")
+            lines.append("   Claude Code runs hook commands through bash (Git Bash on Windows), "
+                         "which these are written for.")
             lines.append("   The session-start hook prints the corpus it read; the Stop hook writes "
                          "nothing until ATLAS_AUTONOMOUS=on.")
         if info.get("settings_json"):
@@ -339,9 +338,13 @@ def render(info: dict, client: str = "all") -> str:
                       "   (0.0.0.0 inside the container, and publish the port on the host's loopback "
                       "only: -p 127.0.0.1:8765:8765)",
                       "   " + h["remote_claude_code"],
-                      f"   (behind an ingress; on a LAN or the same host the URL is {h['lan_url']}; "
-                      "pass the token from a variable, since `claude mcp get` and shell history show it)",
-                      "   Prove a write over HTTP from the client machine: " + h["verify_http"],
+                      f"   (behind an ingress; on a LAN or the same host the URL is {h['lan_url']}, and for "
+                      "another machine on the LAN the server must bind beyond loopback: ATLAS_MCP_HOST=<this "
+                      "machine's LAN address>; make the token with python -c \"import secrets; "
+                      "print(secrets.token_urlsafe(32))\"; pass it from a variable, since `claude mcp get` "
+                      "and shell history show it)",
+                      "   Prove a write over HTTP from the client machine, with that machine's own Python that "
+                      "has the package (or scripts/mcp_roundtrip.py from a clone): " + h["verify_http"],
                       "   (curl -s http://<host>:8765/health answers without a token; 10 failed "
                       "requests from one source lock it out for 5 min (429), and every client behind "
                       "one NAT, Docker's bridge included, shares that counter: ATLAS_MCP_TRUSTED_PEERS=<ip> "
@@ -364,14 +367,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="which piece to print (default: all, with instructions; claude-desktop and "
                          "cursor are the json block)")
     ap.add_argument("--json", action="store_true", help="machine-readable output of everything")
+    ap.add_argument("--out", default=None, metavar="FILE",
+                    help="also write the output to FILE as UTF-8 without a byte-order mark (PowerShell's "
+                         "> redirect adds one, which JSON parsers reject)")
     args = ap.parse_args(argv)
     if args.client in ("claude-desktop", "cursor"):
         args.client = "json"
     info = describe()
-    if args.json:
-        print(json.dumps(info, indent=2))
-    else:
-        print(render(info, args.client))
+    output = json.dumps(info, indent=2) if args.json else render(info, args.client)
+    print(output)
+    if args.out:
+        Path(args.out).write_text(output + "\n", encoding="utf-8", newline="\n")
     # Only a requested SHELL line that could not be printed is a failure: the JSON blocks need
     # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11).
     shell_forms = args.client in ("all", "claude-code", "hooks") and not args.json

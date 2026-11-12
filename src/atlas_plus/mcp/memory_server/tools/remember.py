@@ -166,7 +166,10 @@ def memory_remember(
                           "ATLAS_MEMORY_ROOT (or ATLAS_WORKSPACE_ROOT) to the MCP server; "
                           "`sextant setup` prints the registration with them baked in")}
 
-    version_path = version_before_write(target)
+    _vh: dict = {"path": None}
+
+    def _version(t: Path) -> None:
+        _vh["path"] = version_before_write(t)
 
     try:
         append_fact(
@@ -174,9 +177,12 @@ def memory_remember(
             source=source, confidence=confidence,
             session_id=session_id, task_id=task_id,
             interactive=interactive,
+            pre_write=_version,
         )
     except Exception as e:
-        return {"ok": False, "file": str(target), "version_copy": str(version_path) if version_path else None, "error": str(e)}
+        vp = _vh["path"]
+        return {"ok": False, "file": str(target), "version_copy": str(vp) if vp else None, "error": str(e)}
+    version_path = _vh["path"]
 
     # Optional git autocommit (non-blocking, controlled by ATLAS_MEMORY_AUTOCOMMIT)
     _git_autocommit(target, scope)

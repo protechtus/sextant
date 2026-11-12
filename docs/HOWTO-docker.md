@@ -23,7 +23,7 @@ docker compose exec mcp sextant-doctor       # corpus + state check
 
 curl -s http://127.0.0.1:8765/health         # {"status":"ok","service":"atlas-mcp"}
 docker compose exec mcp sextant verify       # stdio round-trip inside the image: ROUND-TRIP: OK
-docker compose exec mcp sextant search "installed by an agent"   # the fact is on the volume
+docker compose exec mcp sextant search "install verified"   # the fact verify just wrote is on the volume
 ```
 
 The server answers about 8 s after the container starts (the log line is
@@ -54,7 +54,12 @@ docker exec sextant-mcp sextant-init
 container is unreachable through the port publish, and the port is published
 on the host's loopback only, so nothing outside the host can reach it.
 `--restart unless-stopped` is what compose's `restart:` gives you; without it
-a `docker restart` leaves the server stopped. `ATLAS_MCP_TRUSTED_PEERS` lists
+the server stays down after a crash or after Docker (or the host) restarts.
+Load the keys first (`set -a; . ./.env; set +a`) so `$ATLAS_MCP_TOKEN` is
+set: with it empty the container starts, refuses with "Set ATLAS_MCP_TOKEN",
+and the restart policy hides that in a restart loop. Pick your own container
+and volume names if another install already uses `sextant-mcp` and
+`sextant-data`. `ATLAS_MCP_TRUSTED_PEERS` lists
 the Docker bridge gateway because every host client arrives from that address
 and ten failed requests from it (one client with a stale token) would otherwise
 lock out every client, your correct one included, for five minutes (HTTP 429);
@@ -63,15 +68,23 @@ from a read-only bind mount fails (pip cannot write `egg-info` beside the
 source); build the image or copy the source first.
 
 On Windows hosts (Docker Desktop) write the `.env` from PowerShell with
-`python -c "..." | Set-Content -Encoding ascii .env`: the `>` redirection
-there can produce UTF-16, which compose cannot read.
+`python -c "..." | Set-Content -Encoding ascii .env` (`python`, not
+`python3`, which is a Store stub on many machines): the `>` redirection
+there can produce UTF-16 or a byte-order mark, which compose may not read.
+Two more Windows traps: in Git Bash, MSYS rewrites a leading `/data` or
+`/backup` in a command line into `C:/Program Files/Git/...`, so prefix the
+`docker` commands below with `MSYS_NO_PATHCONV=1` (or run them from
+PowerShell); and in PowerShell write `"${PWD}:/backup"`, since `"$PWD:/backup"`
+is a parse error.
 
 Two things about keys that only show up later:
 
 - A variable already set in your shell **overrides** the `.env` value (compose
   precedence). If `ATLAS_MCP_TOKEN` is exported in your profile, the container
-  gets that one, not the file's; `docker compose config | grep TOKEN` shows
-  which won.
+  gets that one, not the file's: every client that reads the file then gets
+  `401` and `claude mcp list` says Failed, with no warning from compose.
+  `docker compose config | grep TOKEN` shows which won; `unset ATLAS_MCP_TOKEN`
+  (or a fresh shell) before `up` fixes it.
 - The doctor's Services rows mean little under compose: each container probes
   its own loopback, so the MCP row is up and every other service reads down
   even when it is running. Use `docker compose ps` and the curls for liveness,
@@ -95,8 +108,21 @@ lands in browser history and any proxy log; a private window helps). Both
 keys are required by the compose file; a missing one stops `docker compose
 up` with the variable's name instead of a restart loop. Ports taken on the
 host already? Put the host side of each mapping in a
-`docker-compose.override.yml` (`ports: ["127.0.0.1:18765:8765"]`) rather
-than editing the tracked file.
+`docker-compose.override.yml` rather than editing the tracked file, and mark
+the list `!override`, or compose APPENDS your mapping to the original and
+still tries to bind the taken port:
+
+```yaml
+services:
+  mcp:
+    ports: !override ["127.0.0.1:18765:8765"]
+  web:
+    ports: !override ["127.0.0.1:18766:8766"]
+```
+
+(`!override` needs Compose 2.24 or newer; `docker compose config` shows the
+published ports that will actually be used, and the curls above then need
+the new ports too.)
 
 ## Your data
 
@@ -106,6 +132,7 @@ One volume, two directories -- the same layout as a bare install:
 docker compose exec mcp ls /data/memory      # the corpus (plain markdown)
 docker volume ls | grep sextant-data         # the volume's real name: <project>_sextant-data,
                                              # where <project> is the clone's folder name
+                                             # (or what you passed to -p)
 docker run --rm -v <project>_sextant-data:/data -v "$PWD:/backup" \
   busybox tar czf /backup/sextant-backup.tgz /data   # cold backup of corpus AND state
                                              # (state holds the sync device registry and the task DB)
@@ -130,6 +157,14 @@ The containers run as uid 1000 (`sextant`); the image
 owns `/data` for the named volume, but a bind-mounted host directory keeps its own
 owner, so `chown -R 1000:1000 ./my-sextant-data` (or make it world-writable) before
 the first start, or the first write fails with permission denied.
+
+## Tearing it down
+
+`docker compose down` stops and removes the containers and keeps the volume,
+which is why `up -d` later still finds your notes. `docker compose down -v`
+also deletes the volume, corpus included: take the cold backup above first.
+Images are never removed by either; `docker image rm sextant` if you want
+that too.
 
 ## Device sync
 

@@ -41,7 +41,7 @@ class TestConstraints:
             proj = tomllib.load(f)["project"]
         direct = list(proj.get("dependencies", []))
         for extra, deps in proj.get("optional-dependencies", {}).items():
-            if extra == "kernel":  # machine-specific path dep, never ships
+            if extra in ("kernel", "trading"):  # kernel: machine-specific path dep; trading: private-only extra the public build drops (its ccxt pin made the public constraints unresolvable, MN4 2026-11-11)
                 continue
             direct += deps
         pinned = _pinned_names()

@@ -316,7 +316,11 @@ def cmd_remember(
     # this is the human-direct counterpart of the memory_remember MCP tool.
     from atlas_plus.mcp.memory_server.tools.remember import memory_remember
 
-    result = memory_remember(scope, fact, source="human-direct", interactive=True)
+    try:
+        result = memory_remember(scope, fact, source="human-direct", interactive=True)
+    except RuntimeError as exc:  # the write kill switch (ATLAS_INTERACTIVE_WRITES=off)
+        console.print(f"[red]Not stored:[/red] {exc}")
+        raise typer.Exit(1)
     if not result.get("ok"):
         console.print(f"[red]Not stored:[/red] {result.get('error')}")
         raise typer.Exit(1)
@@ -332,6 +336,9 @@ def cmd_search(
     limit: int = typer.Option(10, "--limit", "-n"),
 ) -> None:
     """Search your memory from the shell (hybrid keyword + semantic)."""
+    if not query.strip():
+        console.print("[red]Give a query:[/red] sextant search \"<words>\" (an empty query finds nothing).")
+        raise typer.Exit(2)
     from atlas_plus.mcp.memory_server.tools.search import (
         confidence_band, memory_search_hybrid, normalize_search_scope,
     )
@@ -358,8 +365,8 @@ def cmd_search(
             console.print(
                 f"[yellow]No hits[/yellow] for {query!r} ({mode}) in {corpus_files} file(s)"
                 + (f" under scope {scope!r}" if scope else "")
-                + ". Keyword search needs a word that appears in the note; the semantic index "
-                "(sextant-embed-index) finds meaning."
+                + ". Keyword search (fts-only) needs a word that appears in the note; the semantic "
+                "index finds meaning but needs Ollama running and `sextant-embed-index` once."
             )
         raise typer.Exit(0)
     console.print(f"[dim]{len(results)} hit(s), retrieval: {mode}, confidence: {confidence_band(results)}[/dim]")

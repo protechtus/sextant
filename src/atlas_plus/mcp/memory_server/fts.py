@@ -346,6 +346,13 @@ def _heal_malformed() -> bool:
             FTS_DB.rename(FTS_DB.with_name(FTS_DB.name + f".corrupt-{stamp}"))
             log.error("FTS DB quarantined as %s.corrupt-%s (file-level corruption)",
                       FTS_DB.name, stamp)
+            # Keep the three newest quarantines; they accumulated forever (MN3, 2026-11-11).
+            olds = sorted(FTS_DB.parent.glob(FTS_DB.name + ".corrupt-*"))
+            for stale in olds[:-3]:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
         except OSError as exc:
             log.error("could not quarantine corrupt FTS DB: %s", exc)
             return False

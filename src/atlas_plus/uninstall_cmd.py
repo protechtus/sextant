@@ -61,18 +61,47 @@ RUNTIME_ARTIFACTS = ("logs", "search.sqlite", "search.sqlite-journal", "search.s
                      "mcp-search.ndjson", "activity.ndjson", STATE_MARKER)
 
 
-def looks_like_sextant_state(path: Path) -> bool:
-    """Marker present, the directory already holds Sextant-only entries (pre-marker installs), or
-    it holds nothing but the server's own runtime artifacts (a verify that ran before init)."""
-    if (path / STATE_MARKER).exists():
+#: Every entry Sextant itself creates in a state dir. A directory is Sextant state only when the
+#: marker is present or EVERY entry is one of these: "any one generic name" (a `backups/` folder in
+#: ~/Documents) made init adopt a user's folder and uninstall delete it, taxes and all (MN3,
+#: pipeline sweep 2026-11-11).
+EXTRA_STATE_ENTRIES = ("versions", "cache", "updates.txt", "fsdiff", "temporal", "tmp",
+                       "weekly-status", "digests", "dream", "summaries", "sync.sqlite", "sextant-state")
+
+#: What `sextant-init` scaffolds in a corpus; a corpus with none of these is somebody's folder.
+CORPUS_SIGNATURE = ("identity", "projects", "reference", "feedback", "sessions", "_atlas", "decisions")
+
+
+def _known_state_entries() -> frozenset:
+    return (frozenset(STATE_SIGNATURE) | frozenset(RUNTIME_ARTIFACTS) | frozenset(EXTRA_STATE_ENTRIES)
+            | frozenset(name for name, _ in NON_DERIVED_STATE))
+
+
+def _known_state_entry(name: str) -> bool:
+    known = _known_state_entries()
+    if name in known:
         return True
-    if any((path / name).exists() for name in STATE_SIGNATURE):
+    base = name.split(".corrupt-", 1)[0]
+    return base in known or name.endswith((".sqlite-journal", ".sqlite-wal", ".sqlite-shm"))
+
+
+def looks_like_sextant_state(path: Path) -> bool:
+    """Marker present, or every entry is something Sextant creates (pre-marker installs, and a
+    verify that ran before init). One recognised name among strangers is NOT enough."""
+    if (path / STATE_MARKER).exists():
         return True
     try:
         names = [p.name for p in path.iterdir()]
     except OSError:
         return False
-    return bool(names) and all(n in RUNTIME_ARTIFACTS for n in names)
+    return bool(names) and all(_known_state_entry(n) for n in names)
+
+
+def looks_like_sextant_corpus(path: Path) -> bool:
+    """At least one of the directories sextant-init scaffolds, or the protection marker."""
+    if (path / PROTECT_MARKER).exists():
+        return True
+    return any((path / name).is_dir() for name in CORPUS_SIGNATURE)
 
 # Non-derived subtrees the report names so nobody mistakes the state dir for a cache.
 NON_DERIVED_STATE = (
@@ -112,13 +141,24 @@ def _fmt_size(n: int) -> str:
     return f"{n} B"
 
 
+class RefusedTarget(RuntimeError):
+    """A deletion the guard refuses at the last moment (symbolic link)."""
+
+
 def _rmtree(path: Path) -> None:
-    """rmtree that survives Windows read-only files."""
+    """rmtree that survives Windows read-only files and never follows a symbolic link.
+
+    Python's rmtree refuses a symlink by calling onerror(os.path.islink, path); the old handler
+    then chmod-ed the path, which FOLLOWED the link and left the real corpus mode 0200 and
+    unreadable while the caller reported "removed" (MN3, pipeline sweep 2026-11-11).
+    """
+    if _is_link(path):
+        raise RefusedTarget(f"{path} is a symbolic link or junction; point the variable at the real directory")
 
     def _onerror(func, p, _exc):
+        if func is os.path.islink or os.path.islink(p):
+            raise RefusedTarget(f"{p} is a symbolic link inside the target; not followed, nothing deleted there")
         try:
-            import os
-
             os.chmod(p, stat.S_IWRITE)
             func(p)
         except OSError:
@@ -231,7 +271,24 @@ def report() -> dict:
         },
         "session_log": _session_log_info(),
         "client_configs": _client_config_references(),
+        # A command run before the variables were set (components, search) creates the HOME
+        # defaults; with the variables set, this report never mentioned them (MN6, pipeline
+        # sweep 2026-11-11).
+        "stray_defaults": _stray_defaults(corpus, state),
     }
+
+
+def _stray_defaults(corpus: Path, state: Path) -> list[dict]:
+    out: list[dict] = []
+    home = Path.home()
+    for label, default, configured in (("corpus", home / ".memory", corpus), ("state", home / ".atlas", state)):
+        try:
+            if default.exists() and _resolved(default) != _resolved(configured):
+                n, size = _dir_stats(default)
+                out.append({"kind": label, "path": str(default), "files": n, "size": size})
+        except OSError:
+            continue
+    return out
 
 
 def _resolved(p: Path) -> Path:
@@ -299,6 +356,9 @@ def validate_destructive_target(kind: str, target: Path) -> str | None:
         return f"REFUSED: {kind} path {raw} resolves to a network or extended-length path ({t}); use a plain local path"
     if t.parent == t or t == Path(t.anchor):
         return f"REFUSED: {kind} path {t} is a filesystem root"
+    if _is_link(target):
+        return (f"REFUSED: {kind} path {raw} is a symbolic link or junction to {t}; point the variable "
+                "at the real directory (nothing behind a link is ever deleted)")
     for label, root in _protected_roots():
         if label == f"{'state dir' if kind == 'state' else 'memory corpus'}":
             continue  # the target itself
@@ -318,7 +378,22 @@ def validate_destructive_target(kind: str, target: Path) -> str | None:
             return (f"REFUSED: {t} does not carry the {STATE_MARKER} marker that sextant-init writes, "
                     f"so it is not known to be a Sextant state dir; if it is one, run sextant-init with "
                     f"ATLAS_STATE_DIR pointing at it first")
+    if kind == "corpus" and t.exists() and not looks_like_sextant_corpus(t):
+        return (f"REFUSED: {t} does not look like a Sextant corpus (no identity/, projects/, "
+                f"reference/, feedback/, sessions/ or _atlas/ inside it); a mistyped ATLAS_MEMORY_ROOT "
+                "must not turn into rm -rf of somebody's folder")
     return None
+
+
+def _is_link(p: Path) -> bool:
+    """Symbolic link, or an NTFS junction (Path.is_symlink is False for junctions)."""
+    try:
+        if p.is_symlink():
+            return True
+        isj = getattr(os.path, "isjunction", None)
+        return bool(isj and isj(str(p)))
+    except OSError:
+        return False
 
 
 def state_inventory(state: Path) -> list[tuple[str, str, int]]:
@@ -408,7 +483,10 @@ def remove_state(yes: bool, confirm_path: str | None = None, ask=input,
         refusal = validate_destructive_target("state", state)
         if refusal:
             return refusal
-    _rmtree(state)
+    try:
+        _rmtree(state)
+    except RefusedTarget as exc:
+        return f"refused: {exc}"
     return "removed"
 
 
@@ -469,7 +547,10 @@ def remove_corpus(yes: bool, confirm_path: str | None, ask=input,
         refusal = confirm_corpus_removal(yes, confirm_path, ask=ask)
         if refusal is not None:
             return refusal
-    _rmtree(corpus)
+    try:
+        _rmtree(corpus)
+    except RefusedTarget as exc:
+        return f"refused: {exc}"
     return "removed"
 
 
@@ -493,7 +574,7 @@ def main() -> None:
     parser.add_argument(
         "--confirm-path",
         default=None,
-        help="non-interactive corpus confirmation: must name the corpus path (case and slash style are tolerated; anything else refuses)",
+        help="non-interactive corpus confirmation: must name the corpus path (slash style and trailing separators are tolerated, case only where the filesystem ignores it; anything else refuses)",
     )
     parser.add_argument(
         "--confirm-state-path",
@@ -525,6 +606,11 @@ def main() -> None:
         print("           your own notes, so this command never deletes it -- review by hand.")
     for cfg in info["client_configs"]:
         print(f"  client config still references this install: {cfg}")
+    for stray in info.get("stray_defaults", []):
+        print(f"  also on this machine: the default {stray['kind']} location {stray['path']} "
+              f"({stray['files']} file(s), {_fmt_size(stray['size'])}) is not the configured one; a command "
+              "run before the variables were set created it. Remove it with ATLAS_" +
+              ("MEMORY_ROOT" if stray["kind"] == "corpus" else "STATE_DIR") + " pointing at it.")
     if info["client_configs"]:
         print("           unhook BEFORE deleting the clone: `claude mcp remove -s user sextant`")
         print("           and delete any Stop hook entry ending in atlas_plus.summarizer.hook_entry.")

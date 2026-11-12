@@ -228,10 +228,13 @@ Hooks are separate processes: the `env` block of the MCP registration applies to
 server only, not to them. If you set `ATLAS_MEMORY_ROOT` / `ATLAS_STATE_DIR` /
 `ATLAS_PROJECTS_ROOT` in the registration rather than in the user's environment, the hook
 would read a different corpus. The hook block from `setup` therefore carries the same
-variables on each command (`set "NAME=value" && ...` on Windows, where Claude Code runs hooks
-through cmd.exe; `NAME=value ...` on POSIX), so nothing user-wide is needed. Avoid `.cmd`
-wrappers (a `%` in a path must be doubled there) and treat `setx` as an ASK point (it changes
-the human's user environment). The round-trip in step 6 plus a session-start run from a
+variables on each command as `--env NAME=value` flags that `atlas_plus.hooks.run` applies
+before anything loads; the command is written for bash, which is what Claude Code runs hook
+commands through on every platform (Git Bash on Windows; PowerShell only when Git Bash is
+absent, where the single quotes are literal too; never cmd.exe). Nothing user-wide is needed;
+treat `setx` as an ASK point (it changes the human's user environment). Prove it the way a
+hook runs: `bash -c "<the command>"` from a shell with no `ATLAS_*` variables must print
+`Corpus: <the corpus from step 4>`. The round-trip in step 6 plus a session-start run from a
 project directory should show the same identity note from both.
 
 ## 6. Prove it works (the round-trip)
@@ -262,15 +265,15 @@ Exact call shapes (parameter names matter):
 
 1. `memory_health` with no arguments. Expect `"status": "ok"`.
 2. `memory_remember_tool` with `scope="project:demo"` and
-   `fact="Sextant installed by an agent on <date>."`. Expect a result naming a file under
+   `fact="Sextant install verified on <date> (sextant verify)."`. Expect a result naming a file under
    `projects/`.
-3. `memory_search_tool` with `query="Sextant installed by an agent"`. Expect the fact back
+3. `memory_search_tool` with `query="Sextant install verified"`. Expect the fact back
    with a `confidence` band (high/medium/low/starved).
 
 Scope grammar for call 2: `project:<name>`, `reference:<topic>`, `preference:<topic>`. A bare
 `reference` is rejected.
 
-The CLI can confirm the write too: `<venv-python> -m atlas_plus search "installed by an agent"`.
+The CLI can confirm the write too: `<venv-python> -m atlas_plus search "install verified"`.
 
 ## 7. Report to the human
 

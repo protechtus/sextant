@@ -306,7 +306,28 @@ async def lifespan(app: FastAPI):
     poll_task.cancel()
 
 
-app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan)
+# No unauthenticated API map: /docs, /redoc and /openapi.json listed every route to anyone
+# who could reach the port (MN4, pipeline sweep 2026-11-11).
+app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+
+# Browser hardening (MN4, pipeline sweep 2026-11-11): the two CDN scripts are pinned by
+# subresource integrity, only those two origins may run script, nothing may frame the page,
+# and the referrer never leaves. 'unsafe-inline' stays for the page's own inline script and
+# Tailwind's generated styles.
+_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -4329,9 +4350,12 @@ def _html_full(key: str) -> str:
 <title>Sextant Helm</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,{_FAVICON_SVG_B64}">
 <link rel="icon" type="image/x-icon" href="data:image/x-icon;base64,{_FAVICON_ICO_B64}">
-<script src="https://unpkg.com/htmx.org@1.9.12"></script>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+<script src="https://cdn.tailwindcss.com/3.4.17" integrity="sha384-igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K" crossorigin="anonymous"></script>
 <script>
+// The bootstrap key must not stay in the address bar, history or any referrer: the cookie
+// carries the session from here on (MN4, pipeline sweep 2026-11-11).
+(function(){{try{{if(location.search.indexOf("key=")!==-1){{history.replaceState(null,"",location.pathname);}}}}catch(e){{}}}})();
 // Every request from this page carries X-Sextant-Request (CSRF guard; see _check_auth).
 (function(){{const f=window.fetch;window.fetch=function(u,o){{o=o||{{}};const h=new Headers(o.headers||{{}});if(!h.has("X-Sextant-Request"))h.set("X-Sextant-Request","1");o.headers=h;return f(u,o);}};}})();
 </script>

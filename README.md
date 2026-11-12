@@ -124,8 +124,9 @@ dialog (let it finish; its Python is too old anyway), then install from
 [python.org](https://www.python.org/downloads/) or `brew install python@3.12`.
 Ubuntu 24.04 ships Python 3.12, but creating a venv needs
 `sudo apt install python3.12-venv` first -- if you skip it, the venv error
-message names the exact package, and the half-made `.venv` it leaves behind
-must be deleted before retrying.
+message names the exact package; delete the half-made `.venv` it leaves behind
+before retrying with the package installed (the no-sudo fallback in
+GETTING-STARTED, `venv --without-pip`, works on top of it as is).
 
 ```bash
 git clone https://github.com/protechtus/sextant.git && cd sextant
@@ -402,11 +403,12 @@ check our homework.
 
 What it does not do (know these before you rely on it):
 
-- **Local by default is not local by force.** The session-summarizer's
-  `auto` mode falls back to the Anthropic API when an `ANTHROPIC_API_KEY`
-  is present in your environment and Ollama is unavailable -- transcript
-  text would go to that provider (other LLM roles routed through the
-  provider layer can also fall back to OpenAI). `ATLAS_LOCAL_ONLY=on`
+- **Local by default, and local by force unless you say otherwise.** The
+  session-summarizer's `auto` mode is local-only: an `ANTHROPIC_API_KEY` in
+  your environment never sends transcript text anywhere by itself. Only
+  `ATLAS_LOCAL_ONLY=off` enables the cloud fallback (Anthropic for the
+  summarizer, OpenAI for other roles routed through the provider layer;
+  see CONFIGURATION.md). `ATLAS_LOCAL_ONLY=on`
   refuses every cloud provider, everywhere -- including the summarizer's
   own fallback path, enforced in code on both. Separately, the web
   dashboard loads two UI libraries (htmx, Tailwind) from public CDNs:

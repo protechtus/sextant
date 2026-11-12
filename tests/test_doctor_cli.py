@@ -726,7 +726,7 @@ class TestMemoryTrends:
         for sub in ("identity", "feedback", "reference"):
             (mem / sub).mkdir(parents=True, exist_ok=True)
         (mem / "identity" / "alex.md").write_text(
-            "---\nid: alex\ntitle: Alex\ntype: identity\nlast_confirmed: 2026-05-01\ntags: [identity]\n---\nJay is a support engineer.\n",
+            "---\nid: alex\ntitle: Alex\ntype: identity\nlast_confirmed: 2026-05-01\ntags: [identity]\n---\nAlex is a support engineer.\n",
             encoding="utf-8",
         )
         (mem / "feedback" / "editor.md").write_text(

@@ -30,6 +30,11 @@ log = logging.getLogger("atlas.mcp.server")
 # Bearer token for HTTP mode. Must be set when --http-auth is used.
 # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
 _MCP_TOKEN = os.environ.get("ATLAS_MCP_TOKEN", "")
+if _MCP_TOKEN != _MCP_TOKEN.strip():
+    # A CRLF .env or EnvironmentFile leaves a newline on the token; the presented token is
+    # stripped by auth.py, so the server could never be satisfied (MN3, pipeline sweep 2026-11-11).
+    log.warning("ATLAS_MCP_TOKEN carried leading or trailing whitespace; using the trimmed value")
+    _MCP_TOKEN = _MCP_TOKEN.strip()
 
 from .config import MEMORY_ROOT, MCP_PORT
 from .resources import register_resources

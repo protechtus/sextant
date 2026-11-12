@@ -68,7 +68,7 @@ def main() -> None:
     parser.add_argument(
         "--confirm-path",
         default=None,
-        help="non-interactive corpus confirmation: must name the corpus path (case and slash style are tolerated; anything else refuses)",
+        help="non-interactive corpus confirmation: must name the corpus path (slash style and trailing separators are tolerated, case only where the filesystem ignores it; anything else refuses)",
     )
     args = parser.parse_args()
 

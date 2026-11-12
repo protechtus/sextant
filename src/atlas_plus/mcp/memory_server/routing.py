@@ -110,6 +110,23 @@ import time as _time
 from contextlib import contextmanager
 
 
+def _fsync_dir(directory: Path) -> None:
+    """Make the rename itself durable on POSIX (a power cut, not a crash, could otherwise
+    forget it); Windows has no directory fsync and needs none here."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _atomic_write_text(target: Path, content: str) -> None:
     """tmp + os.replace, the same durability pattern sync/apply.py uses --
     a crash mid-write leaves the old file intact, never a half-written one.
@@ -136,6 +153,7 @@ def _atomic_write_text(target: Path, content: str) -> None:
             _time.sleep(delay)
         try:
             os.replace(tmp, target)
+            _fsync_dir(target.parent)
             # Every corpus write through this primitive voids the FTS
             # freshness window (expert pass 2026-10-05, M1: hooking only
             # append_fact left decisions/anti-memories/confirms invisible
@@ -381,6 +399,16 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
             raise ValueError(
                 f"Invalid scope parameter {param!r}: reserved device name on Windows."
             )
+        # Control characters break the YAML frontmatter (a newline in the id line) and cannot
+        # exist on NTFS; a name that is only dots or starts with one is a hidden or parent entry;
+        # a very long name fails deep inside the temp-file write with an internal file name
+        # (MN3, pipeline sweep 2026-11-11).
+        if any(ord(c) < 32 or ord(c) == 127 for c in param):
+            raise ValueError(f"Invalid scope parameter {param!r}: control characters are not allowed.")
+        if param and (param.strip(".") == "" or param.startswith(".")):
+            raise ValueError(f"Invalid scope parameter {param!r}: must not start with a dot.")
+        if len(param) > 120:
+            raise ValueError(f"Invalid scope parameter: {len(param)} characters; the limit is 120.")
     else:
         key = scope.strip().lower()
         param = ""
@@ -458,6 +486,7 @@ def append_fact(
     session_id: Optional[str] = None,
     task_id: Optional[str] = None,
     interactive: bool = False,
+    pre_write=None,
 ) -> None:
     """Append fact to target under a dated header. Creates file if needed.
 
@@ -495,6 +524,11 @@ def append_fact(
     # cross-process lock -- concurrent writers previously lost each other's
     # facts silently.
     with _write_lock(target):
+        if pre_write is not None and target.exists():
+            # The version copy is taken HERE, under the lock: taken outside it, concurrent
+            # writers copied the same pre-image and the history lost every state in between
+            # (MN3, pipeline sweep 2026-11-11).
+            pre_write(target)
         if not target.exists():
             # New file: build frontmatter with full provenance fields
             slug = target.stem

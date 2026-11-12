@@ -19,6 +19,10 @@ from atlas_plus.mcp.memory_server.tools.project_state import project_state
 # Helpers
 # ---------------------------------------------------------------------------
 
+pytestmark = pytest.mark.skipif(__import__("shutil").which("git") is None,
+                                reason="git is not installed (a git-less machine is a supported install)")
+
+
 def _git_init(path: Path) -> None:
     subprocess.run(["git", "init", str(path)], capture_output=True, check=True)
     subprocess.run(

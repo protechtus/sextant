@@ -6,6 +6,8 @@ Please do NOT open a public issue for security problems. Use GitHub's private
 vulnerability reporting on this repository ("Report a vulnerability" under the
 Security tab). You will get an acknowledgement within a few days.
 
+If that button is missing (GitHub only offers it once the repository is public and the maintainer has enabled it), open an ordinary issue titled `security contact request` with no details in it; the maintainer replies within a few days with a private channel. Never put the vulnerability itself in a public issue.
+
 ## Scope
 
 Sextant is designed to run on a machine you own, binding loopback by default.

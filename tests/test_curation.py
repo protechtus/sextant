@@ -30,7 +30,7 @@ def mem(tmp_path) -> Path:
     ancient = (date.today() - timedelta(days=700)).isoformat()
 
     (root / "identity" / "alex.md").write_text(
-        f"---\nid: alex\ntitle: Alex Example\ntype: identity\nupdated: {today}\n---\n\nJay works at ExampleCorp as a Tier 3 support engineer.",
+        f"---\nid: alex\ntitle: Alex Example\ntype: identity\nupdated: {today}\n---\n\nAlex works at ExampleCorp as a Tier 3 support engineer.",
         encoding="utf-8",
     )
 

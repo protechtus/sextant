@@ -281,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-remember", action="store_true",
                     help="diagnostics: search only, write nothing, report the hit count without failing")
     args = ap.parse_args(argv)
-    fact = args.fact or f"Sextant installed by an agent on {date.today().isoformat()}."
+    fact = args.fact or f"Sextant install verified on {date.today().isoformat()} (sextant verify)."
 
     if args.url:
         skipped_http: list[str] = []

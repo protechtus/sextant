@@ -27,7 +27,8 @@ same way minus systemd (use Task Scheduler / launchd, see ARCHITECTURE.md).
 sudo adduser --system --group --home /home/sextant sextant
 sudo -u sextant -s
 cd ~ && git clone https://github.com/protechtus/sextant.git && cd sextant
-python3 -m venv .venv
+python3 -m venv .venv    # fails on "ensurepip"? apt install python3-venv, or see the
+                         # no-sudo fallback in GETTING-STARTED (venv --without-pip + get-pip)
 .venv/bin/pip install -e ".[telegram,summarizer]"
 
 # First-run scaffold + smoke:
@@ -41,13 +42,18 @@ minimum for a server deployment:
 
 ```bash
 # /home/sextant/sextant.env   (chmod 600, owned by the sextant user; systemd reads
-# KEY=VALUE lines here, no `export`, no quotes needed)
-ATLAS_MEMORY_ROOT=/home/sextant/.memory   # where the corpus lives: without these two lines the
-ATLAS_STATE_DIR=/home/sextant/.atlas      # service serves the sextant user's home defaults,
-                                          # which is fine only if that is where you ran sextant-init
-ATLAS_MCP_TOKEN=<long random>          # memory server bearer
-ATLAS_WEB_API_KEY=<long random>        # dashboard key
-ATLAS_BRAIN_API_KEY=<long random>      # brain API (if running Brain)
+# KEY=VALUE lines here, no `export`, no quotes needed; comments ONLY on their own
+# lines, because systemd keeps a trailing "# ..." as part of the value)
+# Where the corpus lives: without these two lines the service serves the sextant
+# user's home defaults, which is fine only if that is where you ran sextant-init.
+ATLAS_MEMORY_ROOT=/home/sextant/.memory
+ATLAS_STATE_DIR=/home/sextant/.atlas
+# Memory server bearer (python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+ATLAS_MCP_TOKEN=<long random>
+# Dashboard key
+ATLAS_WEB_API_KEY=<long random>
+# Brain API (if running Brain)
+ATLAS_BRAIN_API_KEY=<long random>
 # Optional: OLLAMA_BASE_URL, TELEGRAM_BOT_TOKEN, ATLAS_NTFY_URL
 ```
 

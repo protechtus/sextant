@@ -116,6 +116,11 @@ def _body_of(path: Path) -> str:
 
 
 def index_status() -> dict:
+    from . import fts as _fts
+    if not _fts.FTS_DB.exists():
+        # A report never creates the search index: `sextant components` before init used to
+        # leave ~/.atlas/search.sqlite behind (MN1 and MN6, pipeline sweep 2026-11-11).
+        return {"indexed": False, "reason": "no search index yet"}
     conn = _connect()
     try:
         _ensure_schema(conn)

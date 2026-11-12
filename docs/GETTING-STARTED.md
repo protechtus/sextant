@@ -177,7 +177,7 @@ not just keywords; without it, keyword search works exactly as before).
   `$PWD.Path` in PowerShell); do not copy
   the `_note` key; sanity-check the result with
   `python -m json.tool ~/.claude/settings.json` (on Windows save the file as
-  UTF-8 without a BOM; PowerShell 5.1's `Set-Content -Encoding utf8` adds one
+  UTF-8 without a BOM; PowerShell 5.1's `Set-Content -Encoding utf8` adds one and so does its `>` redirect, so use `sextant setup --client hooks --out hooks.json` instead
   and the check then fails). Or simply ask your
   assistant to do the merge -- paste the snippet file and say which
   settings file to put it in.
@@ -425,7 +425,7 @@ Then restart whatever services you run. Docker users:
   set it once, before `sextant-init`, or your corpus will appear to vanish. A specific
   variable (`ATLAS_MEMORY_ROOT`, `ATLAS_STATE_DIR`, `ATLAS_PROJECTS_ROOT`) wins over it when
   both are set. Inside a clone, top-level `memory/`, `state/` and `.memory/` are git-ignored.
-- **The doctor is a report.** It creates no files and no databases, so running it before
+- **The doctor is a report.** It creates no files and no databases (`sextant status` and `sextant components` may create the search index, which is harmless), so running it before
   `sextant-init` is harmless; its Worker row says "no task database yet" until the Brain
   writes one, which is not an error.
 - **The clock line** at session start leads with your machine's local zone; set
@@ -434,8 +434,10 @@ Then restart whatever services you run. Docker users:
   `ATLAS_MCP_TOKEN`; stdio mode (what `claude mcp add` uses) does not need one. Both servers
   expose an unauthenticated `/health`; everything else requires the bearer.
 - **No sudo?** If `python3 -m venv` fails on a missing `ensurepip` and you cannot install
-  `python3-venv`, use `python3 -m venv --without-pip .venv`, then bootstrap pip with
-  `curl -sSL https://bootstrap.pypa.io/get-pip.py | .venv/bin/python`, or use
+  `python3-venv`, use `python3 -m venv --without-pip .venv` (it works on top of the half-made
+  `.venv` the failure left), then bootstrap pip without curl, which a stock Ubuntu also lacks:
+  `.venv/bin/python -c "import urllib.request as u; exec(u.urlopen('https://bootstrap.pypa.io/get-pip.py').read())"`
+  (with curl: `curl -sSL https://bootstrap.pypa.io/get-pip.py | .venv/bin/python`), or use
   `uv venv` (uv brings its own installer: `uv pip install -e .`).
 - **Scripting a health check?** `sextant-doctor --strict` exits 1 when a service you have
   configured (a key or token set for it) is down, or any check reports an error, and prints

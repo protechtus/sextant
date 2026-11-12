@@ -17,7 +17,7 @@ ENV ATLAS_WORKSPACE_ROOT=/data \
     ATLAS_MEMORY_ROOT=/data/memory \
     ATLAS_STATE_DIR=/data/state \
     PYTHONUNBUFFERED=1
-# The runtime user must own the volume mount point or the first write fails (Linode
+# The runtime user must own the volume mount point or the first write fails (VPS
 # packaging lane 2026-11-09). A pre-existing host bind-mount keeps its own ownership.
 RUN mkdir -p /data && chown sextant:sextant /data
 VOLUME /data
