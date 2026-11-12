@@ -40,6 +40,11 @@ SESSION_STATE_FILE = STATE_DIR / "session-state.json"
 IS_RESUME = os.environ.get("CLAUDE_HOOK_SESSION_SOURCE", "") == "resume"
 
 
+# A comment on its own line goes with its line; an inline one leaves the line break. The
+# own-line branch starts at `^` (one try per line), the inline branch at the literal.
+_SOURCE_COMMENT = re.compile(r"(?m)^[ \t]*<!--\s*source:[^>]*-->[ \t]*\r?\n?|[ \t]{0,16}<!--\s*source:[^>]*-->[ \t]*")
+
+
 def _read_file(path: Path, max_chars: int = 600) -> str:
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
@@ -49,7 +54,12 @@ def _read_file(path: Path, max_chars: int = 600) -> str:
             if end != -1:
                 text = text[end + 3:]
         # Provenance comments are curation metadata, noise in a priming block (MN14).
-        text = re.sub(r"\s*<!--\s*source:[^>]*-->", "", text)
+        # Only the first few budgets' worth can reach the output; a 5 MB file is not scanned
+        # (AG23, sweep 12). The regex is anchored on the literal `<!--` and consumes trailing,
+        # never leading, whitespace: `\s*<!--` was quadratic on a long run of spaces.
+        text = text[: max(max_chars * 32, 65536)]
+        if "<!--" in text:
+            text = _SOURCE_COMMENT.sub("", text)
         text = text.strip()
         if len(text) <= max_chars:
             return text

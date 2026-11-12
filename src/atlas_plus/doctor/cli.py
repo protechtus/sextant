@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import Optional
 from atlas_plus import paths as atlas_paths
 
+
+def _yaml_load(text: str):
+    """safe_load through libyaml when it is installed (AG23, sweep 12)."""
+    import yaml as _y
+    return _y.load(text, Loader=getattr(_y, "CSafeLoader", _y.SafeLoader))
+
 BRAIN_URL    = os.environ.get("ATLAS_BRAIN_URL",   "http://127.0.0.1:8767")
 MCP_PORT     = atlas_paths.env_int("ATLAS_MCP_PORT", 8765)
 MCP_URL      = os.environ.get("ATLAS_MCP_URL",     f"http://127.0.0.1:{MCP_PORT}")
@@ -657,8 +663,11 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         result["bad_names"] = bad_names[:10]
         result["bad_names_hint"] = (f"{len(bad_names)} file name(s) are not valid UTF-8 (a legacy-encoded "
                                     "name): search skips them; rename them: " + ", ".join(bad_names[:5]))
-    copies = [f.rel for f in files if re.match(r".*_\d+\.md$", f.name)
-              and any(g.rel == re.sub(r"_\d+\.md$", ".md", f.rel) for g in files)]
+    # One set lookup per candidate: the pairwise form took 54 s on 8,000 `entry_<i>.md` notes
+    # and quadrupled with every doubling (AG23, sweep 12).
+    rels = {f.rel for f in files}
+    copies = [f.rel for f in files if f.name.endswith(".md") and re.search(r"_\d+\.md$", f.name)
+              and re.sub(r"_\d+\.md$", ".md", f.rel) in rels]
     if copies:
         result["import_copies"] = len(copies)
         result["import_copies_hint"] = (f"{len(copies)} note(s) are `_N` copies beside an older note of the same "
@@ -792,7 +801,7 @@ def check_convergence(scan: Optional[list["MemoryFile"]] = None) -> dict:
             if end == -1:
                 continue
             try:
-                fm = _yaml.safe_load(text[3:end]) or {}
+                fm = _yaml_load(text[3:end]) or {}
             except Exception:
                 continue
             contras = fm.get("contradictions", [])
@@ -828,7 +837,7 @@ def check_decisions() -> dict:
             if end == -1:
                 continue
             try:
-                fm = _yaml.safe_load(text[3:end]) or {}
+                fm = _yaml_load(text[3:end]) or {}
             except Exception:
                 continue
             total += 1
@@ -969,7 +978,7 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _yaml_load(raw[3:end]) or {}
         except Exception:
             continue
 
@@ -1057,7 +1066,7 @@ def check_untagged_by_scope(scan: Optional[list["MemoryFile"]] = None) -> dict[s
                 scope_counts[scope] = scope_counts.get(scope, 0) + 1
                 continue
             end = raw.find("\n---", 3)
-            fm = _yaml.safe_load(raw[3:end]) if end != -1 else {}
+            fm = _yaml_load(raw[3:end]) if end != -1 else {}
             tags = (fm or {}).get("tags")
             if not tags:
                 scope_counts[scope] = scope_counts.get(scope, 0) + 1
@@ -1105,7 +1114,7 @@ def record_trends_snapshot() -> dict:
             if end == -1:
                 continue
             try:
-                fm = _yaml.safe_load(raw[3:end]) or {}
+                fm = _yaml_load(raw[3:end]) or {}
             except Exception:
                 continue
             if fm.get("last_confirmed"):
@@ -1257,7 +1266,7 @@ def check_research_quality() -> dict:
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _yaml_load(raw[3:end]) or {}
         except Exception:
             continue
         qs = fm.get("quality_score")

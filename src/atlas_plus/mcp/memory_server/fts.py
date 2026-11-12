@@ -24,6 +24,9 @@ from pathlib import Path
 
 import yaml
 
+# libyaml when present: the pure-Python loader was most of the rebuild time (AG23, sweep 12).
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 from .config import EXCLUDED_DIRS, FTS_DB, MEMORY_ROOT
 
 log = logging.getLogger("atlas.mcp.fts")
@@ -389,7 +392,7 @@ def _parse_md(raw: str) -> tuple[str, str, float | None]:
             try:
                 if len(fm_str) > _MAX_FM_CHARS:
                     raise ValueError("frontmatter too large to parse")   # a 50 MB tag list cost a minute per search (AG22)
-                fm = yaml.safe_load(fm_str) or {}
+                fm = yaml.load(fm_str, Loader=_YAML_LOADER) or {}
                 confirmed_ts = _parse_confirmed_ts(fm)
             except Exception:
                 fm = {}

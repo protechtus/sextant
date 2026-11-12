@@ -434,3 +434,57 @@ def test_weekly_report_lands_in_the_state_dir_and_names_real_commands(corpus, tm
     assert "atlas-review-memory archive <path> --yes" in report and "--interactive" not in report
     assert out_path.exists() and out_path.parent.name == "reports" and corpus not in out_path.parents
     assert not list((corpus / "_atlas").glob("cleanup-*.md"))
+
+
+# ---- AG23: performance round two -------------------------------------------------------------
+
+def test_doctor_import_copies_check_is_linear(tmp_path, monkeypatch):
+    from atlas_plus.doctor import cli as doctor
+    mem = tmp_path / "mem"
+    (mem / "reference").mkdir(parents=True)
+    for i in range(4000):
+        (mem / "reference" / f"entry_{i}.md").write_text("---\nid: x\n---\nnote\n", encoding="utf-8")
+    (mem / "reference" / "base.md").write_text("---\nid: b\n---\nbase\n", encoding="utf-8")
+    (mem / "reference" / "base_2.md").write_text("---\nid: b\n---\nbase copy\n", encoding="utf-8")
+    monkeypatch.setattr(doctor, "MEMORY_ROOT", mem, raising=False)
+    scan = doctor.scan_memory_files(mem)
+    t0 = time.perf_counter()
+    result = doctor.check_memory_corpus(scan)
+    assert time.perf_counter() - t0 < 2.0
+    assert result.get("import_copies") == 1
+
+
+def test_hook_provenance_strip_is_linear_on_whitespace(tmp_path):
+    from atlas_plus.hooks import session_start, prime
+    p = tmp_path / "user.md"
+    p.write_text("Name: Ada\n" + " " * 400_000 + "\n<!-- source: import -->\nend\n", encoding="utf-8")
+    t0 = time.perf_counter()
+    a = session_start._read_file(p, max_chars=600)
+    b = prime._read_stripped(p, max_chars=800)
+    assert time.perf_counter() - t0 < 1.0
+    assert a.startswith("Name: Ada") and b.startswith("Name: Ada")
+    q = tmp_path / "small.md"
+    q.write_text("---\nid: s\n---\nfact one <!-- source: obsidian/a.md -->\nfact two\n", encoding="utf-8")
+    assert session_start._read_file(q) == "fact one\nfact two"
+
+
+def test_scrub_controls_regex_matches_the_loop():
+    import unicodedata
+    from atlas_plus.mcp.memory_server.routing import _scrub_controls
+    sample = "a\tb\nc\rd\x00e\x1bf\x7fg\x85h\ud800i\udfffj\u00e9\u6771\u4eac"
+    expected = "".join("\ufffd" if unicodedata.category(c) == "Cs" else c
+                       for c in sample if not (unicodedata.category(c) == "Cc" and c not in "\t\n\r"))
+    assert _scrub_controls(sample) == expected
+    big = ("plain text line\n" * 70_000)
+    t0 = time.perf_counter()
+    assert _scrub_controls(big) == big
+    assert time.perf_counter() - t0 < 0.5
+
+
+def test_fts_frontmatter_uses_libyaml_when_present():
+    import yaml
+    from atlas_plus.mcp.memory_server import fts
+    if getattr(yaml, "__with_libyaml__", False):
+        assert fts._YAML_LOADER is yaml.CSafeLoader
+    fm, body, _ = fts._parse_md("---\ntitle: 大阪城\ntags: [a, b]\n---\nbody\n")
+    assert json.loads(fm)["tags"] == ["a", "b"] and body == "body"

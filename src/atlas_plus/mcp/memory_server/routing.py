@@ -389,20 +389,21 @@ def _yaml_scalar(value) -> str:
     return s
 
 
+_CONTROL_RE = _re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]")
+_SURROGATE_RE = _re.compile("[\\ud800-\\udfff]")
+
+
 def _scrub_controls(text: str) -> str:
     """Drop C0/C1 control characters except tab, newline and carriage return, and replace lone
     surrogates: ESC/BEL/OSC sequences stored in a note reached the operator's terminal through
     `sextant search`, and a lone surrogate failed deep inside the temp-file write (AG10)."""
-    out = []
-    for c in text:
-        cat = _ud.category(c)
-        if cat == "Cc" and c not in "\t\n\r":
-            continue
-        if cat == "Cs":
-            out.append("\ufffd")
-            continue
-        out.append(c)
-    return "".join(out)
+    # Category Cc is exactly U+0000-U+001F and U+007F-U+009F; Cs is the surrogate block. Two
+    # compiled regexes replace the per-character loop that cost 3 s per 5,000 notes (AG23).
+    if _CONTROL_RE.search(text):
+        text = _CONTROL_RE.sub("", text)
+    if _SURROGATE_RE.search(text):
+        text = _SURROGATE_RE.sub("\ufffd", text)
+    return text
 
 
 def _lock_key(target: Path) -> str:
