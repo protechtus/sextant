@@ -24,6 +24,7 @@ import json
 import math
 import os
 import struct
+import sqlite3
 import urllib.request
 from pathlib import Path
 
@@ -78,13 +79,18 @@ class OllamaEmbedder:
             f"{self.base_url}/api/embed", data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 (scheme allowlisted in __init__)
+        # A loopback call never goes through HTTPS_PROXY (AG11: a proxy variable added 1.9 s to
+        # every search and 3.8 s to doctor).
+        with _NO_PROXY_OPENER.open(req, timeout=self.timeout) as resp:  # nosec B310 (scheme allowlisted in __init__)
             data = json.loads(resp.read().decode("utf-8"))
         rows = data.get("embeddings")
         vec = rows[0] if isinstance(rows, list) and rows else None
         if not isinstance(vec, list) or not vec:
             raise ValueError("embed endpoint returned no vector")
         return [float(x) for x in vec]
+
+
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _normalize(vec: list[float]) -> list[float]:
@@ -184,6 +190,9 @@ def rebuild_index(embedder=None, force: bool = False) -> dict:
         for rel in gone:
             conn.execute("DELETE FROM memory_vectors WHERE path = ?", (rel,))
             removed += 1
+        if added or updated or removed:
+            gen = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            conn.execute(f"PRAGMA user_version = {gen + 1}")
         conn.commit()
     finally:
         conn.close()
@@ -207,6 +216,18 @@ except ImportError:  # pragma: no cover -- exercised on minimal installs
     _np = None
 
 
+def _index_generation() -> int:
+    """PRAGMA user_version of the index DB: bumped by every rebuild_index write."""
+    try:
+        conn = sqlite3.connect(str(_fts.FTS_DB), timeout=5)
+        try:
+            return int(conn.execute("PRAGMA user_version").fetchone()[0])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _load_vectors():
     """Return (paths, dims, vecs, np_matrix|None) for all rows, cached."""
     global _vec_cache
@@ -216,7 +237,10 @@ def _load_vectors():
         # DB write (embed-index OR an FTS freshness sweep) bumps the stat
         # key -- over-invalidation is correctness-safe, just a reload.
         st = os.stat(_fts.FTS_DB)
-        key = (st.st_mtime_ns, st.st_size)
+        # (mtime, size) alone missed two index writes inside one timestamp tick with equal size
+        # (AG8: a re-index served stale 1 in 30); the generation counter rebuild_index bumps
+        # cannot collide.
+        key = (st.st_mtime_ns, st.st_size, _index_generation())
     except OSError:
         key = None
     cached = _vec_cache
@@ -245,10 +269,14 @@ def vector_search(query: str, scope: str = "", limit: int = 10,
                   embedder=None) -> list[dict]:
     """Top-k cosine matches: [{path, score(0..1)}]. [] on ANY failure."""
     try:
+        paths, dims, vecs, matrix = _load_vectors()
+        if not paths:
+            # No semantic index: never dial the embedder for a result that cannot exist (AG11:
+            # a stranger without Ollama paid 2 s per search for a refused connection).
+            return []
         if embedder is None:
             embedder = OllamaEmbedder()
         qvec = _normalize(embedder.embed(query))
-        paths, dims, vecs, matrix = _load_vectors()
         # a scope naming a file matches that file; otherwise a directory prefix
         prefix = scope if scope.lower().endswith(".md") else (scope.rstrip("/") + "/" if scope else "")
         scored: list[tuple[float, str]] = []

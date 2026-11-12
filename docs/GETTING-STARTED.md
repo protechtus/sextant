@@ -122,14 +122,41 @@ Ask your assistant to call `memory_health` -- the healthy reply is
 comes with a `hint` field naming the usual causes (step 1 skipped, or an
 `ATLAS_MEMORY_ROOT` override that never reached the server process).
 
-Any other MCP-aware client works the same way: point it at
-`sextant-mcp --stdio` (the run-it-as-a-subprocess transport MCP clients
-use by default; `sextant setup` prints the JSON form) or run the HTTP
-server with `sextant-mcp`, which needs `ATLAS_MCP_TOKEN` set. Before any
-client is involved, `sextant verify` starts the stdio server, writes one
-fact and searches it back (`ROUND-TRIP: OK`). Once it answers, the
-day-to-day patterns (remembering, decisions, anti-memory, temporal
-queries) live in `docs/USAGE.md`.
+Any other MCP-aware client works the same way: it runs the stdio server
+as a subprocess (`sextant-mcp --stdio`, which `sextant setup` spells out as
+`<venv python> -m atlas_plus.mcp.memory_server.server --stdio` so no PATH
+is assumed) WITH the `ATLAS_*` variables from `sextant setup` in the server's
+environment, or connects to the HTTP server (`sextant-mcp`, which needs
+`ATLAS_MCP_TOKEN` set). The variables are not optional: a registration that
+carries only the command shows "connected" in every client while the server
+serves an empty default corpus, and the first `memory_health` call says
+`degraded`. Two clients have their own shapes, and `sextant setup` prints
+both filled in:
+
+- **Codex CLI** (OpenAI): `sextant setup --client codex` prints the
+  `codex mcp add` line (PowerShell needs the quoted `"--"`) and the
+  `[mcp_servers.sextant]` table for `~/.codex/config.toml`
+  (`$CODEX_HOME/config.toml` when set). Paths in TOML are single-quoted
+  literal strings; a double-quoted `"C:\sextant\..."` makes Codex refuse the
+  whole file. Check with `codex mcp list`.
+- **opencode**: `sextant setup --client opencode` prints the `mcp` block
+  for `opencode.json` in the project (or
+  `~/.config/opencode/opencode.json`): `"type": "local"`, `"enabled": true`,
+  `command` as one array, and `environment` for the variables. Check with
+  `opencode mcp list` from the project directory.
+
+Neither has Claude Code's session hooks. The server's MCP `instructions`
+tell their agent to search memory first, and `sextant-session-start` prints
+the same priming text the Claude Code hook injects (identity, clock, house
+rules, the current project) for pasting into `AGENTS.md`, opencode's
+`instructions`, or any system prompt; `atlas-prime "<task words>"` prints
+task-matched facts the same way. End-of-session summaries exist only through
+the Claude Code Stop hook. Before any client is involved, `sextant verify`
+starts the stdio server, writes one fact and searches it back
+(`ROUND-TRIP: OK`); `sextant verify --command "<the command in your
+config>" --env ATLAS_WORKSPACE_ROOT=...` proves the exact registration.
+Once it answers, the day-to-day patterns (remembering, decisions,
+anti-memory, temporal queries) live in `docs/USAGE.md`.
 
 ## 5. First facts, first search
 
@@ -362,15 +389,21 @@ already exists). The pip
 reinstall is what makes any NEW `sextant-*` commands appear, so do not
 skip it. Local edits in the clone? `git stash` before pulling, `git stash pop`
 after. If the pop reports a conflict (`UU <file>`), the upstream change and
-yours touched the same lines: `git checkout --theirs <file>` keeps the new
-release's version, `git stash drop` discards your copy, and you re-apply your
-edit by hand.
+yours touched the same lines: `git checkout --ours <file>` keeps the new
+release's version (in a stash pop, "ours" is the release and "theirs" is your
+stash; the other way round silently keeps the stale file), `git stash drop`
+discards your copy, and you re-apply your edit by hand. On a detached HEAD
+(you checked out a specific commit) `git pull` says "not currently on a
+branch": `git checkout main` first.
 
 After the reinstall, three short commands: `sextant-init` once more (it is
 idempotent and adds anything a newer build expects, for example the state-dir
 ownership marker that builds before 2026-11-10 did not write and the
-uninstaller now requires); `sextant setup --client claude-code` to compare with your
-registration (unchanged unless you moved the venv); and
+uninstaller now requires); `sextant setup` to compare with your registration and your hooks
+(`claude mcp get sextant` shows the registration; the hook commands are in
+`~/.claude/settings.json`; both stay valid unless you moved the venv, but a
+release can change the hook command, so re-merge section 3 when it differs);
+and
 `sextant verify --project upgrade-check` to prove the round-trip (it writes
 one dated fact under that project; `--skip-remember` only reads).
 
@@ -383,7 +416,8 @@ git pull
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,telegram,summarizer]"
 .\.venv\Scripts\python.exe -m pytest tests -q   # optional but recommended
 .\.venv\Scripts\sextant-init
-.\.venv\Scripts\sextant setup --client claude-code
+.\.venv\Scripts\atlas-temporal build
+.\.venv\Scripts\sextant setup
 .\.venv\Scripts\sextant verify --project upgrade-check
 ```
 
@@ -397,7 +431,8 @@ cd sextant && git pull
 .venv/bin/python -m pip install -e ".[dev,telegram,summarizer]"
 .venv/bin/python -m pytest tests -q   # optional but recommended
 .venv/bin/sextant-init
-.venv/bin/sextant setup --client claude-code
+.venv/bin/atlas-temporal build
+.venv/bin/sextant setup
 .venv/bin/sextant verify --project upgrade-check
 ```
 
@@ -425,6 +460,12 @@ Then restart whatever services you run. Docker users:
   set it once, before `sextant-init`, or your corpus will appear to vanish. A specific
   variable (`ATLAS_MEMORY_ROOT`, `ATLAS_STATE_DIR`, `ATLAS_PROJECTS_ROOT`) wins over it when
   both are set. Inside a clone, top-level `memory/`, `state/` and `.memory/` are git-ignored.
+- **Keyword search needs SQLite's FTS5 module** in the Python you installed into. Every
+  python.org, uv, Debian, Ubuntu, Fedora and Alpine build has it; a bespoke build without it
+  makes every search return nothing, and `sextant doctor` says so in the corpus row.
+- **A user-wide `ATLAS_MEMORY_ROOT` set AFTER setup wins** over the `ATLAS_WORKSPACE_ROOT`
+  the hook commands carry (the more specific variable always wins). If you add one later,
+  run `sextant setup` again and re-merge the hooks.
 - **The doctor is a report.** It creates no files and no databases (`sextant status` and `sextant components` may create the search index, which is harmless), so running it before
   `sextant-init` is harmless; its Worker row says "no task database yet" until the Brain
   writes one, which is not an error.

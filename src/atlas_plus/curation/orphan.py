@@ -142,7 +142,6 @@ def find_orphan_candidates(
           issues        -- list of health issue strings
           orphan_score  -- composite: (1 - health_score) + age_factor + (1 if no_refs)
     """
-    import yaml as _yaml
     from .health import compute_file_health
 
     today = date.today()
@@ -162,21 +161,10 @@ def find_orphan_candidates(
         if md_file.name.startswith("_"):
             continue
 
-        # Parse frontmatter for age calculation
-        try:
-            raw = md_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        fm: dict = {}
-        if raw.startswith("---"):
-            end = raw.find("\n---", 3)
-            if end != -1:
-                try:
-                    fm = _yaml.safe_load(raw[3:end]) or {}
-                except Exception:
-                    pass
-
+        # One read and one YAML parse per file: compute_file_health already returns the
+        # frontmatter (the second parse doubled doctor's orphan scan, AG11 sweep 10).
         health = compute_file_health(md_file, today)
+        fm: dict = health.get("frontmatter") or {}
         h_score = health["score"]
         stem = md_file.stem
         inbound = inbound_map.get(stem, 0)

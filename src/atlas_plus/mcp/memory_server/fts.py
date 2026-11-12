@@ -33,9 +33,14 @@ CREATE TABLE IF NOT EXISTS atlas_meta (
 );
 """
 
+# unicode61 folds case and, with remove_diacritics, accents: 'zurich' finds "Zürich" (AG8,
+# sweep 10; the old 'porter ascii' tokenizer did not). A changed tokenizer is detected at
+# connect time and the index is rebuilt, since the virtual table bakes the tokenizer in.
+_TOKENIZER = "porter unicode61 remove_diacritics 2"
+_TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1"   # SQLite before 3.27
 _CREATE_FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
-USING fts5(path, frontmatter_json, body, tokenize='porter ascii');
+USING fts5(path, frontmatter_json, body, tokenize='{tokenizer}');
 """
 
 _CREATE_FILES = """
@@ -94,6 +99,20 @@ def _confirmed_score(last_confirmed_ts: float | None, now_ts: float) -> float:
     return 1.0 - (age_secs - _CONFIRMED_FULL_BOOST_SECS) / span
 
 
+def fts5_available() -> bool:
+    """Whether this interpreter's SQLite carries the FTS5 module keyword search needs
+    (AG8, sweep 10: without it every search silently returned nothing)."""
+    try:
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+        finally:
+            conn.close()
+        return True
+    except sqlite3.Error:
+        return False
+
+
 def _connect() -> sqlite3.Connection:
     FTS_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(FTS_DB), timeout=30)
@@ -108,8 +127,24 @@ def _connect() -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=30000")  # embed-index bulk writes vs interactive search
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(_CREATE_META)
-        conn.execute(_CREATE_FTS)
         conn.execute(_CREATE_FILES)
+        row = conn.execute("SELECT value FROM atlas_meta WHERE key='tokenizer'").fetchone()
+        if row is None or row[0] not in (_TOKENIZER, _TOKENIZER_FALLBACK):
+            # First run on an index built with another tokenizer: drop it and forget every
+            # file's mtime so the next update_incremental rebuilds from the corpus.
+            conn.execute("DROP TABLE IF EXISTS memory_fts")
+            conn.execute("DELETE FROM memory_files")
+            chosen = _TOKENIZER
+            try:
+                conn.execute(_CREATE_FTS.format(tokenizer=_TOKENIZER))
+            except sqlite3.OperationalError as exc:
+                if "no such module" in str(exc).lower():
+                    raise
+                chosen = _TOKENIZER_FALLBACK
+                conn.execute(_CREATE_FTS.format(tokenizer=_TOKENIZER_FALLBACK))
+            conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('tokenizer',?)", (chosen,))
+        else:
+            conn.execute(_CREATE_FTS.format(tokenizer=row[0]))
         # Safe migration: add last_confirmed column if it doesn't exist yet
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(memory_files)")}
         if "last_confirmed" not in existing_cols:
@@ -508,6 +543,11 @@ def search(query: str, scope: str = "", limit: int = 10,
         # became genuinely file-level). Same contract as below: heal once,
         # retry once, never raise out of a search call.
         if not _is_corruption(exc):
+            if "no such module" in str(exc).lower():
+                log.error("keyword search unavailable: this Python's SQLite has no FTS5 module (%s); "
+                          "install a Python whose sqlite3 was built with FTS5 (python.org, uv and the "
+                          "distro packages all have it) -- returning empty results", exc)
+                return []
             log.warning("FTS connect failed (not corruption, e.g. locked): %s -- returning empty results", exc)
             return []
         if not _healed and _heal_malformed():

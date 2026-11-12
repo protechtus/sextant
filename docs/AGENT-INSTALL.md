@@ -237,6 +237,16 @@ hook runs: `bash -c "<the command>"` from a shell with no `ATLAS_*` variables mu
 `Corpus: <the corpus from step 4>`. The round-trip in step 6 plus a session-start run from a
 project directory should show the same identity note from both.
 
+If the human's client is Codex CLI or opencode rather than Claude Code,
+`sextant setup --client codex` (the `codex mcp add` line plus the TOML
+table) and `sextant setup --client opencode` (the `mcp` block for
+`opencode.json`) print the registration; check with `codex mcp list` or
+`opencode mcp list`, and prove the configured command with
+`sextant verify --command "<that command>" --env ATLAS_WORKSPACE_ROOT=<value>`.
+Those clients have no session hooks: offer to paste the output of
+`sextant-session-start` into AGENTS.md or the client's instructions file
+(ASK first), and say that end-of-session summaries are Claude Code only.
+
 ## 6. Prove it works (the round-trip)
 
 The shortest path, with the same environment variables as step 4 (every kind of install has

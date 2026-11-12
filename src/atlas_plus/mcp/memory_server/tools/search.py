@@ -19,6 +19,9 @@ def memory_search(query: str, scope: str = "", limit: int = 10) -> list[dict]:
     return _fts.search(query, scope=scope, limit=limit)
 
 
+MAX_QUERY_CHARS = 2_000
+
+
 def memory_search_hybrid(query: str, scope: str = "", limit: int = 10) -> tuple[list[dict], str]:
     """Hybrid (FTS + local-embedding) search. Returns (results, retrieval_mode).
 
@@ -29,6 +32,9 @@ def memory_search_hybrid(query: str, scope: str = "", limit: int = 10) -> tuple[
     limit = min(limit, 50)
     if not query.strip():
         return [], "fts-only"
+    # A query is a few words; past this length nothing matches better and the embedder and the
+    # log pay for every byte (AG10: a 50 MB query took 18.6 s).
+    query = query[:MAX_QUERY_CHARS]
     from .. import embeddings as _emb
 
     return _emb.hybrid_search(query, scope=scope, limit=limit)

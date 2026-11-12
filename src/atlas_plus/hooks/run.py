@@ -58,7 +58,14 @@ def main(argv: list[str] | None = None) -> int:
     module_name, func_name = TARGETS[target]
     sys.argv = [sys.argv[0]]
     mod = importlib.import_module(module_name)
-    rc = getattr(mod, func_name)()
+    try:
+        rc = getattr(mod, func_name)()
+    except OSError as exc:
+        # A read-only or vanished corpus must not print a traceback into the session (AG10):
+        # one line, exit 0, so Claude Code neither blocks nor hides the cause.
+        line = f"[sextant {target} hook] could not read or write the memory corpus: {exc}"
+        print(line, file=sys.stdout if target == "session-start" else sys.stderr)
+        return 0
     return int(rc or 0)
 
 

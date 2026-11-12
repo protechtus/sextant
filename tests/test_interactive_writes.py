@@ -65,25 +65,74 @@ class TestStrangerFirstRemember:
 class TestExpertPassHardening:
     """Expert-pass 2026-08-26: concurrency, reserved names, atomicity."""
 
-    def test_concurrent_writers_lose_nothing(self, fresh_env):
+    @staticmethod
+    def _race(fresh_env, scope: str, n: int, label: str) -> None:
+        """n threads remember into one scope at once; every fact must land. On a loss the
+        assertion carries the evidence the next occurrence needs: the version copies (taken
+        under the write lock, so they are the exact pre-images each writer saw), the lock
+        directory, and every writer's result. One loss of fact 3 of 6 on windows-latest CI
+        (run 43120725126, 2026-11-11) could not be explained from the code; 0 of 40 locally."""
         import threading
         from atlas_plus.mcp.memory_server.tools.remember import memory_remember
 
         outcomes: dict[int, dict] = {}
 
         def writer(i):
-            outcomes[i] = memory_remember(scope="reference:conc",
-                                          fact=f"parallel fact {i}",
+            outcomes[i] = memory_remember(scope=scope, fact=f"{label} fact {i}",
                                           interactive=True)
 
-        threads = [threading.Thread(target=writer, args=(i,)) for i in range(6)]
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(n)]
         [t.start() for t in threads]
         [t.join() for t in threads]
         errors = {i: r.get("error") for i, r in outcomes.items() if not r.get("ok")}
         assert not errors, f"writers reported errors: {errors}"
-        text = (fresh_env / "reference" / "conc.md").read_text(encoding="utf-8")
-        missing = [i for i in range(6) if f"parallel fact {i}" not in text]
-        assert not missing, f"facts lost despite ok results: {missing}\n{text[-500:]}"
+        name = scope.split(":", 1)[1]
+        target = fresh_env / "reference" / f"{name}.md"
+        text = target.read_text(encoding="utf-8")
+        missing = [i for i in range(n) if f"{label} fact {i}" not in text]
+        if missing:
+            evidence = []
+            vdir = fresh_env / "versions" / "reference"
+            for p in sorted(vdir.glob(f"{name}_*")) if vdir.exists() else []:
+                body = p.read_text(encoding="utf-8", errors="replace")
+                have = [i for i in range(n) if f"{label} fact {i}" in body]
+                evidence.append(f"{p.name}: facts {have}")
+            locks = fresh_env / "_atlas" / ".locks"
+            evidence.append(f"locks: {[q.name for q in locks.iterdir()] if locks.exists() else 'none'}")
+            evidence.append(f"outcomes: {outcomes}")
+            pytest.fail(f"facts lost despite ok results: {missing}\n{text[-500:]}\n"
+                        + "\n".join(evidence))
+
+    def test_concurrent_writers_lose_nothing(self, fresh_env):
+        self._race(fresh_env, "reference:conc", 6, "parallel")
+
+    def test_concurrent_writers_lose_nothing_repeated(self, fresh_env):
+        """Ten rounds of eight writers into fresh scopes: a cheap net for the one-in-many
+        Windows loss, with the same evidence on failure."""
+        for r in range(10):
+            self._race(fresh_env, f"reference:conc-r{r}", 8, f"round{r}")
+
+    @pytest.mark.skipif(os.name != "nt", reason="the \\\\?\\ prefix is a Windows realpath artefact")
+    def test_lock_key_survives_the_realpath_prefix_race(self, fresh_env, monkeypatch):
+        """ntpath.realpath can hand one thread '\\\\?\\C:\\...' for a not-yet-existing file
+        while another thread gets the plain spelling (the directory appeared between its two
+        probes). Both must take the SAME lock, or two writers hold it and a fact is lost
+        (windows-latest CI 2026-11-11; reproduced locally 1 in ~20 with the repeated race)."""
+        from atlas_plus.mcp.memory_server import routing
+        target = fresh_env / "reference" / "prefixed.md"
+        plain = routing._lock_key(target)
+        real = os.path.realpath
+
+        def prefixed(p):
+            s = real(p)
+            return "\\\\?\\" + s if os.path.normcase(str(p)) == os.path.normcase(str(target)) else s
+
+        with monkeypatch.context() as m:
+            m.setattr(routing.os.path, "realpath", prefixed)
+            assert routing._lock_key(target) == plain
+        assert plain.startswith("rel:")
+        from pathlib import Path
+        assert routing._lock_key(Path(str(target).upper())) == plain
 
     def test_lock_acquire_retries_on_permission_error(self, fresh_env, monkeypatch):
         """Windows delete-pending: O_CREAT|O_EXCL on a lock mid-unlink raises

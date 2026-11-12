@@ -44,12 +44,19 @@ console = _LazyConsole()
 
 def _dist_name() -> str:
     """The installed distribution's name (sextant-ai publicly, atlas-plus privately)."""
+    # Two direct lookups instead of packages_distributions(), which reads every installed
+    # package's RECORD (0.4 s on a 60-package venv, AG11 sweep 10).
     try:
-        from importlib.metadata import packages_distributions
-        names = packages_distributions().get("atlas_plus") or []
-        return names[0] if names else "atlas-plus"
+        from importlib.metadata import PackageNotFoundError, distribution
+        for name in ("sextant-ai", "atlas-plus"):
+            try:
+                distribution(name)
+                return name
+            except PackageNotFoundError:
+                continue
     except Exception:  # noqa: BLE001
-        return "atlas-plus"
+        pass
+    return "atlas-plus"
 
 
 def _brand() -> tuple[str, str]:
@@ -282,9 +289,17 @@ def cmd_help() -> None:
 
 @app.command("dashboard", hidden=True)
 def cmd_dashboard() -> None:
-    """Where the dashboard is (for `sextant dashboard` / `serve` guessers)."""
-    console.print("The dashboard is its own command: [bold]sextant-web[/bold] (needs ATLAS_WEB_API_KEY). "
+    """Where the dashboard is (for `sextant dashboard` / `web` / `serve` guessers)."""
+    console.print("The dashboard is its own command: [bold]sextant-web[/bold] (needs ATLAS_WEB_API_KEY; "
+                  "ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the bind, default 127.0.0.1:8766; it loads "
+                  "htmx and Tailwind from the internet). "
                   "MCP server: [bold]sextant-mcp[/bold]. Brain: [bold]sextant-brain[/bold]. All: sextant commands.")
+
+
+@app.command("web", hidden=True)
+def cmd_web() -> None:
+    """Alias of `dashboard` (hint only)."""
+    cmd_dashboard()
 
 
 @app.command("serve", hidden=True)
@@ -377,7 +392,8 @@ def cmd_search(
         # Rich would swallow as unknown tags (matched words silently vanished
         # -- stranger-test batch 9), and corpus content itself may carry
         # [red]-style markup an author never meant to be interpreted.
-        snippet = (r.get("snippet") or "").replace("\n", " ")[:120]
+        snippet = "".join(c for c in (r.get("snippet") or "").replace("\n", " ")[:120]
+                          if c >= " " or c == "\t")   # no ESC/BEL from a stored note reaches the terminal (AG10)
         console.print(f"  [bold]{escape(r['path'])}[/bold]  [dim]{escape(snippet)}[/dim]")
 
 

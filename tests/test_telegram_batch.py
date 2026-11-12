@@ -8,6 +8,8 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+pytest.importorskip("telegram")   # the `telegram` extra is optional; 213 hard failures without it (AG8)
+
 
 # ---------------------------------------------------------------------------
 # Helpers

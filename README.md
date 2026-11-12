@@ -19,7 +19,8 @@ coordinates a local multi-agent task queue -- all on your own machine, no cloud
 dependencies required.
 
 **Who this is for:** people who use a terminal- or desktop-based MCP client --
-Claude Code, Claude Desktop, or Cursor -- and are comfortable cloning a repo
+Claude Code, Claude Desktop, Cursor, Codex CLI, opencode, or any other MCP
+client -- and are comfortable cloning a repo
 and running a few commands. If you only use claude.ai in the browser, Sextant
 cannot connect to it yet; the closest partial path is
 [Sextant Clip](https://github.com/protechtus/sextant/blob/main/extensions/sextant-clip/README.md), and it still needs the
@@ -41,7 +42,7 @@ machines; if that has never bothered you, the built-in is the right call.
 - 30 MCP tools -- memory read/write, hybrid search (keyword full-text search fused with local semantic embeddings), temporal knowledge graph, tickets, project state
 - Local Brain -- a background task agent running on Ollama (a free local-model runtime; any OpenAI-compatible server works too) with a durable task queue, worker leases, and retries
 - Telegram bot for full mobile control; scheduled nightly memory-hygiene jobs
-- Session hooks for Claude Code: automatic priming at session start (`deploy/session_start_hook.json` -- memory highlights and open work injected before your first message, read-only, safe to enable immediately) and summarization at session end (`deploy/stop_hook.json` -- activates once you enable background writes with `ATLAS_AUTONOMOUS=on`; inert until then, and the summary itself needs a reachable model: Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`)
+- Session hooks for Claude Code (other clients get the same priming text from `sextant-session-start` to paste into their instructions file, and the MCP server tells every client's agent to search memory first): automatic priming at session start (`deploy/session_start_hook.json` -- memory highlights and open work injected before your first message, read-only, safe to enable immediately) and summarization at session end (`deploy/stop_hook.json` -- activates once you enable background writes with `ATLAS_AUTONOMOUS=on`; inert until then, and the summary itself needs a reachable model: Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`)
 - Thousands of automated tests, run in CI on Linux, macOS, and Windows on every push
 
 ## What it does
@@ -66,6 +67,9 @@ You also need an MCP client to connect to -- the walkthrough below uses the
 Claude Code CLI. If `claude --version` prints nothing, install Claude Code
 first ([anthropic.com/claude-code](https://www.anthropic.com/claude-code) has
 the installer for each OS); nothing in this quickstart installs it for you.
+Using Codex CLI or opencode instead? `sextant setup --client codex` and
+`sextant setup --client opencode` print their registration forms, and
+GETTING-STARTED section 4 explains what they do and do not get.
 
 Prefer containers? Generate a `.env` with your keys first (at minimum
 `ATLAS_MCP_TOKEN`; `ATLAS_WEB_API_KEY` for the dashboard), then

@@ -24,4 +24,10 @@ def _installed_version() -> str:
     return "0.1.0"
 
 
-__version__ = _installed_version()
+def __getattr__(name: str):
+    # Lazy: the metadata lookup cost 75-90 ms in EVERY process, hooks included (AG11, sweep 10).
+    if name == "__version__":
+        value = _installed_version()
+        globals()["__version__"] = value
+        return value
+    raise AttributeError(name)

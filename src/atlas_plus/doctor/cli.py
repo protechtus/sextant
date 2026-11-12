@@ -40,9 +40,21 @@ MCP_TOKEN    = os.environ.get("ATLAS_MCP_TOKEN", "")
 
 def _http_get(url: str, token: str = "", timeout: float = 3.0) -> tuple[int, dict]:
     try:
+        # A plain TCP probe first: a refused loopback connect through httpx cost 2.3-3 s on
+        # Windows and a proxy variable routed 127.0.0.1 through the proxy (AG11, sweep 10).
+        import socket
+        from urllib.parse import urlsplit
+        u = urlsplit(url)
+        host = u.hostname or "127.0.0.1"
+        port = u.port or (443 if u.scheme == "https" else 80)
+        try:
+            with socket.create_connection((host, port), timeout=min(timeout, 0.75)):
+                pass
+        except OSError as exc:
+            return 0, {"error": f"connect: {exc}"}
         import httpx
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = httpx.get(url, headers=headers, timeout=timeout, trust_env=False)
         try:
             body = r.json()
         except Exception:
@@ -168,8 +180,9 @@ def check_services() -> list[dict]:
             detail = f"HTTP {code}"
         return {"name": name, "status": status, "detail": detail}
 
-    # Run all three health checks concurrently; worst-case latency = max(individual) not sum.
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    # Every probe at once; worst-case latency = max(individual) not sum (three workers for five
+    # targets made two waves, AG11 sweep 10).
+    with ThreadPoolExecutor(max_workers=len(targets)) as ex:
         futures = {ex.submit(_check, t): t for t in targets}
         results_map = {}
         for fut in as_completed(futures):
@@ -596,6 +609,15 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         if status.get("indexed"):
             result["embed_index"] = status
     except Exception:
+        pass
+    try:
+        from atlas_plus.mcp.memory_server.fts import fts5_available
+        if not fts5_available():
+            result["fts5"] = False
+            result["hint"] = ("this Python's SQLite has no FTS5 module, so keyword search cannot work: use a "
+                              "python.org, uv or distro Python whose sqlite3 includes FTS5")
+            return result
+    except Exception:  # noqa: BLE001
         pass
     if not exists:
         result["hint"] = "memory root does not exist -- run atlas-init (alias: sextant-init) to scaffold it"
@@ -1349,11 +1371,13 @@ def render_text(data: dict) -> str:
     _invoked = _Path(_sys.argv[0]).stem.lower() if _sys.argv and _sys.argv[0] else ""
     # `python -m atlas_plus.doctor.cli` (the agent runbook's form) must not switch identity
     # on a public install: the distribution name decides when argv does not (sweep 2026-11-11).
-    try:
-        from atlas_plus.cli import _dist_name as _dn
-        _public = _dn() == "sextant-ai"
-    except Exception:  # noqa: BLE001
-        _public = False
+    _public = False
+    if not _invoked.startswith("sextant"):   # argv decides first; the metadata lookup costs 0.4 s (AG11)
+        try:
+            from atlas_plus.cli import _dist_name as _dn
+            _public = _dn() == "sextant-ai"
+        except Exception:  # noqa: BLE001
+            _public = False
     _title = "Sextant Doctor" if (_invoked.startswith("sextant") or _public) else "Atlas Doctor"
     lines = ["", f"\033[1;36m=== {_title} ===\033[0m", ""]
     lines.append("\033[2m(service rows are local port probes on 127.0.0.1 -- another"

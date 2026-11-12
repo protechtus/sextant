@@ -168,6 +168,44 @@ def mcp_servers_json(python: str, env: dict[str, str], name: str = SERVER_NAME) 
     return {"mcpServers": {name: entry}}
 
 
+def _toml_str(value: str) -> str:
+    """A TOML string for a path: literal (single-quoted, no escapes) unless it holds a quote,
+    then basic with the backslashes doubled. A hand-typed basic string `"C:\\sextant\\..."` made
+    Codex refuse its whole config (AG12, sweep 10)."""
+    if "'" not in value:
+        return "'" + value + "'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def codex_toml(python: str, env: dict[str, str], name: str = SERVER_NAME) -> str:
+    """The `[mcp_servers.<name>]` table for ~/.codex/config.toml (or $CODEX_HOME/config.toml)."""
+    lines = [f"[mcp_servers.{name}]", f"command = {_toml_str(python)}",
+             f'args = ["-m", "{SERVER_MODULE}", "--stdio"]']
+    if env:
+        lines += ["", f"[mcp_servers.{name}.env]"] + [f"{k} = {_toml_str(v)}" for k, v in env.items()]
+    return "\n".join(lines)
+
+
+def codex_command(python: str, env: dict[str, str], name: str = SERVER_NAME) -> str:
+    """`codex mcp add`, which writes the TOML itself. PowerShell 5.1 swallows a bare `--`, so
+    the separator is quoted on Windows (AG12)."""
+    parts = ["codex", "mcp", "add", name]
+    for k, v in env.items():
+        parts += ["--env", _q(f"{k}={v}")]
+    parts += ['"--"' if os.name == "nt" else "--", _q(python), "-m", SERVER_MODULE, "--stdio"]
+    return " ".join(parts)
+
+
+def opencode_json(python: str, env: dict[str, str], name: str = SERVER_NAME) -> dict:
+    """opencode's `mcp` block: `type: local`, `command` as one array, `environment`, and
+    `enabled`, none of which match the generic mcpServers shape (AG12)."""
+    entry: dict = {"type": "local", "enabled": True,
+                   "command": [python, "-m", SERVER_MODULE, "--stdio"]}
+    if env:
+        entry["environment"] = dict(env)
+    return {"$schema": "https://opencode.ai/config.json", "mcp": {name: entry}}
+
+
 def _self_hosting_doc() -> str:
     """The server guide: the file in a clone, the public URL for a package install (no docs/)."""
     local = Path(__file__).resolve().parents[2] / "docs" / "HOWTO-self-hosting.md"
@@ -227,6 +265,12 @@ def describe(environ: dict | None = None) -> dict:
     except UnquotableValue as exc:
         out["settings_json"] = None
         out["error"] = str(exc)
+    out["codex_toml"] = codex_toml(py, env)
+    try:
+        out["codex"] = codex_command(py, env)
+    except UnquotableValue:
+        out["codex"] = None   # the TOML form above needs no shell quoting
+    out["opencode_json"] = opencode_json(py, env)
     # A server has no Claude Code: remote clients reach HTTP mode behind an ingress.
     out["http"] = {
         "serve": f"ATLAS_MCP_TOKEN=<long random> {verify.split(' -m ')[0]} -m {SERVER_MODULE}",
@@ -306,6 +350,19 @@ def render(info: dict, client: str = "all") -> str:
                          "on macOS; Cursor: ~/.cursor/mcp.json, or .cursor/mcp.json in a project; "
                          "keep any servers already there):")
         lines += [json.dumps(info["client_config_json"], indent=2), ""]
+    if client in ("all", "codex"):
+        if client == "all":
+            lines.append("2b. Codex CLI (OpenAI): one command (it writes the TOML; in PowerShell the "
+                         "quoted \"--\" matters), or merge the table into ~/.codex/config.toml "
+                         "($CODEX_HOME/config.toml if set); then `codex mcp list`:")
+        if info.get("codex"):
+            lines += ["   " + info["codex"]]
+        lines += [info["codex_toml"], ""]
+    if client in ("all", "opencode"):
+        if client == "all":
+            lines.append("2c. opencode: merge into opencode.json in the project (or "
+                         "~/.config/opencode/opencode.json); then `opencode mcp list`:")
+        lines += [json.dumps(info["opencode_json"], indent=2), ""]
     if client in ("all", "hooks"):
         if client == "all":
             lines.append("3. Claude Code hooks, optional (session-start priming, end-of-session "
@@ -324,6 +381,12 @@ def render(info: dict, client: str = "all") -> str:
             lines += ["   Windows Claude Code with this WSL install: use these hook commands instead "
                       "(the block above is Linux-only; these carry the registration's variables):",
                       json.dumps(info["hooks_from_windows"], indent=2), ""]
+        if client == "all":
+            lines += ["   Other clients (Codex CLI, opencode, Cursor, Claude Desktop) have no session "
+                      "hooks: `sextant-session-start` prints the same priming text to paste into their "
+                      "instructions file (AGENTS.md, opencode's instructions), the server tells the "
+                      "agent to search memory first, and end-of-session summaries are Claude Code only.",
+                      ""]
     if client == "all":
         h = info.get("http") or {}
         if h:
@@ -362,10 +425,11 @@ def main(argv: list[str] | None = None) -> int:
         prog="sextant setup",
         description="Print the MCP registration and hook entries for this install, filled in.",
     )
-    ap.add_argument("--client", choices=("all", "claude-code", "json", "claude-desktop", "cursor", "hooks"),
+    ap.add_argument("--client", choices=("all", "claude-code", "json", "claude-desktop", "cursor",
+                                         "codex", "opencode", "hooks"),
                     default="all",
                     help="which piece to print (default: all, with instructions; claude-desktop and "
-                         "cursor are the json block)")
+                         "cursor are the json block; codex is the TOML, opencode its JSON)")
     ap.add_argument("--json", action="store_true", help="machine-readable output of everything")
     ap.add_argument("--out", default=None, metavar="FILE",
                     help="also write the output to FILE as UTF-8 without a byte-order mark (PowerShell's "
@@ -377,7 +441,17 @@ def main(argv: list[str] | None = None) -> int:
     output = json.dumps(info, indent=2) if args.json else render(info, args.client)
     print(output)
     if args.out:
-        Path(args.out).write_text(output + "\n", encoding="utf-8", newline="\n")
+        # The file form of a JSON piece is the JSON alone: on WSL the hooks output carries a
+        # prose line and a second object for the Windows side, which made the file unparseable
+        # (AG9, sweep 10).
+        file_text = output
+        if not args.json and args.client == "hooks" and info.get("settings_json"):
+            file_text = json.dumps(info["settings_json"], indent=2)
+        elif not args.json and args.client == "json":
+            file_text = json.dumps(info["client_config_json"], indent=2)
+        elif not args.json and args.client == "opencode":
+            file_text = json.dumps(info["opencode_json"], indent=2)
+        Path(args.out).write_text(file_text + "\n", encoding="utf-8", newline="\n")
     # Only a requested SHELL line that could not be printed is a failure: the JSON blocks need
     # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11).
     shell_forms = args.client in ("all", "claude-code", "hooks") and not args.json

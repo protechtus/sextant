@@ -219,6 +219,15 @@ def _client_config_references() -> list[str]:
     cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
     if cfg_dir:
         candidates += [Path(cfg_dir) / ".claude.json", Path(cfg_dir) / "settings.json"]
+    # Codex CLI and opencode registrations were invisible to this report (AG12, sweep 10).
+    codex_home = os.environ.get("CODEX_HOME", "").strip()
+    candidates += [Path(codex_home) / "config.toml"] if codex_home else [home / ".codex" / "config.toml"]
+    candidates += [Path.cwd() / "opencode.json", Path.cwd() / "opencode.jsonc",
+                   home / ".config" / "opencode" / "opencode.json",
+                   home / ".config" / "opencode" / "opencode.jsonc"]
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if xdg:
+        candidates += [Path(xdg) / "opencode" / "opencode.json", Path(xdg) / "opencode" / "opencode.jsonc"]
     if os.name == "nt":
         appdata = os.environ.get("APPDATA", "").strip()
         if appdata:
@@ -612,11 +621,14 @@ def main() -> None:
               "run before the variables were set created it. Remove it with ATLAS_" +
               ("MEMORY_ROOT" if stray["kind"] == "corpus" else "STATE_DIR") + " pointing at it.")
     if info["client_configs"]:
-        print("           unhook BEFORE deleting the clone: `claude mcp remove -s user sextant`")
-        print("           and delete any Stop hook entry ending in atlas_plus.summarizer.hook_entry.")
+        print("           unhook BEFORE deleting the clone, venv or tool install: `claude mcp remove -s user sextant`")
+        print("           (with the same CLAUDE_CONFIG_DIR the registration used), `codex mcp remove sextant` for")
+        print("           Codex CLI, delete the `sextant` entry from opencode.json, and delete any hook command")
+        print("           containing atlas_plus.hooks.run (older installs: atlas_plus.hooks.session_start or")
+        print("           atlas_plus.summarizer.hook_entry) from settings.json.")
     print("  package: this command never uninstalls the package or venv --")
     print("           run `pip uninstall sextant-ai` (or `uv tool uninstall sextant-ai` / `pipx uninstall sextant-ai`)")
-    print("           and delete the clone or venv yourself.")
+    print("           and delete the clone or venv yourself (a uv tool or pipx install has neither).")
 
     do_state = args.state or args.all
     do_corpus = args.corpus or args.all

@@ -315,6 +315,33 @@ app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan,
 # subresource integrity, only those two origins may run script, nothing may frame the page,
 # and the referrer never leaves. 'unsafe-inline' stays for the page's own inline script and
 # Tailwind's generated styles.
+def _too_deep(raw: bytes, limit: int = 200) -> bool:
+    """True when the JSON text nests deeper than ``limit``. json.loads raises RecursionError on
+    100,000 brackets on the main thread but segfaults inside a worker thread on musl, whose
+    non-main stacks are small (AG8, sweep 10): the depth is counted before parsing."""
+    depth = 0
+    in_str = False
+    esc = False
+    for b in raw:
+        if in_str:
+            if esc:
+                esc = False
+            elif b == 0x5C:      # backslash
+                esc = True
+            elif b == 0x22:      # quote
+                in_str = False
+            continue
+        if b == 0x22:
+            in_str = True
+        elif b in (0x5B, 0x7B):  # [ {
+            depth += 1
+            if depth > limit:
+                return True
+        elif b in (0x5D, 0x7D):  # ] }
+            depth -= 1
+    return False
+
+
 _CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
@@ -1236,8 +1263,11 @@ async def export_tasks(request: Request, fmt: str = "csv", limit: int = 500, sta
 async def memory_capture(request: Request):
     """Quick capture: write a fact to memory via memory_remember tool."""
     _check_auth(request)
+    raw = await request.body()
+    if _too_deep(raw):
+        raise HTTPException(status_code=400, detail="Body nesting too deep.")
     try:
-        body = json.loads(await request.body())
+        body = json.loads(raw)
     except (ValueError, RecursionError):
         raise HTTPException(status_code=400, detail="Body must be JSON: {\"fact\": ..., \"scope\": ...}")
     if not isinstance(body, dict):
@@ -6119,6 +6149,8 @@ async def inbox_conversation(request: Request):
     raw = await request.body()
     if len(raw) > 2_000_000:
         raise HTTPException(status_code=413, detail="Conversation too large (2 MB cap).")
+    if _too_deep(raw):
+        raise HTTPException(status_code=400, detail="Body nesting too deep.")
     try:
         body = json.loads(raw)
     except (ValueError, RecursionError):  # 100k nested brackets is a RecursionError, not a ValueError

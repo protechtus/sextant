@@ -17,6 +17,17 @@ from atlas_plus import paths as atlas_paths
 _STATE_DIR = atlas_paths.state_dir()
 LOG_FILE = _STATE_DIR / "logs" / "mcp-search.ndjson"
 MISS_THRESHOLD = 0.3
+QUERY_KEEP = 300            # characters of the query kept per record (AG10: a 50 MB query made a 50 MB line)
+ROTATE_BYTES = 5_000_000    # the log rotates to .1 past this size; load_log reads the whole file
+
+
+def _rotate_if_large() -> None:
+    try:
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > ROTATE_BYTES:
+            import os as _os
+            _os.replace(LOG_FILE, LOG_FILE.with_suffix(".ndjson.1"))
+    except OSError:
+        pass
 
 
 def log_search(
@@ -29,10 +40,14 @@ def log_search(
     """Append a search record. Non-blocking: silently swallows errors."""
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _rotate_if_large()
         is_miss = result_count == 0 or top_score < MISS_THRESHOLD
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "query": redact(query),  # ATL-017: never persist secrets pasted into a search
+            # ATL-017: never persist secrets pasted into a search; and never the whole query
+            # (a 50,000,000-character query made a 50 MB line, AG10 sweep 10)
+            "query": redact(query[:QUERY_KEEP]),
+            "query_chars": len(query),
             "scope": scope or "",
             "top_score": round(top_score, 4),
             "result_count": result_count,

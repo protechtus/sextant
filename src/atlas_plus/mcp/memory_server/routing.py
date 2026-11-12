@@ -107,6 +107,7 @@ def _append_to_frontmatter_list(raw: str, key: str, item: str) -> str:
 # (Windows + POSIX); stale locks (crashed writer) are broken after 30s.
 import hashlib as _hashlib
 import time as _time
+import unicodedata as _ud
 from contextlib import contextmanager
 
 
@@ -143,10 +144,19 @@ def _atomic_write_text(target: Path, content: str) -> None:
     )
     # fsync before the rename so a power loss cannot leave a zero-length note
     # behind a successful replace (round-B 2026-11-09, row 31).
-    with tmp.open("w", encoding="utf-8") as fh:
-        fh.write(content)
-        fh.flush()
-        os.fsync(fh.fileno())
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except BaseException:
+        # A write that fails half-way (a lone surrogate, disk full) must not leave its temp
+        # file in the corpus (AG10, sweep 10).
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     last_err: OSError | None = None
     for delay in (0.0, 0.05, 0.1, 0.2, 0.4):
         if delay:
@@ -198,25 +208,78 @@ _LOCK_TIMEOUT = 10.0
 _LOCK_STALE = 30.0
 
 
+_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
+_SUPERSCRIPT_DIGITS = "\u00b9\u00b2\u00b3"
+MAX_FACT_CHARS = 65_536
+
+
+def _is_reserved_device_name(name: str) -> bool:
+    """Windows device names, which open the DEVICE instead of a file: CON hung the server
+    (expert pass 2026-08-26), CONIN$ hung it again (AG10, sweep 10), and COM followed by a
+    superscript digit is reserved too. The comparison ignores an extension and trailing spaces."""
+    base = name.split(".")[0].rstrip(" ").lower()
+    if base in ("con", "prn", "aux", "nul", "conin$", "conout$"):
+        return True
+    if len(base) == 4 and base[:3] in ("com", "lpt") and (base[3].isdigit() or base[3] in _SUPERSCRIPT_DIGITS):
+        return base[3] != "0"
+    return False
+
+
+def _scrub_controls(text: str) -> str:
+    """Drop C0/C1 control characters except tab, newline and carriage return, and replace lone
+    surrogates: ESC/BEL/OSC sequences stored in a note reached the operator's terminal through
+    `sextant search`, and a lone surrogate failed deep inside the temp-file write (AG10)."""
+    out = []
+    for c in text:
+        cat = _ud.category(c)
+        if cat == "Cc" and c not in "\t\n\r":
+            continue
+        if cat == "Cs":
+            out.append("\ufffd")
+            continue
+        out.append(c)
+    return "".join(out)
+
+
 def _lock_key(target: Path) -> str:
-    """Stable cross-process identity for ``target`` (audit 2026-11-09, row 17a).
+    r"""Stable cross-process identity for ``target`` (audit 2026-11-09, row 17a).
 
     Keyed on the corpus-relative path computed from the RESOLVED memory root
     and the resolved target, so two processes that spell the same corpus
     differently (8.3 short name vs long name, junction, subst drive, case)
     still take the same lock. A target outside the corpus falls back to its
     resolved, case-normalised absolute path.
+
+    Windows (2026-11-12, the one-in-twenty fact loss on windows-latest CI): for a path
+    that does not exist yet, ``ntpath.realpath`` strips its ``\\?\`` prefix only when a
+    second probe fails with the SAME error code as the first. A concurrent writer creating
+    the scope's directory between the two probes turns PATH_NOT_FOUND into FILE_NOT_FOUND,
+    so one thread gets ``\\?\C:\...``, ``relative_to`` fails, and that writer takes a
+    DIFFERENT lock file from everybody else: two holders, one lost update. The prefix and
+    the case are therefore normalised here before the comparison, and the key no longer
+    depends on which error a race produced.
     """
+    resolved = _canonical(target)
     try:
-        resolved = Path(os.path.realpath(target))
-    except (OSError, ValueError):
-        resolved = Path(os.path.abspath(target))
-    try:
-        root = Path(os.path.realpath(MEMORY_ROOT))
-        rel = resolved.relative_to(root)
+        rel = resolved.relative_to(_canonical(MEMORY_ROOT))
         return "rel:" + rel.as_posix().lower()
     except (OSError, ValueError):
-        return "abs:" + os.path.normcase(str(resolved)).lower()
+        return "abs:" + str(resolved).lower()
+
+
+def _canonical(path: Path) -> Path:
+    """realpath with the Windows extended-length prefix removed and the case folded."""
+    try:
+        s = os.path.realpath(path)
+    except (OSError, ValueError):
+        s = os.path.abspath(path)
+    if os.name == "nt":
+        if s.startswith("\\\\?\\UNC\\"):
+            s = "\\" + s[7:]           # \\?\UNC\server\share -> \\server\share
+        elif s.startswith("\\\\?\\"):
+            s = s[4:]                  # \\?\C:\dir -> C:\dir
+        s = os.path.normcase(s)
+    return Path(s)
 
 
 @contextmanager
@@ -378,7 +441,9 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
     if ":" in scope:
         key, _, param = scope.partition(":")
         key = key.strip().lower()  # `Reference:x` is `reference:x` (power-user pass 2026-11-10)
-        param = param.strip().lower().replace(" ", "-")
+        # NFC first: a decomposed 'café' is the same note as the composed one, not a second
+        # file that displays identically (AG10, sweep 10).
+        param = _ud.normalize("NFC", param.strip()).lower().replace(" ", "-")
         # Reject path traversal in the parameter component
         # ':' too (audit 2026-11-09, row 25): "c:secret" is a drive-relative
         # path that drops the route's directory, and "notes:hidden" is an
@@ -392,10 +457,7 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
         # CONSOLE DEVICE and blocks forever (empirically hung the MCP server
         # thread, expert-pass 2026-08-26). Rejected on every OS for corpus
         # portability -- a corpus written on Linux must stay clonable to NTFS.
-        if param.split(".")[0] in (
-            "con", "prn", "aux", "nul",
-            *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10)),
-        ):
+        if _is_reserved_device_name(param):
             raise ValueError(
                 f"Invalid scope parameter {param!r}: reserved device name on Windows."
             )
@@ -403,10 +465,18 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
         # exist on NTFS; a name that is only dots or starts with one is a hidden or parent entry;
         # a very long name fails deep inside the temp-file write with an internal file name
         # (MN3, pipeline sweep 2026-11-11).
-        if any(ord(c) < 32 or ord(c) == 127 for c in param):
-            raise ValueError(f"Invalid scope parameter {param!r}: control characters are not allowed.")
+        # Every Unicode control, format, separator and unassigned code point: NEL (U+0085) and
+        # the line/paragraph separators are line breaks to YAML and broke the frontmatter; a
+        # zero-width joiner or a right-to-left override makes a name that displays as another
+        # (AG10, sweep 10). ord < 32 and 127 are inside category Cc.
+        if any(_ud.category(c) in _FORBIDDEN_CATEGORIES for c in param):
+            raise ValueError(f"Invalid scope parameter {param!r}: control or invisible characters are not allowed.")
+        if any(c in param for c in '*?"<>|'):
+            raise ValueError(f"Invalid scope parameter {param!r}: the characters * ? \" < > | cannot be used in a file name.")
         if param and (param.strip(".") == "" or param.startswith(".")):
             raise ValueError(f"Invalid scope parameter {param!r}: must not start with a dot.")
+        if param and param.endswith("."):
+            raise ValueError(f"Invalid scope parameter {param!r}: must not end with a dot (Windows strips it).")
         if len(param) > 120:
             raise ValueError(f"Invalid scope parameter: {len(param)} characters; the limit is 120.")
     else:
@@ -414,6 +484,9 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
         param = ""
 
     rule = routes.get(key)
+    if rule and param and not any(ph in str(rule.get("target", "")) for ph in ("{topic}", "{name}")):
+        # `identity:foo` used to drop the topic silently and write identity/user.md (AG10 F11).
+        raise ValueError(f"Scope {key!r} takes no topic ({scope!r} would be ignored); write {key!r} alone.")
     if not rule:
         raise ValueError(
             f"Unknown scope: {scope!r}. "
@@ -507,6 +580,10 @@ def append_fact(
     # never fed back through a YAML parser.
     if "---" in fact:
         raise ValueError("Fact cannot contain '---' (YAML frontmatter delimiter).")
+    if len(fact) > MAX_FACT_CHARS:
+        raise ValueError(f"Fact too long: {len(fact):,} characters; the limit is {MAX_FACT_CHARS:,}. "
+                         "Store the document as a file and remember its path instead.")
+    fact = _scrub_controls(fact)
     date_str = date.today().isoformat()
     today_header = f"## {date_str}"
     conf_level = _map_confidence(confidence, source)
