@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -553,6 +554,7 @@ class MemoryFile:
     name: str            # file name
     text: Optional[str]  # full file text, or None if unreadable
     not_utf8: bool = False   # decoded with replacement characters (a cp932/latin-1 note, AG17)
+    bad_name: bool = False   # the file NAME is not valid UTF-8 (a legacy-encoded name, MN17)
 
 
 def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
@@ -594,6 +596,13 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
             if is_link(md):
                 continue
             rel_path = rel_dir / name
+            try:
+                name.encode("utf-8")
+            except UnicodeEncodeError:
+                # A legacy-encoded file name: search skips it, doctor names it (MN17, sweep 11).
+                out.append(MemoryFile(rel=str(rel_path).encode("utf-8", "replace").decode("utf-8"),
+                                      parts=rel_path.parts, name=name, text=None, not_utf8=True, bad_name=True))
+                continue
             _scan_append(out, md, rel_path)
     return out
 
@@ -636,7 +645,19 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         "md_files": len(files),
         "identity_present": identity_present,
     }
-    bad = [f.rel for f in files if f.not_utf8]
+    bad_names = [f.rel for f in files if f.bad_name]
+    if bad_names:
+        result["bad_names"] = bad_names[:10]
+        result["bad_names_hint"] = (f"{len(bad_names)} file name(s) are not valid UTF-8 (a legacy-encoded "
+                                    "name): search skips them; rename them: " + ", ".join(bad_names[:5]))
+    copies = [f.rel for f in files if re.match(r".*_\d+\.md$", f.name)
+              and any(g.rel == re.sub(r"_\d+\.md$", ".md", f.rel) for g in files)]
+    if copies:
+        result["import_copies"] = len(copies)
+        result["import_copies_hint"] = (f"{len(copies)} note(s) are `_N` copies beside an older note of the same "
+                                        "name (an edited import lands as a new copy): `sextant import ... "
+                                        "--archive-stale` moves the stale ones to archive/")
+    bad = [f.rel for f in files if f.not_utf8 and not f.bad_name]
     if bad:
         # A cp932-saved note primed as mojibake and refused writes with an unnamed error (AG17).
         result["not_utf8"] = bad[:10]
@@ -1503,7 +1524,7 @@ def render_text(data: dict) -> str:
             lines.append(f"  \033[33mempty\033[0m  root: {mc.get('root')}")
         if mc.get("hint"):
             lines.append(f"  \033[33m{mc['hint']}\033[0m")
-        for extra_key in ("not_utf8_hint", "locks_hint"):
+        for extra_key in ("not_utf8_hint", "bad_names_hint", "import_copies_hint", "locks_hint"):
             if mc.get(extra_key):
                 lines.append(f"  \033[33m{mc[extra_key]}\033[0m")
         emb = mc.get("embed_index") or {}

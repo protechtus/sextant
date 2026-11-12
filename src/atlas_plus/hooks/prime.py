@@ -65,6 +65,7 @@ def _read_stripped(path: Path, max_chars: int = 800) -> str:
             end = text.find("---", 3)
             if end != -1:
                 text = text[end + 3:]
+        text = re.sub(r"\s*<!--\s*source:[^>]*-->", "", text)
         text = text.strip()
         if len(text) <= max_chars:
             return text
@@ -141,7 +142,8 @@ def _open_tickets(project_name: str) -> list[str]:
             t for t in list_tickets(project=project_name)
             if t.status in ("todo", "in-progress", "blocked")
         ]
-        return [f"  [{t.status}] {t.id} -- {t.title} ({t.assignee})" for t in tickets]
+        from atlas_plus.hooks._quote import one_line
+        return [f"  [{t.status}] {t.id} -- {one_line(t.title)} ({one_line(t.assignee)})" for t in tickets]
     except Exception:
         return []
 

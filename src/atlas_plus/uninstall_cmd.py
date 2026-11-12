@@ -280,7 +280,9 @@ def _scan_client_configs() -> list[str]:
     return hits
 
 
-_CMD_PATH_RE = re.compile(r'(?:"command"\s*:|\bcommand\s*=)\s*"((?:[^"\\]|\\.)+)"')
+_CMD_PATH_RE = re.compile(
+    r'(?:"command"\s*:\s*\[?\s*|\bcommand\s*=\s*\[?\s*)'
+    r'(?:"((?:[^"\\]|\\.)+)"|\'([^\']+)\')')   # JSON string or array, TOML basic or literal string (MN16)
 
 
 def _running_hints(corpus: Path) -> list[str]:
@@ -323,14 +325,28 @@ def _stale_client_references() -> list[str]:
         except OSError:
             continue
         for m in _CMD_PATH_RE.finditer(text):
-            raw = m.group(1).replace("\\\\", "\\")
-            low = raw.lower()
+            raw = (m.group(1) or m.group(2) or "").replace("\\\\", "\\")
+            exe = _first_token(raw)
+            low = exe.lower()
             if "sextant" not in low and "atlas_plus" not in low and "atlas-memory" not in low:
                 continue
-            if os.sep in raw or "/" in raw:
-                if not Path(raw).exists():
-                    out.append(f"{cfg} -> {raw}")
+            if os.sep in exe or "/" in exe:
+                if not Path(exe).exists():
+                    out.append(f"{cfg} -> {exe}")
     return out
+
+
+def _first_token(command: str) -> str:
+    """The executable of a command line: a quoted path or the text up to the first space. The
+    whole hook line (`'...python.exe' -m atlas_plus.hooks.run ...`) was tested as a path and every
+    correct hook was reported as stale (MN13, sweep 11)."""
+    cmd = command.strip()
+    if cmd[:1] in ("'", '"'):
+        end = cmd.find(cmd[0], 1)
+        return cmd[1:end] if end > 0 else cmd[1:]
+    # Unquoted: the executable ends where the first option starts (a path may carry spaces).
+    m = re.search(r"\s-{1,2}[A-Za-z]", cmd)
+    return cmd[:m.start()] if m else cmd
 
 
 def report() -> dict:

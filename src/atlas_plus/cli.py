@@ -309,13 +309,13 @@ def cmd_dashboard(ctx: typer.Context) -> None:
     _delegate(web_main, "sextant web", ctx.args)
 
 
-@app.command("web", hidden=True, **_PASSTHROUGH)
+@app.command("web", **_PASSTHROUGH)
 def cmd_web(ctx: typer.Context) -> None:
     """Alias of `dashboard`."""
     cmd_dashboard(ctx)
 
 
-@app.command("context", hidden=True, **_PASSTHROUGH)
+@app.command("context", **_PASSTHROUGH)
 def cmd_context(ctx: typer.Context) -> None:
     """Print the session priming text (same as sextant-session-start); with words, the task-matched
     facts (same as atlas-prime "<task words>")."""
@@ -344,7 +344,8 @@ def cmd_serve() -> None:
 
 @app.command("add", hidden=True)
 def cmd_add(
-    fact: str = typer.Argument(..., help="One fact, a sentence or two."),
+    fact: str = typer.Argument(..., help="One fact, a sentence or two; `-` reads it from standard input "
+                                         "(for quotes a shell would eat: PowerShell 5.1)."),
     scope: str = typer.Option("reference:notes", "--scope"),
 ) -> None:
     """Alias of `remember`."""
@@ -353,7 +354,8 @@ def cmd_add(
 
 @app.command("remember")
 def cmd_remember(
-    fact: str = typer.Argument(..., help="One fact, a sentence or two."),
+    fact: str = typer.Argument(..., help="One fact, a sentence or two; `-` reads it from standard input "
+                                         "(for quotes a shell would eat: PowerShell 5.1)."),
     scope: str = typer.Option(
         "reference:notes", "--scope",
         help="Where it goes: identity | preference:<topic> | project:<name> | reference:<topic> "
@@ -365,6 +367,12 @@ def cmd_remember(
     # this is the human-direct counterpart of the memory_remember MCP tool.
     from atlas_plus.mcp.memory_server.tools.remember import memory_remember
 
+    if fact == "-":
+        import sys as _sys
+        fact = _sys.stdin.read().strip()
+        if not fact:
+            console.print("[red]Not stored:[/red] nothing on standard input")
+            raise typer.Exit(2)
     try:
         result = memory_remember(scope, fact, source="human-direct", interactive=True)
     except RuntimeError as exc:  # the write kill switch (ATLAS_INTERACTIVE_WRITES=off)
@@ -595,5 +603,21 @@ def cmd_components(
     )
 
 
+def main() -> None:
+    """Console entry: a closed pipe (`sextant search ... | head`) ends quietly instead of a Rich
+    traceback and exit 120 (MN15, sweep 11)."""
+    import sys as _sys
+    try:
+        app()
+    except OSError as exc:
+        if exc.errno in (22, 32) or exc.__class__.__name__ == "BrokenPipeError":
+            try:
+                _sys.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise SystemExit(0)
+        raise
+
+
 if __name__ == "__main__":
-    app()
+    main()

@@ -42,7 +42,7 @@ _TOKENIZER = "porter unicode61 remove_diacritics 2"
 _TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1"   # SQLite before 3.27
 # Index text format tag, stored with the tokenizer name in atlas_meta: a change here rebuilds
 # every existing index once (the format is baked into the stored text, like the tokenizer).
-_INDEX_TAG = " +cjk1"
+_INDEX_TAG = " +cjk2"
 
 # unicode61 has no notion of CJK word boundaries: a run of ideographs between spaces was ONE
 # token, so `東京都` never matched `東京` and `人口` found nothing inside a sentence (AG17,
@@ -55,25 +55,69 @@ _CJK_RE = re.compile(
     "[\u1100-\u11ff\u2e80-\u2fdf\u3040-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u4dbf"
     "\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\U00020000-\U0003134f]")
 _CJK_RUN_RE = re.compile(_CJK_RE.pattern + "{2,}")
+_CJK_RUN_OR_CHAR_RE = re.compile(_CJK_RE.pattern + "+")
+# A CJK character glued to a Latin letter or digit fused into one token: `2025年`, `Python编程`
+# and `iPhone15在` were unsearchable (MN13, MN17, sweep 11). The separator also goes on those
+# boundaries, in the index and in the query.
+_CJK_ASCII_BOUNDARY_RE = re.compile(
+    "(?<=" + _CJK_RE.pattern + ")(?=[0-9A-Za-z])|(?<=[0-9A-Za-z])(?=" + _CJK_RE.pattern + ")")
+# A phrase of consecutive characters matched ACROSS a full stop (`河北。京剧` answered `北京`,
+# MN17): sentence punctuation and line breaks become a private-use token (a token character to
+# unicode61, never typed by a user) that breaks adjacency. Stripped from snippets.
+_SENTINEL = "\ue000"
+_BREAK_RE = re.compile("[\n\u3001\u3002\uff0c\uff0e\uff1b\uff1a\uff01\uff1f\u300c\u300d\u300e\u300f"
+                       "\uff08\uff09\u3010\u3011]+|[.,;:!?]+(?=\s|$)")
 
 
 def _cjk_split(text: str) -> str:
-    """Insert the separator between adjacent CJK characters."""
-    return _CJK_RUN_RE.sub(lambda m: _CJK_SEP.join(m.group(0)), text)
+    """Insert the separator between adjacent CJK characters and on CJK/ASCII boundaries."""
+    text = _CJK_RUN_RE.sub(lambda m: _CJK_SEP.join(m.group(0)), text)
+    return _CJK_ASCII_BOUNDARY_RE.sub(_CJK_SEP, text)
 
 
 def _norm_index_text(text: str) -> str:
-    return _cjk_split(unicodedata.normalize("NFKC", text))
+    broken = _BREAK_RE.sub(lambda m: " " + _SENTINEL + " ", text)
+    return _cjk_split(unicodedata.normalize("NFKC", broken))
+
+
+def _fm_values(obj) -> list[str]:
+    """Every string value in a parsed frontmatter mapping, recursively."""
+    out: list[str] = []
+    if isinstance(obj, dict):
+        for v in obj.values():
+            out.extend(_fm_values(v))
+    elif isinstance(obj, list):
+        for v in obj:
+            out.extend(_fm_values(v))
+    elif isinstance(obj, str):
+        out.append(obj)
+    elif obj is not None and not isinstance(obj, bool):
+        out.append(str(obj))
+    return out
+
+
+def _index_body(frontmatter_json: str, body: str) -> str:
+    """The indexed body: the normalised note body followed by the frontmatter's values, so a
+    CJK title or tag is searchable (MN16: `大阪城の歴史` in a title found nothing) while the
+    stored frontmatter_json stays byte-for-byte parseable for the topics tool."""
+    text = _norm_index_text(body)
+    try:
+        values = _fm_values(json.loads(frontmatter_json))
+    except (ValueError, TypeError):
+        values = []
+    if values:
+        text += "\n" + _norm_index_text("\n".join(values))
+    return text
 
 
 def _prepare_query(query: str) -> str:
-    """NFKC-fold the query and turn every CJK run into a phrase of its characters."""
-    q = unicodedata.normalize("NFKC", query)
-    return _CJK_RE.sub(lambda m: m.group(0), q) if not _CJK_RE.search(q) else _CJK_RUN_OR_CHAR_RE.sub(
-        lambda m: '"' + _CJK_SEP.join(m.group(0)) + '"', q)
-
-
-_CJK_RUN_OR_CHAR_RE = re.compile(_CJK_RE.pattern + "+")
+    """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
+    to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
+    q = unicodedata.normalize("NFKC", query).replace(_SENTINEL, " ")
+    if not _CJK_RE.search(q):
+        return q
+    q = _CJK_RUN_OR_CHAR_RE.sub(lambda m: ' "' + _CJK_SEP.join(m.group(0)) + '" ', q)
+    return " ".join(q.split())
 _CREATE_FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
 USING fts5(path, frontmatter_json, body, tokenize='{tokenizer}');
@@ -181,8 +225,9 @@ def _connect() -> sqlite3.Connection:
             conn.execute("DROP TABLE IF EXISTS memory_fts")
             conn.execute("DELETE FROM memory_files")
             if row is not None:
-                log.info("FTS tokenizer changed (%s -> %s): the keyword index is rebuilt from the "
-                         "corpus on the next search; the corpus itself is untouched", row[0], _TOKENIZER)
+                log.info("FTS index format changed (%s -> %s): the keyword index is rebuilt from the "
+                         "corpus on the next search; the corpus itself is untouched",
+                         row[0], _TOKENIZER + _INDEX_TAG)
             chosen = _TOKENIZER
             try:
                 conn.execute(_CREATE_FTS.format(tokenizer=_TOKENIZER))
@@ -206,6 +251,14 @@ def _connect() -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def _utf8_name(name: str) -> bool:
+    try:
+        name.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
 
 
 def _walk_memory():
@@ -237,6 +290,8 @@ def _walk_memory():
         for name in sorted(filenames):
             if not name.endswith(".md") or name == "_README.md":
                 continue   # _README.md: sextant-init scaffolding notes, not memories (persona pass 2026-11-10)
+            if not _utf8_name(name):
+                continue   # a legacy-encoded name crashed every search at the sqlite bind (MN17)
             p = d / name
             if is_link(p):
                 continue
@@ -279,6 +334,8 @@ def _walk_memory_stats():
                     continue   # links are never followed (parity with _walk_memory)
                 if not is_dir and not name.endswith(".md"):
                     continue
+                if not _utf8_name(name):
+                    continue   # parity with _walk_memory (MN17)
                 rel = prefix + name
                 parts = rel.split("/")
                 if parts[0] in EXCLUDED_DIRS or is_excluded_mirror(parts):
@@ -333,7 +390,7 @@ def _parse_md(raw: str) -> tuple[str, str, float | None]:
             except Exception:
                 fm = {}
             try:
-                frontmatter_json = json.dumps(fm, default=str)
+                frontmatter_json = json.dumps(fm, default=str, ensure_ascii=False)   # `大阪城` in a title was `\u5927...` (MN16)
             except Exception:
                 pass
     return frontmatter_json, body, confirmed_ts
@@ -388,7 +445,7 @@ def update_incremental() -> int:
                 conn.execute("DELETE FROM memory_fts WHERE path=?", (rel,))
                 conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
-                    (rel, _norm_index_text(frontmatter_json), _norm_index_text(body)),
+                    (rel, frontmatter_json, _index_body(frontmatter_json, body)),
                 )
                 conn.execute(
                     "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size)"
@@ -495,7 +552,7 @@ def rebuild(force: bool = False) -> int:
 
                 conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
-                    (rel, _norm_index_text(frontmatter_json), _norm_index_text(body)),
+                    (rel, frontmatter_json, _index_body(frontmatter_json, body)),
                 )
                 st = abs_path.stat()
                 conn.execute(
@@ -674,7 +731,7 @@ def search(query: str, scope: str = "", limit: int = 10,
         seen: dict[str, dict] = {}
         for r in rows:
             p, snip, sc = r[0], r[1], r[2]
-            snip = (snip or "").replace(_CJK_SEP, "")
+            snip = (snip or "").replace(_CJK_SEP, "").replace(" " + _SENTINEL + " ", " ").replace(_SENTINEL, "")
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}
 

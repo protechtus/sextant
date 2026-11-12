@@ -187,18 +187,24 @@ atlas-review-memory summary    # corpus health at a glance
 
 ```bash
 sextant-import --source obsidian --path ~/MyVault        # report first ($HOME\MyVault in PowerShell; it does not expand ~)
+sextant-import --source obsidian --path ~/MyVault --yes --archive-stale   # daily re-import; stale copies go to archive/
 sextant-import --source chatgpt --path conversations.json --yes   # or the export .zip as delivered
 sextant-import --source claude --path data-export.zip --yes       # claude.ai export (zip or its conversations.json)
 ```
 
-Imports are structural and provenance-stamped (never overwrite anything);
-a note you changed in the vault lands as a new `_2` copy next to the earlier
-import (nothing is ever overwritten) and the report names the older copy as
-superseded; archive it. A note you renamed or moved in the vault is
-recognised by its content and skipped (the report says where it already
-is). The report also lists every link the import did not follow (links can
-point outside the vault), every binary or undecodable file it skipped, and
-the first twenty destinations. A ChatGPT export keeps only the live branch
+Imports are structural and provenance-stamped (never overwrite anything).
+The report, with or without `--yes`, classifies every note the same way: new,
+unchanged, edited (a new `_2` copy lands beside the old one) or renamed (the
+note is imported under its new name). Every stale corpus copy is named: older
+copies of edited notes and notes that are no longer in the vault. Stale copies
+still show up in search until you move them: `--yes --archive-stale` moves
+them into `archive/` inside the corpus (never deleted; search ignores that
+folder), or move them there by hand. Links are never followed, binary and
+undecodable files are skipped, a top-level `Templates/` folder is skipped,
+non-markdown files (canvas, images, PDFs) are counted but not imported, and
+the first twenty files `--yes` would write are listed. A ChatGPT or claude.ai
+conversation an older build already imported under another name is recognised
+and not filed again. A ChatGPT export keeps only the live branch
 of each conversation (regenerated or edited answers are left out). Keyword
 search picks imported notes up on its own (Chinese, Japanese and Korean text is
 matched character by character, so `東京` finds `東京都`; full-width letters and
@@ -206,6 +212,13 @@ half-width katakana match their ordinary forms); if you run Ollama, refresh the
 semantic index with `sextant-embed-index` to enable semantic search
 (`ollama pull nomic-embed-text` once, then searches understand meaning,
 not just keywords; without it, keyword search works exactly as before).
+
+Facts from the shell: a line that starts with `---` is refused (it would
+close the note's frontmatter); dashes mid-sentence are fine. In PowerShell
+5.1 a fact that contains double quotes is easier to pass on standard input:
+`"Ilse said: \"The sea waits.\"" | sextant remember - --scope project:novel`
+(`-` reads the fact from stdin). A topic may name a subfolder note from an
+imported vault: `--scope reference:obsidian/README`.
 
 ## 6. Optional layers, when you want them
 
@@ -485,9 +498,13 @@ if you roll back.
   older than 90 days, always keeping the newest three of every note) and `--yes` deletes them.
   The live notes are never touched by it.
 - **What gets primed at session start.** The session-start hook injects your identity, the
-  clock, your own house rules (from `identity/house-rules.md`, if you wrote any), and the
-  project note whose name matches the current directory under `ATLAS_PROJECTS_ROOT`
-  (default `~/projects`). Reference facts are not injected automatically; ask for them
+  clock, your own house rules (from `identity/house-rules.md`, if you wrote any: one rule per
+  list line, `- `, `* ` or `1.`; prose outside list lines is not a rule, and the hook says so
+  when the file has text but no list lines), and the project note whose name matches the
+  current directory under `ATLAS_PROJECTS_ROOT` (default `~/projects`): the git root when
+  there is one, otherwise the first folder below the projects root that has a note. Save
+  `identity/*.md` as UTF-8 without a BOM (PowerShell 5.1's `Set-Content -Encoding utf8` adds
+  one; it is tolerated now, but `-Encoding ascii` or an editor is safer). Reference facts are not injected automatically; ask for them
   with the search tool or run `atlas-prime <task>`, which adds the facts that match the
   task words (any scope) and the project note when a word is a project name.
 - **`ATLAS_WORKSPACE_ROOT` re-roots everything.** It moves `.memory/` and `.atlas/` too, so

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -47,6 +48,8 @@ def _read_file(path: Path, max_chars: int = 600) -> str:
             end = text.find("---", 3)
             if end != -1:
                 text = text[end + 3:]
+        # Provenance comments are curation metadata, noise in a priming block (MN14).
+        text = re.sub(r"\s*<!--\s*source:[^>]*-->", "", text)
         text = text.strip()
         if len(text) <= max_chars:
             return text
@@ -60,13 +63,27 @@ def _read_file(path: Path, max_chars: int = 600) -> str:
 
 
 def _detect_project() -> tuple[str, Path] | None:
-    """Walk up from cwd to find a git root under PROJECTS_ROOT."""
+    """Walk up from cwd to find a git root under PROJECTS_ROOT; failing that, the first directory
+    below PROJECTS_ROOT (a writer's manuscript folder is not a git repository, MN14)."""
     cwd = Path.cwd()
     check = cwd
     while check != check.parent:
         if (check / ".git").exists() and _under_projects(check):
             return check.name, check
         check = check.parent
+    try:
+        rel = cwd.resolve().relative_to(Path(PROJECTS_ROOT).resolve())
+    except (OSError, ValueError):
+        return None
+    if rel.parts:
+        top = Path(PROJECTS_ROOT).resolve() / rel.parts[0]
+        # Only when the corpus holds a note for it: a plain folder with no note is not a project.
+        notes_dir = MEMORY_ROOT / "projects"
+        try:
+            if any(n.stem.lower() == top.name.lower() for n in notes_dir.glob("*.md")):
+                return top.name, top
+        except OSError:
+            pass
     return None
 
 
@@ -108,7 +125,7 @@ def _house_rules() -> str:
     from atlas_plus import paths as atlas_paths
     try:
         raw = (atlas_paths.memory_root() / "identity" / "house-rules.md").read_text(
-            encoding="utf-8", errors="replace"
+            encoding="utf-8-sig", errors="replace"   # a BOM hid the first rule (MN14, sweep 11)
         )
     except OSError:
         return ""
@@ -116,8 +133,32 @@ def _house_rules() -> str:
         end = raw.find("\n---", 3)
         if end != -1:
             raw = raw[end + 4:]
-    bullets = [l for l in raw.splitlines() if l.strip().startswith("- ")]
-    return "\n".join(bullets).strip()
+    return _rule_lines(raw)
+
+
+_RULE_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)(.+?)\s*$")
+
+
+def _one(value) -> str:
+    """One line of corpus text, defused and without the quote prefix (ticket titles, MN16)."""
+    from atlas_plus.hooks._quote import one_line
+    return one_line(str(value))
+
+
+def _rule_lines(raw: str) -> str:
+    """House rules are the list lines of the file: `- `, `* `, `+ ` or `1.` / `1)` (a numbered
+    list was dropped without a word, MN14). A file with text but no list lines says so."""
+    rules = []
+    for line in raw.splitlines():
+        m = _RULE_RE.match(line)
+        if m:
+            rules.append("- " + m.group(1))
+    if rules:
+        return "\n".join(rules)
+    if raw.strip():
+        return ("(identity/house-rules.md has text but no list lines; rules are read from lines that "
+                "start with -, * or 1. so write each rule as a bullet)")
+    return ""
 
 
 def _all_tickets() -> list | None:
@@ -284,7 +325,7 @@ def _open_tickets(project_name: str, tickets: list | None = None) -> str:
         ]
         if not open_tickets:
             return "(none)"
-        return "\n".join(f"  [{t.status}] {t.id} — {t.title} ({t.assignee})" for t in open_tickets)
+        return "\n".join(f"  [{t.status}] {t.id} -- {_one(t.title)} ({_one(t.assignee)})" for t in open_tickets)
     except Exception:
         return "(ticket system unavailable)"
 
@@ -349,7 +390,8 @@ def main() -> None:
     # --- Current time (temporal sensor) ---
     clock = _world_clock()
     if clock:
-        lines += ["## Current time", clock, ""]
+        lines += ["## Current time", clock,
+                  "(the moment this text was generated, not a live clock; pasted text goes stale)", ""]
 
     # --- Operator queue (steps only the human can take; corpus-driven,
     # so a fresh corpus injects nothing). One ticket scan serves this
@@ -364,7 +406,8 @@ def main() -> None:
     if project_info:
         name, project_dir = project_info
         lines += [f"## Active project: {name}", f"Path: {project_dir}", ""]
-        lines += ["### Git state", _git_summary(project_dir), ""]
+        if (project_dir / ".git").exists():
+            lines += ["### Git state", _q(_git_summary(project_dir)), ""]   # commit subjects are third-party text (MN16)
 
         # Project memory file
         project_file = MEMORY_ROOT / "projects" / f"{name}.md"
@@ -411,7 +454,7 @@ def main() -> None:
             state = json.loads(SESSION_STATE_FILE.read_text(encoding="utf-8"))
             ts = state.get("timestamp", "unknown time")
             summary = state.get("summary", "")
-            lines += ["## Resumed after compaction", f"Compacted at: {ts}", _q(str(summary)), ""]
+            lines += ["## Resumed after compaction", f"Compacted at: {_one(ts)}", _q(str(summary)), ""]
         except Exception:
             pass
 

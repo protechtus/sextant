@@ -52,8 +52,8 @@ telegram = [
 ]
 
 [project.scripts]
-atlas-plus = "atlas_plus.cli:app"
-sextant = "atlas_plus.cli:app"
+atlas-plus = "atlas_plus.cli:main"
+sextant = "atlas_plus.cli:main"
 atlas-init = "atlas_plus.init_cmd:main"
 sextant-init = "atlas_plus.init_cmd:main"
 atlas-transcripts = "atlas_plus.transcripts.cli:app"

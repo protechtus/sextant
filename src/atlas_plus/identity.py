@@ -34,7 +34,7 @@ _PRIORITY_RANK = {"critical": 0, "high": 1, "normal": 2, "low": 3}
 def _frontmatter_value(path: Path, key: str) -> Optional[str]:
     """Extract a top-level scalar value from a file's YAML frontmatter, if any."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")   # a BOM hid the title (MN14)
     except OSError:
         return None
     if not text.startswith("---"):

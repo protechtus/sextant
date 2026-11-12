@@ -483,7 +483,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
             # replaced the file, its token is in there, not ours -- leaving
             # it alone is the difference between one stolen lock and a
             # three-writer pileup.
-            for _attempt in range(50):
+            for _attempt in range(300):   # up to 3 s: a reader holding the file for 0.8 s leaked the lock (MN16)
                 try:
                     if lock_path.read_text(encoding="ascii", errors="replace") == owner_token:
                         lock_path.unlink(missing_ok=True)
@@ -492,6 +492,9 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                     # A waiter's read handle (Windows: no delete sharing) refuses the unlink for
                     # a moment; a lock left behind here cost every writer the stale window.
                     _time.sleep(0.01)
+                    if _attempt == 299:
+                        log.warning("could not release the write lock on %s (another process held the lock "
+                                    "file open); the next write clears it after the stale window", target.name)
                 except OSError:
                     break
 
@@ -595,7 +598,10 @@ def _check_template_parts(template: str, scope: str) -> None:
         if any(_ud.category(c) in _FORBIDDEN_CATEGORIES for c in part) or any(c in part for c in '*?"<>|'):
             raise ValueError(f"Route for {scope!r}: a target component carries characters a file name "
                              f"cannot (target {template!r}).")
-    if parts[0] in _CORPUS_INTERNAL_DIRS:
+    if parts[0].lower() in _CORPUS_INTERNAL_DIRS or not template.endswith(".md"):
+        # Case variants (`_ATLAS/`, `Versions/`) and `.MD` wrote notes nothing indexes (MN16).
+        if not template.endswith(".md"):
+            raise ValueError(f"Route for {scope!r} must end in lowercase `.md` (target {template!r}).")
         raise ValueError(f"Route for {scope!r} targets {parts[0]}/, which is Sextant's own directory "
                          f"(index, history, locks): notes there are never searched (target {template!r}).")
 
@@ -640,11 +646,16 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
         # ':' too (audit 2026-11-09, row 25): "c:secret" is a drive-relative
         # path that drops the route's directory, and "notes:hidden" is an
         # NTFS alternate data stream.
-        if any(c in param for c in ("/", "\\", "..", ":")) or os.path.isabs(param):
+        if any(c in param for c in ("\\", "..", ":")) or os.path.isabs(param) or param.startswith("/"):
             raise ValueError(
-                f"Invalid scope parameter {param!r}: must not contain path separators, "
-                "':' or '..'."
+                f"Invalid scope parameter {param!r}: must not contain '\\', ':' or '..' or start with '/'."
             )
+        if "/" in param:
+            # `reference:obsidian/README` addresses a note in a subfolder (an imported vault, MN15);
+            # every segment is checked below as a name and again as a path component.
+            segments = param.split("/")
+            if any(seg in ("", ".", "..") or seg.startswith(".") for seg in segments):
+                raise ValueError(f"Invalid scope parameter {param!r}: an empty, '.', '..' or hidden segment.")
         # Windows reserved device names: opening e.g. CON.md addresses the
         # CONSOLE DEVICE and blocks forever (empirically hung the MCP server
         # thread, expert-pass 2026-08-26). Rejected on every OS for corpus
@@ -675,8 +686,10 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
                              "short-name alias of another file.")
         if param and (param.strip(".") == "" or param.startswith(".")):
             raise ValueError(f"Invalid scope parameter {param!r}: must not start with a dot.")
-        if param and param.endswith("."):
+        if param and (param.endswith(".") or any(seg.endswith(".") for seg in param.split("/"))):
             raise ValueError(f"Invalid scope parameter {param!r}: must not end with a dot (Windows strips it).")
+        if any(_is_reserved_device_name(seg) for seg in param.split("/")):
+            raise ValueError(f"Invalid scope parameter {param!r}: reserved device name on Windows.")
         if len(param) > 120:
             raise ValueError(f"Invalid scope parameter: {len(param)} characters; the limit is 120.")
         encoded = max(len(param.encode("utf-8")), len(param.encode("utf-16-le")) // 2)
@@ -792,8 +805,11 @@ def append_fact(
     # The scrub runs FIRST: `-\x07--` passed the guard and the scrub then assembled the
     # delimiter it was meant to block (MN8, sweep 10).
     fact = _scrub_controls(fact)
-    if "---" in fact:
-        raise ValueError("Fact cannot contain '---' (YAML frontmatter delimiter).")
+    if _re.search(r"(?m)^\s*---", fact):
+        # Only a LINE that starts with --- can close the frontmatter; a scene break mid-sentence
+        # is a writer's fact (MN14, sweep 11).
+        raise ValueError("Fact cannot contain a line starting with '---' (the YAML frontmatter delimiter); "
+                         "mid-sentence dashes are fine.")
     date_str = date.today().isoformat()
     today_header = f"## {date_str}"
     conf_level = _map_confidence(confidence, source)

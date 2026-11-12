@@ -41,15 +41,24 @@ def _size(n: int) -> str:
 
 def scan(root: Path) -> dict:
     """Every version copy under ``root/versions`` grouped by the note it belongs to."""
+    from atlas_plus._fsutil import inside, is_link
     vdir = root / "versions"
     notes: dict[str, list[tuple[Path, date, int, int]]] = defaultdict(list)
     total = 0
     count = 0
     unparsed = 0
+    if vdir.exists() and (is_link(vdir) or not inside(vdir, root)):
+        # A junctioned versions/ let --prune delete files OUTSIDE the corpus (MN16, sweep 11).
+        return {"versions_dir": str(vdir), "exists": False, "files": 0, "bytes": 0, "notes": {},
+                "error": f"{vdir} is a link that leaves the corpus; the history must be a plain directory"}
+    if vdir.exists() and not vdir.is_dir():
+        return {"versions_dir": str(vdir), "exists": False, "files": 0, "bytes": 0, "notes": {},
+                "error": f"{vdir} is a file, not a directory; move it aside"}
     if not vdir.is_dir():
         return {"versions_dir": str(vdir), "exists": False, "files": 0, "bytes": 0, "notes": {}}
-    for dirpath, _dirs, files in os.walk(vdir):
+    for dirpath, dirnames, files in os.walk(vdir, followlinks=False):
         d = Path(dirpath)
+        dirnames[:] = [n for n in dirnames if not is_link(d / n)]
         for name in files:
             p = d / name
             try:
@@ -82,7 +91,7 @@ def plan_prune(info: dict, older_than_days: int, keep_last: int) -> list[tuple[P
         keep = set(id(c) for c in copies[-keep_last:]) if keep_last > 0 else set()
         for c in copies:
             p, when, _n, size = c
-            if id(c) in keep or when >= cutoff:
+            if id(c) in keep or when > cutoff:
                 continue
             doomed.append((p, size))
     return doomed
@@ -95,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--yes deletes. Live notes are never touched.")
     ap.add_argument("--prune", action="store_true", help="plan a prune (add --yes to delete)")
     ap.add_argument("--older-than", type=int, default=90, metavar="DAYS",
-                    help="prune copies older than DAYS (default 90)")
+                    help="prune copies dated more than DAYS days ago (default 90; 0 = today's too)")
     ap.add_argument("--keep-last", type=int, default=3, metavar="N",
                     help="always keep the newest N copies of every note (default 3)")
     ap.add_argument("--yes", action="store_true", help="actually delete the planned copies")
@@ -107,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     root = atlas_paths.memory_root()
     info = scan(root)
     if not info["exists"]:
+        if info.get("error"):
+            print(json.dumps({"error": info["error"]}) if args.json else f"error: {info['error']}")
+            return 1
         msg = {"versions_dir": info["versions_dir"], "files": 0, "bytes": 0}
         print(json.dumps(msg) if args.json else
               f"no history yet: {info['versions_dir']} does not exist (it appears the first time an "
@@ -118,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "versions_dir": info["versions_dir"], "files": info["files"], "bytes": info["bytes"],
         "notes_with_history": len(notes), "oldest": oldest.isoformat() if oldest else None,
+        "unparsed": info.get("unparsed", 0),
         "biggest": [{"note": n, "copies": k, "bytes": b} for b, n, k in biggest],
     }
     doomed: list[tuple[Path, int]] = []
@@ -130,14 +143,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(f"history: {report['files']:,} copies, {_size(report['bytes'])}, "
           f"{report['notes_with_history']:,} note(s), oldest {report['oldest']} ({info['versions_dir']})")
+    if info.get("unparsed"):
+        print(f"  ({info['unparsed']} file(s) under versions/ do not follow the <note>_<date>_vN name and are "
+              "never pruned)")
     for b, n, k in biggest:
         print(f"  {_size(b):>10}  {k:>4} copies  {n}")
     if not args.prune:
+        print("restore a copy: copy versions/<path>/<note>_<date>_vN.md over <path>/<note>.md (the note's own "
+              "history stays)")
         print("prune with: sextant versions --prune --older-than 90 --keep-last 3  (report; add --yes to delete)")
         return 0
     print(f"prune plan: copies older than {args.older_than} day(s), keeping the newest {args.keep_last} of "
           f"every note: {len(doomed):,} file(s), {_size(sum(s for _p, s in doomed))}")
     if not doomed:
+        print(f"nothing to prune: every copy is within the newest {args.keep_last} of its note or dated within "
+              f"the last {args.older_than} day(s)")
         return 0
     if not args.yes:
         print("nothing deleted (report only). Re-run with --yes to delete these copies; the live notes are untouched.")

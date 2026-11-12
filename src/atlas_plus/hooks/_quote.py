@@ -14,6 +14,15 @@ _MARKER_RE = re.compile(r"={3,}")
 _TAG_RE = re.compile(r"<(?=/?[A-Za-z!?])")
 
 
+def one_line(text: str) -> str:
+    """One defused line without the quote prefix, for list items (ticket titles, timestamps)."""
+    parts = []
+    for line in str(text).splitlines():
+        q = quote_note(line)
+        parts.append(q[2:] if q.startswith("> ") else q.lstrip(">"))
+    return " ".join(" ".join(parts).split())
+
+
 def quote_note(text: str) -> str:
     """Prefix every line with `> ` and defuse block markers and tag-shaped text."""
     if not text:

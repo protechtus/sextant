@@ -53,7 +53,7 @@ def _fm(text: str) -> dict:
 class TestScopeColon:
     @pytest.mark.parametrize("scope", [
         "project:c:secret", "project:notes:hidden", "reference:a:b",
-        "project:../x", "project:a/b", "project:a\\b",
+        "project:../x", "project:a/../b", "project:a\\b",   # `a/b` is a subfolder note now (MN15, sweep 11)
     ])
     def test_rejected(self, corpus, scope):
         from atlas_plus.mcp.memory_server.routing import resolve_target

@@ -31,6 +31,8 @@ from pathlib import Path
 from atlas_plus import paths as atlas_paths
 
 _SKIP_DIRS = {".obsidian", ".git", ".trash", "node_modules", "__pycache__"}
+# Obsidian's templates folder holds placeholders (`<% tp.date.now() %>`), not notes (MN15).
+_TEMPLATE_DIRS = {"templates", "template", "_templates"}
 
 
 def _now_iso() -> str:
@@ -92,6 +94,42 @@ def _import_copies(dest: Path, src: Path, listing: dict[Path, list[str]],
             stamped = None
         if stamped in want:
             out.append(cand)
+    return out
+
+
+_CHAT_FP_LEN = 200
+
+
+def _chat_fingerprint(text_out: str) -> tuple[str, str]:
+    """(frontmatter id, first turn's first 200 characters) of a rendered conversation."""
+    m = re.search(r"^id:\s*(.+?)\s*$", text_out[:2048], re.M)
+    cid = m.group(1).strip().strip("'\"") if m else ""
+    body = _fm_body(text_out)
+    t = re.search(r"^## .+?\n\n(.+?)(?:\n\n## |\Z)", body, re.S | re.M)
+    return cid, (t.group(1) if t else body)[:_CHAT_FP_LEN].strip()
+
+
+def _chat_fingerprints(dest_root: Path) -> dict[tuple[str, str], str]:
+    """Fingerprint -> corpus-relative path for every conversation already under dest_root."""
+    out: dict[tuple[str, str], str] = {}
+    if not dest_root.is_dir():
+        return out
+    root = atlas_paths.memory_root()
+    for dirpath, _dirs, files in os.walk(dest_root):
+        for name in files:
+            if not name.lower().endswith(".md"):
+                continue
+            p = Path(dirpath) / name
+            try:
+                text = p.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            fp = _chat_fingerprint(text)
+            if fp[0]:
+                try:
+                    out.setdefault(fp, p.relative_to(root).as_posix())
+                except ValueError:
+                    out.setdefault(fp, str(p))
     return out
 
 
@@ -294,6 +332,9 @@ def plan_obsidian(vault: Path, scope: str) -> list[tuple[Path, Path]]:
     return _plan_obsidian(vault, scope)[0]
 
 
+_PLAN_EXTRAS: dict = {"templates": [], "non_markdown": 0}
+
+
 def _plan_obsidian(vault: Path, scope: str) -> tuple[list[tuple[Path, Path]], list[str]]:
     """The plan plus the links that were NOT followed. A file symlink pointing outside the
     vault was imported (its outside content landed in the corpus and in search) and a linked
@@ -303,6 +344,8 @@ def _plan_obsidian(vault: Path, scope: str) -> tuple[list[tuple[Path, Path]], li
     dest_root = atlas_paths.memory_root() / scope
     plan: list[tuple[Path, Path]] = []
     skipped_links: list[str] = []
+    _PLAN_EXTRAS["templates"] = []
+    _PLAN_EXTRAS["non_markdown"] = 0
     try:
         vault_real = vault.resolve()
     except OSError:
@@ -314,13 +357,19 @@ def _plan_obsidian(vault: Path, scope: str) -> tuple[list[tuple[Path, Path]], li
         for name in sorted(dirnames):
             if name in _SKIP_DIRS or name.startswith("."):
                 continue
+            if not rel_dir.parts and name.lower() in _TEMPLATE_DIRS:
+                _PLAN_EXTRAS["templates"].append(name + "/")
+                continue
             if _is_link(d / name):
                 skipped_links.append((rel_dir / name).as_posix() + "/")
                 continue
             keep.append(name)
         dirnames[:] = keep
         for name in sorted(filenames):
-            if not name.lower().endswith(".md") or name.startswith("."):
+            if name.startswith("."):
+                continue
+            if not name.lower().endswith(".md"):
+                _PLAN_EXTRAS["non_markdown"] += 1
                 continue
             src = d / name
             if _is_link(src):
@@ -380,19 +429,89 @@ def _vault_still_has(vault: Path, origin: str) -> bool:
         return False
 
 
-def import_obsidian(vault: Path, scope: str, execute: bool) -> dict:
+def _corpus_index(dest_root: Path, root: Path) -> list[dict]:
+    """Every note already under dest_root: corpus path, stamped original_path, body hash, and its
+    `_N` family (base stem and copy number). One walk per run."""
+    import hashlib
+    out: list[dict] = []
+    if not dest_root.is_dir():
+        return out
+    for dirpath, _dirs, files in os.walk(dest_root):
+        for name in files:
+            if not name.lower().endswith(".md"):
+                continue
+            p = Path(dirpath) / name
+            try:
+                text = p.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            body = _fm_body(text).replace("\r\n", "\n").strip()
+            m = _ORIGINAL_PATH_RE.search(text[:4096])
+            origin = None
+            if m:
+                try:
+                    v = yaml.safe_load(m.group(1))
+                    origin = v if isinstance(v, str) else None
+                except yaml.YAMLError:
+                    origin = None
+            mm = re.match(r"^(.*)_(\d+)$", p.stem)
+            base = (mm.group(1) if mm else p.stem) + p.suffix
+            try:
+                rel = p.relative_to(root).as_posix()
+            except ValueError:
+                rel = str(p)
+            out.append({"path": p, "rel": rel, "origin": origin,
+                        "hash": hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest(),
+                        "base": (Path(dirpath) / base), "n": int(mm.group(2)) if mm else 1})
+    return out
+
+
+def _archive_note(root: Path, rel: str) -> str:
+    """Move a corpus note into archive/<same path> (never deleted); returns the archive path."""
+    src = root / rel
+    dest = root / "archive" / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest = _collision_free(dest)
+    os.replace(src, dest)
+    return dest.relative_to(root).as_posix()
+
+
+def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool = False) -> dict:
+    """Import a vault. The report is computed the same way with and without --yes: every note is
+    classified (new, unchanged, edited, renamed) before any write, so the dry run says exactly
+    what `--yes` will do (MN15, sweep 11: the dry run listed only renames). Stale corpus copies
+    (older copies of edited notes, notes no longer in the vault) are named, and `--archive-stale`
+    moves them to archive/ instead of leaving them in search."""
     import hashlib
     plan, skipped_links = _plan_obsidian(vault, scope)
-    imported = skipped = 0
-    skipped_binary: list[str] = []
-    decoded: list[str] = []
-    moved: list[str] = []
-    superseded: list[str] = []
-    sample: list[str] = []
-    listing: dict[Path, list[str]] = {}
+    templates = list(_PLAN_EXTRAS.get("templates", []))
+    non_md = int(_PLAN_EXTRAS.get("non_markdown", 0))
     root = atlas_paths.memory_root()
     dest_root = root / _safe_scope(scope)
-    existing = _existing_bodies(dest_root)
+    corpus = _corpus_index(dest_root, root)
+    by_origin: dict[str, list[dict]] = {}
+    by_hash: dict[str, dict] = {}
+    for e in corpus:
+        if e["origin"]:
+            by_origin.setdefault(e["origin"], []).append(e)
+        by_hash.setdefault(e["hash"], e)
+    vault_rels = {src.relative_to(vault).as_posix() for src, _ in plan}
+
+    imported = would = unchanged = edited = renamed = new = 0
+    skipped_binary: list[str] = []
+    decoded: list[str] = []
+    stale: list[str] = []
+    stale_paths: list[str] = []
+    renamed_lines: list[str] = []
+    writes: list[str] = []
+    seen_stale: set[str] = set()
+
+    def mark_stale(rel: str, why: str) -> None:
+        if rel not in seen_stale:
+            seen_stale.add(rel)
+            stale_paths.append(rel)
+            stale.append(f"{rel}: {why}")
+
     for src, dest in plan:
         rel_src = src.relative_to(vault).as_posix()
         text, note = _read_note(src)
@@ -402,57 +521,68 @@ def import_obsidian(vault: Path, scope: str, execute: bool) -> dict:
         if note:
             decoded.append(f"{rel_src}: {note}")
         raw = text
-        if len(sample) < 20:
-            sample.append(dest.relative_to(root).as_posix())
-        # A note renamed or moved inside the vault since the last import is the SAME note:
-        # it used to land again under the new name beside the old copy (AG14, sweep 11).
-        body_hash = hashlib.sha256(_fm_body(raw).strip().encode("utf-8", errors="replace")).hexdigest()
-        prior = existing.get(body_hash)
-        if prior is not None:
-            prior_rel, prior_origin = prior
-            same_slot = dest.exists() and dest.relative_to(root).as_posix() == prior_rel
-            # Only a note whose ORIGINAL vault file is gone counts as moved: two different vault
-            # notes with the same body are two notes (round C: a.md equal to its sibling a_2.md).
-            if not same_slot and prior_origin and not _vault_still_has(vault, prior_origin):
-                moved.append(f"{rel_src} is already imported as {prior_rel} (renamed or moved in the vault)")
-                skipped += 1
+        # Line endings are not content: a CRLF vault was re-imported whole on every run (MN16).
+        body_hash = hashlib.sha256(_fm_body(raw).replace("\r\n", "\n").strip()
+                                   .encode("utf-8", errors="replace")).hexdigest()
+        entries = by_origin.get(rel_src) or by_origin.get(str(src)) or []
+        if entries:
+            latest = max(entries, key=lambda e: e["n"])
+            if any(e["hash"] == body_hash for e in entries):
+                unchanged += 1
                 continue
+            edited += 1
+            target = _collision_free(dest)
+            mark_stale(latest["rel"], f"edited in the vault; the current copy is "
+                                      f"{target.relative_to(root).as_posix()}")
+        else:
+            prior = by_hash.get(body_hash)
+            target = _collision_free(dest)
+            if prior is not None and prior["origin"] and prior["origin"] not in vault_rels \
+                    and not _vault_still_has(vault, prior["origin"]):
+                renamed += 1
+                renamed_lines.append(f"{prior['origin']} -> {rel_src} (renamed or moved in the vault; the old "
+                                     f"copy {prior['rel']} is stale)")
+                mark_stale(prior["rel"], f"renamed in the vault to {rel_src}; now imported as "
+                                         f"{target.relative_to(root).as_posix()}")
+            else:
+                new += 1
+        writes.append(target.relative_to(root).as_posix())
         if not execute:
+            would += 1
             continue
         stamped = _stamp_existing_frontmatter(raw, "obsidian", rel_src) if _has_frontmatter(raw) else None
-        text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src) + raw
-        # Idempotent re-import (edge probe, quality loop run 16): re-running
-        # the same import previously duplicated EVERY note via the collision
-        # suffix. A destination whose content ends with the source's current
-        # text (frontmatter is prepended, and stamps differ run-to-run) is
-        # this note, already imported -- skip it. Changed notes still land
-        # as a collision-suffixed new copy, never overwriting.
-        # ...and so does a changed note's collision copy: re-running an unchanged import
-        # of an already re-imported note must not grow _2, _3, ... (wave-2 2026-11-09).
-        copies = _import_copies(dest, src, listing, rel_src)
-        if any(
-            cand.is_file() and _already_imported(
-                cand.read_text(encoding="utf-8-sig", errors="replace"), raw
-            )
-            for cand in copies
-        ):
-            skipped += 1
-            continue
-        target = _collision_free(dest)
-        if target != dest:
-            # An edited note lands as a new copy; name the stale one so the user can archive
-            # it instead of finding both in every search (AG14, sweep 11).
-            superseded.append(f"{dest.relative_to(root).as_posix()} is superseded by "
-                              f"{target.relative_to(root).as_posix()}; archive the older copy")
+        out_text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src) + raw
         target.parent.mkdir(parents=True, exist_ok=True)
-        _write_lf(target, text)
-        listing.get(target.parent, []).append(target.name)
+        _write_lf(target, out_text)
         imported += 1
-    return {"source": "obsidian", "planned": len(plan), "imported": imported,
-            "skipped_already_imported": skipped, "destination": scope,
+
+    # Older copies of a note that was edited more than once, and notes whose vault file is gone.
+    for origin, entries in by_origin.items():
+        if origin in vault_rels:
+            if len(entries) > 1:
+                latest = max(entries, key=lambda e: e["n"])
+                for e in entries:
+                    if e is not latest:
+                        mark_stale(e["rel"], f"older copy; the current copy is {latest['rel']}")
+        elif not _vault_still_has(vault, origin):
+            for e in entries:
+                mark_stale(e["rel"], "no longer in the vault (deleted, or renamed and edited)")
+
+    archived: list[str] = []
+    if archive_stale and execute:
+        for rel in stale_paths:
+            try:
+                archived.append(f"{rel} -> {_archive_note(root, rel)}")
+            except OSError as exc:
+                archived.append(f"{rel}: could not archive ({exc})")
+
+    return {"source": "obsidian", "planned": len(plan), "imported": imported, "would_import": would,
+            "unchanged": unchanged, "edited": edited, "renamed": renamed, "new": new,
+            "skipped_already_imported": unchanged, "destination": scope,
             "skipped_links": skipped_links, "skipped_binary": skipped_binary,
-            "decoded_non_utf8": decoded, "already_imported_under_another_name": moved,
-            "superseded": superseded, "sample_destinations": sample}
+            "decoded_non_utf8": decoded, "skipped_templates": templates, "skipped_non_markdown": non_md,
+            "renamed_notes": renamed_lines, "stale": stale, "archived": archived,
+            "sample_destinations": writes[:20]}
 
 
 # -- ChatGPT export ----------------------------------------------------------
@@ -550,7 +680,9 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
     dest_root = atlas_paths.memory_root() / "reference" / "imports" / "chatgpt"
     imported = skipped = already = would = 0
     skipped_reasons: list[str] = []
+    older_build: list[str] = []
     listing: dict[Path, list[str]] = {}
+    known = _chat_fingerprints(dest_root)
     for index, conv in enumerate(conversations):
         # A wrong-shaped entry (null, a string) is skipped with a reason, never a
         # traceback after partial writes (wave-2 2026-11-09).
@@ -587,6 +719,14 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
         if _chat_already_imported(dest, text, listing):
             already += 1
             continue
+        prior = known.get(_chat_fingerprint(text))
+        if prior is not None:
+            # An older build filed this conversation under another name (both branches, or the
+            # run date): it is the same conversation, not a new one (MN13, sweep 11).
+            already += 1
+            older_build.append(f"{title!r} is already imported as {prior} (by an older build; its text may "
+                               "differ from today's rendering)")
+            continue
         if not execute:
             would += 1
             continue
@@ -598,6 +738,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
     return {"source": "chatgpt", "planned": len(conversations),
             "imported": imported, "would_import": would, "skipped_already_imported": already,
             "skipped_empty": skipped, "skipped_reasons": skipped_reasons,
+            "already_imported_by_an_older_build": older_build,
             "destination": "reference/imports/chatgpt"}
 
 
@@ -627,7 +768,9 @@ def import_claude(export_file: Path, execute: bool) -> dict:
     dest_root = atlas_paths.memory_root() / "reference" / "imports" / "claude"
     imported = skipped = already = would = 0
     skipped_reasons: list[str] = []
+    older_build: list[str] = []
     listing: dict[Path, list[str]] = {}
+    known = _chat_fingerprints(dest_root)
     for index, conv in enumerate(conversations):
         if not isinstance(conv, dict):
             skipped += 1
@@ -674,6 +817,11 @@ def import_claude(export_file: Path, execute: bool) -> dict:
         if _chat_already_imported(dest, text_out, listing):
             already += 1
             continue
+        prior = known.get(_chat_fingerprint(text_out))
+        if prior is not None:
+            already += 1
+            older_build.append(f"{title!r} is already imported as {prior} (by an older build)")
+            continue
         if not execute:
             would += 1
             continue
@@ -685,6 +833,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
     return {"source": "claude", "planned": len(conversations),
             "imported": imported, "would_import": would, "skipped_already_imported": already,
             "skipped_empty": skipped, "skipped_reasons": skipped_reasons,
+            "already_imported_by_an_older_build": older_build,
             "destination": "reference/imports/claude"}
 
 
@@ -750,6 +899,9 @@ def main() -> None:
     parser.add_argument("--scope", default="reference/obsidian",
                         help="corpus destination for obsidian imports")
     parser.add_argument("--yes", action="store_true", help="actually write files")
+    parser.add_argument("--archive-stale", action="store_true",
+                        help="with --yes: move the stale corpus copies the report names (older copies of "
+                             "edited notes, notes no longer in the vault) into archive/ (never deleted)")
     parser.add_argument("--dry-run", action="store_true",
                         help="report only -- this is already the default; "
                              "kept for habit (incompatible with --yes)")
@@ -788,7 +940,7 @@ def main() -> None:
             if not src.is_dir():
                 print("obsidian import expects a vault DIRECTORY", file=sys.stderr)
                 raise SystemExit(1)
-            result = import_obsidian(src, args.scope, execute=args.yes)
+            result = import_obsidian(src, args.scope, execute=args.yes, archive_stale=args.archive_stale)
         elif args.source == "claude":
             result = import_claude(src, execute=args.yes)
         else:
@@ -803,11 +955,19 @@ def main() -> None:
         raise SystemExit(1)
 
     print(json.dumps(result, indent=2))
+    if result.get("source") == "obsidian":
+        print(f"\nplan: {result.get('new', 0)} new, {result.get('edited', 0)} edited (a new copy beside the old), "
+              f"{result.get('renamed', 0)} renamed or moved, {result.get('unchanged', 0)} unchanged; "
+              f"{result.get('skipped_non_markdown', 0)} non-markdown file(s) not imported"
+              + (f"; templates folder skipped: {', '.join(result['skipped_templates'])}" if result.get("skipped_templates") else ""))
     for key, label in (("skipped_links", "links not followed (a vault link can point outside the vault)"),
                        ("skipped_binary", "binary or undecodable files skipped"),
                        ("decoded_non_utf8", "files that were not UTF-8"),
-                       ("already_imported_under_another_name", "renamed or moved notes already in the corpus"),
-                       ("superseded", "edited notes: the older copy is now stale")):
+                       ("renamed_notes", "renamed or moved in the vault"),
+                       ("already_imported_by_an_older_build", "conversations an older build already imported"),
+                       ("stale", "stale corpus copies (not in search once archived; "
+                                 "`--yes --archive-stale` moves them to archive/)"),
+                       ("archived", "archived")):
         items = result.get(key) or []
         if items:
             print(f"\n{label} ({len(items)}):")
@@ -833,7 +993,7 @@ def main() -> None:
     if not args.yes:
         sample = result.get("sample_destinations") or []
         if sample:
-            print(f"\nFirst {len(sample)} of {result.get('planned')} destinations:")
+            print(f"\nFirst {len(sample)} of {result.get('would_import', len(sample))} file(s) --yes would write:")
             for line in sample:
                 print(f"  {line}")
         print("\nReport only -- nothing written. Re-run with --yes to import.")
