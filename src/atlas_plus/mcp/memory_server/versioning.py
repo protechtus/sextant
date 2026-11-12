@@ -21,6 +21,38 @@ def _content_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _fill_claimed_slot(tmp: Path, dest: Path) -> None:
+    """Move the snapshot into the claimed (empty) slot.
+
+    On Windows a concurrent writer's dedup pass may hold the freshly claimed slot open for
+    reading, and ``os.replace`` onto an open file fails with PermissionError (windows-latest CI,
+    2026-11-12: one empty copy left behind, one state lost). Retry for a moment, then write the
+    bytes into the slot instead: a file open for reading can still be written. If even that
+    fails the empty slot is removed so no orphan remains.
+    """
+    import time as _t
+    last: Optional[BaseException] = None
+    for _ in range(20):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError as exc:
+            last = exc
+            _t.sleep(0.01)
+    try:
+        with open(tmp, "rb") as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out)
+            out.flush()
+            os.fsync(out.fileno())
+        tmp.unlink(missing_ok=True)
+    except OSError:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def version_before_write(target: Path, root: Path | None = None) -> Path | None:
     """Copy target into its versions/ sibling dir. Returns the version path, or None if target didn't exist.
 
@@ -102,7 +134,7 @@ def version_before_write(target: Path, root: Path | None = None) -> Path | None:
                     n += 1
                     continue
                 os.close(fd)
-                os.replace(tmp, dest)
+                _fill_claimed_slot(tmp, dest)
                 return dest
         except BaseException:
             try:

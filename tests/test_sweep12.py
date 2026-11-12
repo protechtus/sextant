@@ -488,3 +488,24 @@ def test_fts_frontmatter_uses_libyaml_when_present():
         assert fts._YAML_LOADER is yaml.CSafeLoader
     fm, body, _ = fts._parse_md("---\ntitle: 大阪城\ntags: [a, b]\n---\nbody\n")
     assert json.loads(fm)["tags"] == ["a", "b"] and body == "body"
+
+
+def test_version_slot_filled_when_replace_is_denied(tmp_path, monkeypatch):
+    """windows-latest CI on 31117f6: os.replace onto the claimed slot was denied (a concurrent
+    reader held it open) and an empty copy was left behind."""
+    import os as _os
+    from atlas_plus.mcp.memory_server import versioning
+    tmp = tmp_path / "snap.tmp"
+    tmp.write_bytes(b"state 2")
+    dest = tmp_path / "hot_2026-11-12_v1.md"
+    dest.write_bytes(b"")
+    calls = {"n": 0}
+    real = _os.replace
+
+    def denied(a, b):
+        calls["n"] += 1
+        raise PermissionError(5, "Access is denied")
+    monkeypatch.setattr(versioning.os, "replace", denied)
+    versioning._fill_claimed_slot(tmp, dest)
+    assert dest.read_bytes() == b"state 2" and not tmp.exists() and calls["n"] == 20
+    monkeypatch.setattr(versioning.os, "replace", real)
