@@ -563,21 +563,43 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
     each file once instead of once per check. Never raises; unreadable files get text=None.
     """
     from atlas_plus.curation.scan import is_excluded_mirror
-    from atlas_plus._fsutil import inside, is_link
+    from atlas_plus._fsutil import is_link
 
     base = root if root is not None else MEMORY_ROOT
     out: list[MemoryFile] = []
     if not base.exists():
         return out
-    for md in base.rglob("*.md"):
+    import os as _os
+    # One pruned walk: excluded subtrees are never entered and links are never followed (a
+    # linked note is not part of this corpus; the indexer skips it the same way). No
+    # resolve() per file: that cost 2 s on a 20,000-file corpus (optimize pass, sweep 11).
+    for dirpath, dirnames, filenames in _os.walk(base, followlinks=False):
+        d = Path(dirpath)
         try:
-            rel_path = md.relative_to(base)
+            rel_dir = d.relative_to(base)
         except ValueError:
+            dirnames[:] = []
             continue
-        if is_link(md) or not inside(md, base):
-            continue   # a linked note is not part of this corpus (the indexer skips it too)
-        if any(p in _SCAN_SKIP_DIRS for p in rel_path.parts) or is_excluded_mirror(rel_path.parts):
-            continue
+        keep = []
+        for name in sorted(dirnames):
+            parts = rel_dir.parts + (name,)
+            if name in _SCAN_SKIP_DIRS or is_excluded_mirror(parts) or is_link(d / name):
+                continue
+            keep.append(name)
+        dirnames[:] = keep
+        for name in sorted(filenames):
+            if not name.endswith(".md"):
+                continue
+            md = d / name
+            if is_link(md):
+                continue
+            rel_path = rel_dir / name
+            _scan_append(out, md, rel_path)
+    return out
+
+
+def _scan_append(out: list, md: Path, rel_path: Path) -> None:
+    if True:
         not_utf8 = False
         try:
             raw = md.read_bytes()
@@ -595,7 +617,6 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
             text=text,
             not_utf8=not_utf8,
         ))
-    return out
 
 
 def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:

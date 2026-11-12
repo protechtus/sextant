@@ -85,6 +85,7 @@ the README before exposing anything.
 | `CLAUDE_CONFIG_DIR` | unset | Read only by the uninstall report, which lists the Claude Code config files that still reference the install; Claude Code itself honours it. |
 | `NO_COLOR` | unset | Any value makes `sextant doctor` print plain text; piped output is plain regardless. |
 | `APPDATA` | Windows default | Read only by the uninstall report to find Claude Desktop's `claude_desktop_config.json`. |
+| `LOCALAPPDATA` | Windows default | Read only by the uninstall report to find the Microsoft Store build of Claude Desktop (`Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json`). |
 
 ## Write consent (the two switches)
 

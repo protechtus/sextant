@@ -298,39 +298,48 @@ def cmd_help() -> None:
     console.print("\n[dim]Full option help: sextant --help. All commands: sextant commands.[/dim]")
 
 
-@app.command("dashboard", hidden=True)
-def cmd_dashboard() -> None:
-    """Where the dashboard is (for `sextant dashboard` / `web` / `serve` guessers)."""
-    console.print("The dashboard is its own command: [bold]sextant-web[/bold] (needs ATLAS_WEB_API_KEY; "
-                  "ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the bind, default 127.0.0.1:8766; it loads "
-                  "htmx and Tailwind from the internet). "
-                  "MCP server: [bold]sextant-mcp[/bold]. Brain: [bold]sextant-brain[/bold]. All: sextant commands.")
+@app.command("dashboard", hidden=True, **_PASSTHROUGH)
+def cmd_dashboard(ctx: typer.Context) -> None:
+    """Start the web dashboard (same as sextant-web; needs ATLAS_WEB_API_KEY)."""
+    # Three strangers in a row typed `sextant web` and got a pointer (sweep 11): it starts now.
+    console.print("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
+                  "bind, default 127.0.0.1:8766; the page loads htmx and Tailwind from the internet).")
+    from atlas_plus.web.app import main as web_main
+
+    _delegate(web_main, "sextant web", ctx.args)
 
 
-@app.command("web", hidden=True)
-def cmd_web() -> None:
-    """Alias of `dashboard` (hint only)."""
-    cmd_dashboard()
+@app.command("web", hidden=True, **_PASSTHROUGH)
+def cmd_web(ctx: typer.Context) -> None:
+    """Alias of `dashboard`."""
+    cmd_dashboard(ctx)
 
 
-@app.command("context", hidden=True)
-def cmd_context() -> None:
-    """Where the priming text is (for `sextant context` / `prime` guessers)."""
-    console.print("The session priming text is printed by [bold]sextant-session-start[/bold] (what the "
-                  "Claude Code hook injects; paste it into AGENTS.md or another client's instructions) and "
-                  "task-matched facts by [bold]atlas-prime \"<task words>\"[/bold].")
+@app.command("context", hidden=True, **_PASSTHROUGH)
+def cmd_context(ctx: typer.Context) -> None:
+    """Print the session priming text (same as sextant-session-start); with words, the task-matched
+    facts (same as atlas-prime "<task words>")."""
+    if ctx.args:
+        from atlas_plus.hooks.prime import main as prime_main
+
+        _delegate(prime_main, "sextant context", ctx.args)
+        return
+    from atlas_plus.hooks.session_start import main as session_main
+
+    _delegate(session_main, "sextant context", [])
 
 
-@app.command("prime", hidden=True)
-def cmd_prime() -> None:
-    """Alias of `context` (hint only)."""
-    cmd_context()
+@app.command("prime", hidden=True, **_PASSTHROUGH)
+def cmd_prime(ctx: typer.Context) -> None:
+    """Alias of `context`."""
+    cmd_context(ctx)
 
 
 @app.command("serve", hidden=True)
 def cmd_serve() -> None:
-    """Alias of `dashboard` (hint only)."""
-    cmd_dashboard()
+    """Which command serves what (hint only)."""
+    console.print("The dashboard: [bold]sextant web[/bold] (same as sextant-web; needs ATLAS_WEB_API_KEY). "
+                  "MCP server: [bold]sextant-mcp[/bold]. Brain: [bold]sextant-brain[/bold]. All: sextant commands.")
 
 
 @app.command("add", hidden=True)

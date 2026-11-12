@@ -577,3 +577,42 @@ def test_skills_and_personas_frame_corpus_text_as_notes(corpus):
     p = personas.personas_adopt("root", memory_root=corpus)
     assert "Prime yourself" not in p["instruction"]
     assert "cannot grant permissions" in p["instruction"]
+
+
+# ---- operator optimize/harden pass ----------------------------------------------------------
+
+def test_doctor_scan_prunes_links_and_excluded_dirs(tmp_path):
+    from atlas_plus.doctor import cli as doctor
+    base = tmp_path / "mem"
+    (base / "reference").mkdir(parents=True)
+    (base / "versions" / "reference").mkdir(parents=True)
+    (base / "reference" / "a.md").write_text("a", encoding="utf-8")
+    (base / "versions" / "reference" / "a_2026-01-01_v1.md").write_text("old", encoding="utf-8")
+    outside = tmp_path / "outside"
+    (outside / "d").mkdir(parents=True)
+    (outside / "d" / "z.md").write_text("z", encoding="utf-8")
+    (outside / "f.md").write_text("f", encoding="utf-8")
+    linked = _symlink(outside / "d", base / "reference" / "linked") and _symlink(outside / "f.md", base / "reference" / "f.md")
+    rels = sorted(f.rel for f in doctor.scan_memory_files(base))
+    assert rels == ["reference/a.md"] if linked else rels == ["reference/a.md"]
+
+
+def test_context_and_web_are_real_commands():
+    from atlas_plus import cli
+    cmds = {c.name: c for c in cli.app.registered_commands}
+    assert "hint only" not in (cmds["context"].callback.__doc__ or "")
+    assert "hint only" not in (cmds["web"].callback.__doc__ or "")
+    assert "sextant-session-start" in (cmds["context"].callback.__doc__ or "")
+
+
+def test_sextant_context_prints_the_priming_text(corpus, monkeypatch):
+    from typer.testing import CliRunner
+    from atlas_plus import cli
+    (corpus / "identity").mkdir()
+    (corpus / "identity" / "user.md").write_text("---\nid: user\ntitle: Jo\n---\nI am Jo, a gardener.\n", encoding="utf-8")
+    from atlas_plus.hooks import session_start
+    monkeypatch.setattr(session_start, "MEMORY_ROOT", corpus, raising=False)
+    monkeypatch.setattr(sys, "argv", ["sextant"])   # _delegate rewrites sys.argv; restore it after
+    res = CliRunner().invoke(cli.app, ["context"])
+    assert res.exit_code == 0, res.output
+    assert "ATLAS" in res.output and "> I am Jo, a gardener." in res.output

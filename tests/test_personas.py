@@ -213,9 +213,13 @@ def test_umbrella_passes_help_through_to_the_real_command(monkeypatch):
 def test_guessed_dashboard_command_gives_a_hint(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["sextant"])
     from atlas_plus import cli
-    for guess in ("dashboard", "serve"):
-        r = CliRunner().invoke(cli.app, [guess])
-        assert r.exit_code == 0 and "sextant-web" in r.output
+    r = CliRunner().invoke(cli.app, ["serve"])
+    assert r.exit_code == 0 and "sextant-web" in r.output
+    # `dashboard` / `web` START the dashboard now (sweep 11): without ATLAS_WEB_API_KEY that is a
+    # refusal naming the variable, not a hint.
+    monkeypatch.delenv("ATLAS_WEB_API_KEY", raising=False)
+    r = CliRunner().invoke(cli.app, ["dashboard"])
+    assert "sextant-web" in r.output and "ATLAS_WEB_API_KEY" in r.output
 
 
 @pytest.mark.parametrize("raw", ["abc", "70000", "0"])
