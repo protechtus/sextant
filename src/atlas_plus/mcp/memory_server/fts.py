@@ -114,7 +114,13 @@ def fts5_available() -> bool:
 
 
 def _connect() -> sqlite3.Connection:
-    FTS_DB.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        FTS_DB.parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        # The state dir is a FILE (AG10, sweep 10): a named OperationalError reaches search's
+        # "not corruption" branch as one log line instead of a traceback.
+        raise sqlite3.OperationalError(
+            f"state directory {FTS_DB.parent} is a file, not a directory; move it aside")
     conn = sqlite3.connect(str(FTS_DB), timeout=30)
     # If setup raises (a trashed file fails at the WAL pragma, which reads
     # the header), CLOSE before re-raising: sqlite3.connect() has already

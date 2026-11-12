@@ -610,6 +610,11 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
             result["embed_index"] = status
     except Exception:
         pass
+    if STATE_DIR.exists() and not STATE_DIR.is_dir():
+        result["state_dir_is_file"] = True
+        result["hint"] = (f"the state directory {STATE_DIR} is a file, not a directory: search and the "
+                          "index cannot work until it is moved aside")
+        return result
     try:
         from atlas_plus.mcp.memory_server.fts import fts5_available
         if not fts5_available():

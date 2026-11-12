@@ -354,3 +354,39 @@ def test_updating_docs_name_ours_and_the_temporal_build():
     assert "Codex CLI, opencode" in readme
     hd = (_REPO / "docs" / "HOWTO-docker.md").read_text(encoding="utf-8")
     assert "## Alpine" in hd
+
+
+# ---- operator harden pass after the wave ------------------------------------------------
+
+def test_state_dir_that_is_a_file_gives_one_log_line_not_a_traceback(corpus, tmp_path, monkeypatch, caplog):
+    import logging
+    from atlas_plus.mcp.memory_server import fts
+    state = tmp_path / "state-file"
+    state.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(fts, "FTS_DB", state / "search.sqlite", raising=False)
+    monkeypatch.setattr(fts, "MEMORY_ROOT", corpus, raising=False)
+    with caplog.at_level(logging.WARNING):
+        assert fts.search("anything") == []
+    assert "is a file, not a directory" in caplog.text
+
+
+def test_doctor_names_a_state_dir_that_is_a_file(tmp_path, monkeypatch):
+    from atlas_plus.doctor import cli as doc
+    state = tmp_path / "state-file"
+    state.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(doc, "STATE_DIR", state)
+    monkeypatch.setattr(doc, "MEMORY_ROOT", tmp_path / "mem")
+    result = doc.check_memory_corpus(doc.scan_memory_files(tmp_path / "mem"))
+    assert result.get("state_dir_is_file") is True and "is a file" in result["hint"]
+
+
+def test_docs_pointer_does_not_depend_on_the_current_directory(tmp_path, monkeypatch):
+    """A package user running `sextant` inside another project's docs/ was pointed at that
+    project's GETTING-STARTED (AG7)."""
+    from atlas_plus import cli as c
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "GETTING-STARTED.md").write_text("# not ours", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    src = (_REPO / "src" / "atlas_plus" / "cli.py").read_text(encoding="utf-8")
+    assert '_P(__file__).resolve().parents[2] / "docs"' in src
+    assert '_P("docs") / "GETTING-STARTED.md"' not in src

@@ -103,7 +103,10 @@ def _overview() -> None:
     console.print(f"  connect     : run [bold]{umbrella} setup[/bold] -- the MCP registration for this install, filled in; then [bold]{umbrella} verify[/bold]")
     # A package install (pipx, uv tool, PyPI) has no docs/ on disk: point at the published copies.
     from pathlib import Path as _P
-    if (_P("docs") / "GETTING-STARTED.md").exists() or prefix != "sextant":
+    # The clone's docs/, found from the package (an editable install), not from the current
+    # directory: a package user inside some other project's `docs/` was pointed at that (AG7).
+    _clone_docs = _P(__file__).resolve().parents[2] / "docs"
+    if (_clone_docs / "GETTING-STARTED.md").exists() or prefix != "sextant":
         console.print("  docs        : docs/GETTING-STARTED.md | docs/USAGE.md | docs/CONFIGURATION.md")
     else:
         console.print("  docs        : https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md (USAGE.md, CONFIGURATION.md beside it)")
