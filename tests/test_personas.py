@@ -1344,7 +1344,10 @@ def test_confirm_path_help_no_longer_promises_case_tolerance_everywhere():
 
 
 def test_readme_privacy_claim_matches_the_code():
-    readme = (_REPO / "docs" / "README-PUBLIC.md").read_text(encoding="utf-8")
+    src = _REPO / "docs" / "README-PUBLIC.md"
+    if not src.exists():
+        src = _REPO / "README.md"   # the public tree ships it as README.md
+    readme = src.read_text(encoding="utf-8")
     assert "falls back to the Anthropic API when" not in readme and "ATLAS_LOCAL_ONLY=off" in readme
 
 # ---- pipeline sweep 9, manual wave, round 2 (MN4, MN5, MN6) ----
