@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table
 
@@ -31,7 +32,7 @@ from .core import (
     snapshot,
 )
 
-app = typer.Typer(
+app = _SextantTyper(
     name="atlas-db-backup",
     help="Atlas SQLite state DB backup / restore CLI",
     add_completion=False,

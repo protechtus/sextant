@@ -189,7 +189,7 @@ class TestWeeklySynthesis:
             )
         finally:
             mod._week_str = original_week
-            mod.STATE_DIR = Path(os.environ.get("ATLAS_STATE_DIR", r"C:\Tools\.atlas"))
+            mod.STATE_DIR = Path(os.environ.get("ATLAS_STATE_DIR", str(Path.home() / ".atlas")))
 
         # Draft should be reset to a new week header
         content = draft.read_text(encoding="utf-8")

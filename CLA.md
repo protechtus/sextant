@@ -1,9 +1,11 @@
 # Sextant Contributor License Agreement (Individual)
 
 Thank you for contributing to Sextant. This lightweight agreement keeps the
-project's licensing simple and its future flexible. By signing (via the CLA
-check on your first pull request), you accept the terms below for that and
+project's licensing simple and its future flexible. By signing (on your first pull request), you accept the terms below for that and
 all future contributions to this repository.
+
+(The automated CLA check is not enabled yet; until it is, a maintainer asks for your
+agreement on the pull request.)
 
 "Project Steward" means Protechtus LLC, the maintainer of Sextant.
 "Contribution" means any original work of authorship you intentionally

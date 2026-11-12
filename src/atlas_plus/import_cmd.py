@@ -40,8 +40,19 @@ def _now_iso() -> str:
 
 
 def _slug(text: str, max_len: int = 60) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return (slug or "untitled")[:max_len]
+    """File-name and id slug keeping letters and digits of ANY script (``東京旅行の計画`` was
+    ``untitled`` and collided with every other Japanese title: FN5, final readiness pass).
+    NFKC-folded, lower-cased, non-word runs become one dash; an empty result gets a short hash
+    of the original so two blank-looking titles still differ."""
+    import hashlib as _hl
+    import unicodedata as _ud
+    folded = _ud.normalize("NFKC", text or "").lower()
+    slug = re.sub(r"[^\w]+", "-", folded, flags=re.UNICODE).replace("_", "-").strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    if not slug:
+        slug = "untitled-" + _hl.sha256((text or "").encode("utf-8", "surrogatepass")).hexdigest()[:6] \
+            if (text or "").strip() else "untitled"
+    return slug[:max_len].rstrip("-") or "untitled"
 
 
 def _collision_free(path: Path) -> Path:

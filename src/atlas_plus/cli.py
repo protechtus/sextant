@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import os
 
+import re
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 
 from atlas_plus import __version__
 from atlas_plus._console import utf8_stdout_when_piped as _utf8_when_piped
@@ -20,7 +22,7 @@ from atlas_plus._console import utf8_stdout_when_piped as _utf8_when_piped
 _utf8_when_piped()  # captured output keeps non-ASCII paths intact (AG1, pipeline sweep 2026-11-11)
 from atlas_plus import paths as atlas_paths
 
-app = typer.Typer(
+app = _SextantTyper(
     help="Umbrella command: version, overview, and discovery of the whole command family.",
     invoke_without_command=True,
     no_args_is_help=False,
@@ -271,7 +273,7 @@ def cmd_verify(ctx: typer.Context) -> None:
 
 @app.command("setup", **_PASSTHROUGH)
 def cmd_setup(ctx: typer.Context) -> None:
-    """Print the MCP registration and hook entries for THIS install (writes nothing)."""
+    """Print the MCP registration and hook entries for THIS install (writes nothing unless --out)."""
     from atlas_plus.setup_cmd import main as setup_main
 
     raise typer.Exit(setup_main(list(ctx.args)))
@@ -447,7 +449,8 @@ def cmd_search(
         # Rich would swallow as unknown tags (matched words silently vanished
         # -- stranger-test batch 9), and corpus content itself may carry
         # [red]-style markup an author never meant to be interpreted.
-        snippet = "".join(c for c in (r.get("snippet") or "").replace("\n", " ")[:120]
+        raw_snippet = re.sub(r"<!--\s*source:[^>]*-->", "", r.get("snippet") or "")   # curation metadata (FN6)
+        snippet = "".join(c for c in raw_snippet.replace("\n", " ")[:120]
                           if c >= " " or c == "\t")   # no ESC/BEL from a stored note reaches the terminal (AG10)
         console.print(f"  [bold]{escape(r['path'])}[/bold]  [dim]{escape(snippet)}[/dim]")
 
@@ -621,6 +624,13 @@ def main() -> None:
     """Console entry: a closed pipe (`sextant search ... | head`) ends quietly instead of a Rich
     traceback and exit 120 (MN15, sweep 11)."""
     import sys as _sys
+    # `sextant remember "---bad"` reached Click's option parser ("No such option: ---bad",
+    # exit 2) instead of the documented refusal (FN2, final pass): say what to do.
+    if len(_sys.argv) > 2 and _sys.argv[1] in ("remember", "search") and any(
+            a.startswith("---") for a in _sys.argv[2:]):
+        _sys.stderr.write("A fact or query cannot start with `---` (it would close a note's frontmatter). "
+                          "Put the text after `--`, or pass `-` and send it on standard input.\n")
+        raise SystemExit(2)
     try:
         app()
     except OSError as exc:

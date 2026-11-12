@@ -10,10 +10,11 @@ recovery.recover_all) with no new behavior.
 from __future__ import annotations
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table
 
-app = typer.Typer(help="Transcript index: list conversations, full-text search, crash recovery.")
+app = _SextantTyper(help="Transcript index: list conversations, full-text search, crash recovery.")
 console = Console()
 
 

@@ -23,11 +23,12 @@ from datetime import date
 from typing import Optional
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table
 from atlas_plus import paths as atlas_paths
 
-app = typer.Typer(help="Generate sprint summaries from git log.")
+app = _SextantTyper(help="Generate sprint summaries from git log.")
 console = Console()
 
 # Matches sprint version tags like v0.12-A or v0.12-B embedded in commit messages

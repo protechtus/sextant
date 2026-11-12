@@ -244,6 +244,10 @@ def anti_remember(
 
     Returns {ok, file, error, propagated}.
     """
+    from atlas_plus.mcp.memory_server.routing import _scrub_controls   # ESC/BEL (FN6, final pass)
+    reject_pattern = _scrub_controls(str(reject_pattern or ''))
+    applies_to = _scrub_controls(str(applies_to or ''))
+    project = _scrub_controls(str(project or ''))
     from atlas_plus.autonomous import require_write
     try:
         require_write("anti_remember", interactive=interactive)

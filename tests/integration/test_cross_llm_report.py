@@ -13,7 +13,7 @@ Usage:
     # Run only Claude:
     uv run pytest tests/integration/test_cross_llm_report.py -v -k "claude"
 
-Reports are written to C:/Tools/.atlas/persistence-report-<provider>-<date>.json
+Reports are written to <ATLAS_STATE_DIR>/persistence-report-<provider>-<date>.json
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from atlas_plus.testing.session_simulator import (
     setup_memory_root,
 )
 
-STATE_DIR = Path(os.environ.get("ATLAS_STATE_DIR", r"C:\Tools\.atlas"))
+STATE_DIR = Path(os.environ.get("ATLAS_STATE_DIR", str(Path.home() / ".atlas")))
 
 
 def _ollama_available() -> bool:

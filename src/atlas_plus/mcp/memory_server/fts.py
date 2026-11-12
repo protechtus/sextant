@@ -392,7 +392,9 @@ def _parse_md(raw: str) -> tuple[str, str, float | None]:
             try:
                 if len(fm_str) > _MAX_FM_CHARS:
                     raise ValueError("frontmatter too large to parse")   # a 50 MB tag list cost a minute per search (AG22)
-                fm = yaml.load(fm_str, Loader=_YAML_LOADER) or {}
+                # libyaml accepts `key:\tvalue`, the pure loader every reader uses refuses it
+                # (FN6): parse such frontmatter the way the readers do, so index and read agree.
+                fm = yaml.load(fm_str, Loader=yaml.SafeLoader if "\t" in fm_str else _YAML_LOADER) or {}
                 confirmed_ts = _parse_confirmed_ts(fm)
             except Exception:
                 fm = {}

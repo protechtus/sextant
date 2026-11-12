@@ -667,7 +667,8 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
     # and quadrupled with every doubling (AG23, sweep 12).
     rels = {f.rel for f in files}
     copies = [f.rel for f in files if f.name.endswith(".md") and re.search(r"_\d+\.md$", f.name)
-              and re.sub(r"_\d+\.md$", ".md", f.rel) in rels]
+              and re.sub(r"_\d+\.md$", ".md", f.rel) in rels
+              and "original_path:" in (f.text or "")[:4096]]   # hand-written release_2026.md is not a copy (FN6)
     if copies:
         result["import_copies"] = len(copies)
         result["import_copies_hint"] = (f"{len(copies)} note(s) are `_N` copies beside an older note of the same "

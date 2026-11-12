@@ -89,6 +89,30 @@ _PROVENANCE_RE = re.compile(r"\s*<!--[^>]*-->")
 _NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
 
 
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]")
+
+
+def _weight(s: str) -> int:
+    """Length for the minimum-size gates, counting an ideograph or kana as three Latin letters
+    (``毎朝コーヒーを黒で飲む`` is a whole fact in 11 characters: FN5, final readiness pass)."""
+    return len(s) + 2 * len(_CJK_RE.findall(s))
+
+
+def _tokens(norm: str) -> frozenset[str]:
+    """Near-duplicate tokens: Latin words of four letters or more, plus every CJK bigram (an
+    unspaced sentence has one whitespace token and could never be a near repeat)."""
+    out: set[str] = set()
+    for word in norm.split():
+        if _CJK_RE.search(word):
+            cjk = "".join(_CJK_RE.findall(word))
+            out.update(cjk[i:i + 2] for i in range(len(cjk) - 1))
+            latin = _CJK_RE.sub(" ", word).split()
+            out.update(t for t in latin if len(t) >= 4)
+        elif len(word) >= 4:
+            out.add(word)
+    return frozenset(out)
+
+
 def _note_facts(text: str) -> list[str]:
     """The fact lines of a note: body lines that are not headings, rules, comments or tables."""
     body = text
@@ -99,7 +123,7 @@ def _note_facts(text: str) -> list[str]:
     out = []
     for line in body.splitlines():
         s = _PROVENANCE_RE.sub("", line).strip()
-        if len(s) < 25 or s.startswith(_FACT_SKIP_PREFIXES):
+        if _weight(s) < 25 or s.startswith(_FACT_SKIP_PREFIXES):
             continue
         out.append(s)
     return out
@@ -137,10 +161,10 @@ def find_fact_duplicates(
         rel = str(f.relative_to(root)).replace("\\", "/")
         for fact in _note_facts(text):
             norm = _norm_fact(fact)
-            if len(norm) < 20:
+            if _weight(norm) < 20:
                 continue
             exact.setdefault(norm, []).append((rel, fact))
-            toks = frozenset(t for t in norm.split() if len(t) >= 4)
+            toks = _tokens(norm)
             if len(toks) >= 4:
                 idx = len(entries)
                 entries.append((rel, fact, toks))

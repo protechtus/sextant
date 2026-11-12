@@ -5,7 +5,7 @@ placeholders: the venv path, the platform's interpreter layout, the ATLAS_* vari
 must be baked into the registration, and JSON escaping for the hook files. A package install
 (pipx, uv tool, pip from PyPI or a git URL) has no clone and therefore none of the deploy/
 snippets at all (sweep 2026-11-11, package-user persona). This command knows all of that about
-the running interpreter and prints it filled in. It writes nothing: the human merges or runs
+the running interpreter and prints it filled in. Without `--out` it writes nothing: the human merges or runs
 what it shows.
 
     sextant setup                         everything, as text with instructions
@@ -444,16 +444,35 @@ def render(info: dict, client: str = "all") -> str:
     return "\n".join(lines)
 
 
+_REGISTRY_KEYS = ("mcpServers", "mcp")
+
+
+def _is_ours(item) -> bool:
+    """A hook entry Sextant itself wrote (its command names the package)."""
+    return "atlas_plus" in json.dumps(item, sort_keys=True)
+
+
 def _merge(existing, piece):
-    """Deep-merge a JSON piece into an existing object: mappings merge key by key, hook arrays
-    gain entries that are not already there, scalars from the piece win."""
+    """Deep-merge a JSON piece into an existing object: mappings merge key by key, a NAMED
+    registration (`mcpServers.<name>`, `mcp.<name>`) is replaced whole, hook arrays drop the
+    entries Sextant wrote before and gain the new ones, other arrays keep what is there and
+    gain what is new, scalars from the piece win. Merging a registration key by key appended
+    the new interpreter as a stray argument and kept the old corpus variable (FN6, final pass)."""
     if isinstance(existing, dict) and isinstance(piece, dict):
         out = dict(existing)
         for k, v in piece.items():
-            out[k] = _merge(existing.get(k), v) if k in existing else v
+            if k in _REGISTRY_KEYS and isinstance(existing.get(k), dict) and isinstance(v, dict):
+                out[k] = {**existing[k], **v}
+            elif k in existing:
+                out[k] = _merge(existing[k], v)
+            else:
+                out[k] = v
         return out
     if isinstance(existing, list) and isinstance(piece, list):
-        out = list(existing)
+        if any(_is_ours(i) for i in piece):
+            out = [i for i in existing if not _is_ours(i)]
+        else:
+            out = list(existing)
         for item in piece:
             if item not in out:
                 out.append(item)
@@ -477,8 +496,17 @@ def _write_out(path: Path, file_text: str, piece) -> None:
                 raise ValueError(f"{path} exists and is not a JSON object; merge the block by hand")
             merged = _merge(existing, piece)
             from datetime import datetime as _dt
-            backup = path.with_name(path.name + ".bak-" + _dt.now().strftime("%Y%m%d%H%M%S"))
-            backup.write_text(raw, encoding="utf-8", newline="\n")
+            if merged == existing:
+                # Nothing to merge: no backup, no rewrite (FN1, final readiness pass).
+                print(f"sextant setup: {path} already holds this block; nothing written", file=sys.stderr)
+                return
+            stamp = _dt.now().strftime("%Y%m%d%H%M%S")
+            backup = path.with_name(path.name + ".bak-" + stamp)
+            n = 2
+            while backup.exists():   # two runs in one second overwrote the original's backup (FN1)
+                backup = path.with_name(f"{path.name}.bak-{stamp}-{n}")
+                n += 1
+            backup.write_bytes(path.read_bytes())   # byte-exact, BOM and all
             print(f"sextant setup: merged into {path} (backup: {backup.name})", file=sys.stderr)
             file_text = json.dumps(merged, indent=2)
     path.write_text(file_text + "\n", encoding="utf-8", newline="\n")

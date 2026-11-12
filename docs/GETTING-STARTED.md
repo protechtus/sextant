@@ -362,8 +362,9 @@ inspect the default locations instead of your real ones.
    confirm. If you merged the session hooks, delete BOTH entries from
    `~/.claude/settings.json` (or the project-level `.claude/settings.json`):
    the `SessionStart` entry whose command ends in
-   `atlas_plus.hooks.session_start`, and the `Stop` entry whose command ends
-   in `atlas_plus.summarizer.hook_entry`.
+   `session-start` and contains `atlas_plus.hooks.run`, and the `Stop` entry whose
+   command ends in `stop` (older installs: `atlas_plus.hooks.session_start` and
+   `atlas_plus.summarizer.hook_entry`).
    Hand-merged configs: remove the `sextant` block from `~/.claude.json`,
    `.mcp.json`, or Claude Desktop's `claude_desktop_config.json`.
    If you created your own Scheduled Tasks or systemd units for the servers,

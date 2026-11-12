@@ -99,7 +99,7 @@ def build_context_pack(
     if memory_index:
         parts.extend(["", "## Memory Hot Cache", memory_index])
     if atlas_project:
-        parts.extend(["", "## Keel Project Memory", atlas_project])
+        parts.extend(["", "## Sextant Project Memory", atlas_project])
     if research_plan:
         parts.extend(["", "## Research Queue", research_plan])
 

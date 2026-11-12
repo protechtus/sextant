@@ -361,6 +361,8 @@ def create_ticket(
     if not _is_safe_project(project):
         raise ValueError(f"Invalid project name {project!r}: only letters, digits, dots, hyphens, underscores, plus allowed "
                          f"(no leading or trailing dot, not a Windows device name).")
+    from atlas_plus.mcp.memory_server.routing import _scrub_controls as _scrub
+    title = _scrub(str(title or "")); body = _scrub(str(body or ""))   # ESC/BEL in a title (FN6)
     if not title or not title.strip():
         raise ValueError("Ticket title must not be empty.")
     if "\n" in title or "\r" in title:

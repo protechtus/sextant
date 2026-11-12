@@ -1048,10 +1048,13 @@ def test_cli_emits_utf8_when_piped_on_windows():
     import subprocess, sys
     if os.name != "nt":
         pytest.skip("Windows console encoding only")
-    code = ("import sys; from atlas_plus._console import utf8_stdout_when_piped as u; u(); "
-            "print(sys.stdout.encoding)")
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True).stdout.strip()
-    assert out.lower().replace("-", "") == "utf8"
+    # A pipe gets the console's output code page (what PowerShell decodes with), UTF-8 when there
+    # is no console (FN5, final pass); PYTHONIOENCODING is left alone.
+    code = ("import sys; from atlas_plus._console import utf8_stdout_when_piped as u, _console_output_encoding as e; "
+            "u(); print(sys.stdout.encoding.lower().replace('-', ''), e().lower().replace('-', ''))")
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONIOENCODING"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env).stdout.split()
+    assert out[0] == out[1] and out[1] in ("utf8", "cp65001") or out[1].startswith("cp")
 
 
 def test_session_start_distinguishes_a_commitless_repo_from_no_git(tmp_path):

@@ -12,6 +12,8 @@ import re
 
 _MARKER_RE = re.compile(r"={3,}")
 _TAG_RE = re.compile(r"<(?=/?[A-Za-z!?])")
+# C0/C1 controls except tab (an ESC[2J in a decision cleared the screen under `sextant context`).
+_CONTROL_RE = re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]")
 
 
 def one_line(text: str) -> str:
@@ -28,7 +30,7 @@ def quote_note(text: str) -> str:
     if not text:
         return text
     out = []
-    for line in text.splitlines():
+    for line in _CONTROL_RE.sub("", text).splitlines():
         line = _MARKER_RE.sub(lambda m: "= " * (len(m.group(0)) - 1) + "=", line)
         line = _TAG_RE.sub("< ", line)
         out.append("> " + line if line.strip() else ">")

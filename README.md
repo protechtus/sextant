@@ -382,6 +382,10 @@ available and is what the deeper docs reference):
 | `sextant-embed-index` | `atlas-embed-index` | (re)build the local semantic-search embedding index |
 | `sextant-uninstall` | `atlas-uninstall` | report or cleanly remove Sextant's data (safety-gated) |
 | `sextant-reset` | `atlas-reset` | wipe an area and re-scaffold it fresh (same safety gates) |
+| `sextant-intake` | `atlas-intake` | import files dropped into a watched folder (frontmatter routing) |
+
+Two more `sextant-*` scripts have no `atlas-*` twin: `sextant-versions` (report or prune the whole-file
+history copies every write makes) and `sextant-session-start` (the SessionStart hook's entry point).
 
 (The full `atlas-*` family includes further internal/service commands without
 `sextant-*` twins; `sextant commands` lists everything installed.)

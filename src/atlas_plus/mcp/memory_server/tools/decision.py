@@ -115,6 +115,13 @@ def memory_remember_decision(
     # yaml.safe_dump, never an f-string: a title with ": " or a newline in project used to
     # break or rewrite the frontmatter (round-B re-audit 2026-11-09, N-C).
     import yaml as _yaml
+    from ..routing import _scrub_controls as _scrub
+    # ESC/BEL in a decision reached the terminal through `sextant context` (FN6, final pass).
+    title = _scrub(str(title)); decision = _scrub(str(decision))
+    alternatives_rejected = _scrub(str(alternatives_rejected or ""))
+    conditions = [_scrub(str(c)) for c in (conditions or [])] or None
+    revisit_if = [_scrub(str(r)) for r in (revisit_if or [])] or None
+    source = _scrub(str(source)); project = _scrub(str(project or ""))
     fm_fields = {
         "id": slug,
         "title": str(title),

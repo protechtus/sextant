@@ -315,9 +315,10 @@ the same interpreter, then `<venv-python> -m atlas_plus.init_cmd` once (idempote
 anything a newer build expects), `<venv-python> -m atlas_plus setup --client claude-code` to
 compare with the registration (unchanged unless the venv moved; to replace it,
 `claude mcp remove -s user sextant` first, since `add` refuses an existing name), and
-`<venv-python> -m atlas_plus verify --project upgrade-check`. The corpus is never touched by
-an update; verify the human's notes are byte-identical if they ask (hash the corpus before and
-after). A package install updates with `pip install -U sextant-ai` (or the `git+` form) and
+`<venv-python> -m atlas_plus verify --project upgrade-check`. The update itself never touches
+the corpus; that verify adds one note, `projects/upgrade-check.md` (use `--skip-remember` to
+add nothing). To prove it to the human, hash the corpus before the update and after it, before
+the verify. A package install updates with `pip install -U sextant-ai` (or the `git+` form) and
 the same three commands. Details: docs/GETTING-STARTED.md, "Updating Sextant".
 
 ## Uninstall

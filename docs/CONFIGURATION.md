@@ -206,7 +206,8 @@ Defaults live in code and are deliberate; unset means a sensible value.
 | `ATLAS_KNOWN_PROJECTS` | Extra project names for task-fact scope inference, `name:synonym\|name2` format (default: none). |
 | `ATLAS_MODEL_PRICES` | JSON `{"model-prefix": [in_per_1M, out_per_1M]}` extending the built-in price table for spend estimates (unknown models cost 0). |
 | `ATLAS_TASK_HINT` / `CLAUDE_HOOK_SESSION_SOURCE` | Session-start hook plumbing. |
-| `EDITOR` | Editor opened by `atlas-summarize review`. |
+| `EDITOR` | Editor opened when a command offers to edit a note or report. |
+| `PYTHONIOENCODING` | Standard Python: when set, Sextant leaves the output encoding alone (otherwise a pipe on Windows gets the console's code page). |
 | `ATLAS_WEB_SECURE_COOKIE` | `on` sets the Secure flag on the dashboard's auth cookie; use when the web UI sits behind TLS (default off: plain-HTTP loopback). |
 | `ATLAS_TUNNEL_CHECK` | `on` makes `sextant-doctor` probe for a Cloudflare tunnel even when `cloudflared` is not on PATH (default: probe only when it is). |
 

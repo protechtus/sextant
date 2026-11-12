@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table
 
@@ -22,7 +23,7 @@ from atlas_plus import paths as atlas_paths
 
 from atlas_plus.branding import product
 
-app = typer.Typer(help=f"{product()} backup -- mirror the corpus with rclone")
+app = _SextantTyper(help=f"{product()} backup -- mirror the corpus with rclone")
 console = Console()
 
 # ---------------------------------------------------------------------------
@@ -189,6 +190,11 @@ def verify():
     the active remote must be a crypt-type remote. Verify warns if you are
     still pointing at a plain gdrive remote.
     """
+    if not RCLONE_REMOTE:
+        # The `now` path had this branch; verify printed "Remote '' not found" (FN1, final pass).
+        console.print("[red]ATLAS_RCLONE_REMOTE is not set.[/red] Name the rclone remote to verify "
+                      "(see docs/CONFIGURATION.md, backup).")
+        raise typer.Exit(1)
     result = _rclone("version", capture=True)
     if result.returncode != 0:
         import platform as _pf

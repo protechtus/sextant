@@ -6,10 +6,22 @@ import json as _json
 from typing import Optional
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table
 
-app = typer.Typer(help="Atlas lightweight ticket system")
+import re as _re
+
+_CTRL = _re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]")
+
+
+def _clean(text: str) -> str:
+    """Older tickets may hold raw control bytes (FN6, final pass)."""
+    from rich.markup import escape
+    return escape(_CTRL.sub("", str(text)))
+
+
+app = _SextantTyper(help="Atlas lightweight ticket system")
 console = Console()
 
 STATUS_COLORS = {
@@ -78,7 +90,7 @@ def cmd_show(ticket_id: str = typer.Argument(...)):
         console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"\n[bold cyan]{t.id}[/bold cyan]  {t.title}")
+    console.print(f"\n[bold cyan]{t.id}[/bold cyan]  {_clean(t.title)}")
     console.print(f"Project: {t.project}  |  Status: {t.status}  |  Assignee: {t.assignee}  |  Effort: {t.effort}")
     if t.requires:
         console.print(f"Requires: {t.requires}")
@@ -138,4 +150,4 @@ def cmd_open(project: Optional[str] = typer.Argument(None)):
         return
     for t in tickets:
         color = STATUS_COLORS.get(t.status, "white")
-        console.print(f"[cyan]{t.id}[/cyan]  [{color}]{t.status}[/{color}]  [{t.assignee}]  {t.title}")
+        console.print(f"[cyan]{t.id}[/cyan]  [{color}]{t.status}[/{color}]  [{t.assignee}]  {_clean(t.title)}")

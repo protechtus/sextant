@@ -443,8 +443,9 @@ def _review_candidates(
 def main() -> None:
     """Typer-based CLI entry point: atlas-suggest-facts."""
     import typer
+    from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 
-    app = typer.Typer(help="Scan a session transcript and propose facts to add to .memory/.", add_completion=False)
+    app = _SextantTyper(help="Scan a session transcript and propose facts to add to .memory/.", add_completion=False)
 
     @app.command()
     def _cmd(

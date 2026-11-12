@@ -118,6 +118,8 @@ services:
     ports: !override ["127.0.0.1:18765:8765"]
   web:
     ports: !override ["127.0.0.1:18766:8766"]
+  sync:
+    ports: !override ["127.0.0.1:18768:8768"]   # only if you run the sync profile
 ```
 
 (`!override` needs Compose 2.24 or newer; `docker compose config` shows the
@@ -159,7 +161,9 @@ docker volume ls | grep sextant-data         # the volume's real name: <project>
                                              # where <project> is the clone's folder name
                                              # (or what you passed to -p)
 docker run --rm -v <project>_sextant-data:/data -v "$PWD:/backup" \
-  busybox tar czf /backup/sextant-backup.tgz /data   # cold backup of corpus AND state
+  busybox tar czf /backup/sextant-backup.tgz /data   # backup of corpus AND state (stop the
+                                             # containers first for a cold copy; a live copy
+                                             # is consistent for notes, not for a mid-write DB)
                                              # (state holds the sync device registry and the task DB)
 # restore into a fresh volume:
 docker run --rm -v <project>_sextant-data:/data -v "$PWD:/backup" \

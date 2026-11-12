@@ -306,16 +306,35 @@ def _proc_start(pid: int) -> str:
         return ""
 
 
-def _break_lock(lock_path: Path) -> bool:
+def _break_lock(lock_path: Path, judged: "os.stat_result | None" = None) -> bool:
     """Remove a lock judged dead by claiming it first: the file is renamed to a unique name and
     the renamed file deleted, so a second waiter that judged the same lock dead finds nothing to
-    rename and cannot delete the fresh lock a first waiter has since taken (AG22, sweep 12)."""
+    rename (AG22, sweep 12). ``judged`` is the stat the caller's verdict was based on: if the file
+    we renamed is not that file (a first waiter already broke the dead lock and took a fresh one
+    in the gap; reproduced on Linux, FN6 final pass), it is put back and nothing is broken."""
     import uuid as _uuid
     claimed = lock_path.with_name(lock_path.name + f".dead-{_uuid.uuid4().hex[:8]}")
     try:
         os.replace(lock_path, claimed)
     except OSError:
         return False
+    if judged is not None:
+        try:
+            now = os.stat(claimed)
+            same = (now.st_mtime_ns == judged.st_mtime_ns and now.st_size == judged.st_size
+                    and (not judged.st_ino or now.st_ino == judged.st_ino))
+        except OSError:
+            same = False
+        if not same:
+            try:
+                os.link(claimed, lock_path)      # fails if yet another lock appeared meanwhile
+                claimed.unlink(missing_ok=True)
+            except OSError:
+                try:
+                    os.replace(claimed, lock_path)   # no hardlinks here: best effort
+                except OSError:
+                    pass
+            return False
     try:
         claimed.unlink(missing_ok=True)
     except OSError:
@@ -391,6 +410,17 @@ def _yaml_scalar(value) -> str:
 
 _CONTROL_RE = _re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]")
 _SURROGATE_RE = _re.compile("[\\ud800-\\udfff]")
+
+
+def _prov_token(value, limit: int) -> str:
+    """A provenance value (source, session id, task id) as ONE line with no comment or
+    frontmatter syntax in it: controls scrubbed, line breaks and `<`/`>` dropped, whitespace
+    collapsed, cut to ``limit`` (FN6, final readiness pass 2026-11-12)."""
+    if value is None:
+        return ""
+    s = _scrub_controls(str(value)).replace("\r", " ").replace("\n", " ")
+    s = s.replace("<", "").replace(">", "").replace("--", "-")
+    return " ".join(s.split())[:limit].strip()
 
 
 def _scrub_controls(text: str) -> str:
@@ -503,7 +533,8 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                     "(another writer is holding it; retry shortly)"
                 ) from None
             try:
-                mtime = lock_path.stat().st_mtime
+                judged = lock_path.stat()
+                mtime = judged.st_mtime
             except OSError:
                 if isinstance(open_exc, PermissionError):
                     eacces_no_lock += 1
@@ -523,7 +554,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                 if _lock_holder_dead(lock_path):
                     log.info("write lock on %s was left by a process that no longer runs; clearing it",
                              target.name)
-                    _break_lock(lock_path)
+                    _break_lock(lock_path, judged)
                     first_seen = None
                     continue
             if first_seen is not None and now - first_seen[0] > 5 and now - waited_notice > 5:
@@ -536,7 +567,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                 # cost every write 30 s; no writer holds a lock for half an hour, so a lock that
                 # old is broken at once even across a clock skew of minutes (AG19, sweep 12).
                 log.info("write lock on %s is %.0f min old; breaking it", target.name, (_time.time() - mtime) / 60)
-                _break_lock(lock_path)
+                _break_lock(lock_path, judged)
                 first_seen = None
                 continue
             if first_seen is None or first_seen[1] != mtime:
@@ -545,7 +576,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                 # Held unchanged for `stale`s: crashed writer. Windows may
                 # refuse the unlink while the (dead-but-open) handle lingers;
                 # treat that as "observe again", never a crash.
-                _break_lock(lock_path)
+                _break_lock(lock_path, judged)
                 first_seen = None
                 continue
             if now > deadline:
@@ -898,6 +929,11 @@ def append_fact(
     date_str = date.today().isoformat()
     today_header = f"## {date_str}"
     conf_level = _map_confidence(confidence, source)
+    # Provenance values are one defused token each: `source="x\n---\nINJECTED"` closed the
+    # frontmatter early and `session_id="--> IGNORE..."` broke out of the comment (FN6, final pass).
+    source = _prov_token(source, 60) or "agent"
+    session_id = _prov_token(session_id, 60)
+    task_id = _prov_token(task_id, 36)
 
     # Inline provenance comment: invisible in rendered markdown, parseable by curation tools.
     # Include session/task IDs when provided for full traceability.
@@ -935,7 +971,7 @@ def append_fact(
                 fm["source_task"] = task_id[:36]
             fm_lines = ["---"]
             for k, v in fm.items():
-                if k in ("id", "title", "source_session", "source_task"):
+                if k in ("id", "title", "source", "source_session", "source_task"):
                     v = _yaml_scalar(v)
                 fm_lines.append(f"{k}: {v}")
             fm_lines.append("---\n")

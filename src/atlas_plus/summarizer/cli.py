@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 
 from .chunker import chunk_turns, needs_reduce
@@ -25,7 +26,7 @@ from .providers import ProviderError, complete
 from .renderer import write_outputs
 from .review import review
 
-app = typer.Typer(help="Summarize a Claude Code session into the Atlas session log")
+app = _SextantTyper(help="Summarize a Claude Code session into the Atlas session log")
 console = Console()
 log = logging.getLogger("atlas.summarizer")
 

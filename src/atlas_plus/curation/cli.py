@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table
 
@@ -13,7 +14,7 @@ from atlas_plus.autonomous import require_autonomous_writes
 from atlas_plus.mcp.memory_server.config import MEMORY_ROOT
 from atlas_plus import paths as atlas_paths
 
-app = typer.Typer(help="Atlas memory curation hygiene tools")
+app = _SextantTyper(help="Atlas memory curation hygiene tools")
 console = Console()
 
 

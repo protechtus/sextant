@@ -22,12 +22,13 @@ Commands:
 from __future__ import annotations
 
 import typer
+from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from pathlib import Path
 from typing import Optional
 
 from atlas_plus.temporal_graph.build import build_temporal_graph
 
-app = typer.Typer(
+app = _SextantTyper(
     name="atlas-temporal",
     help="Query the Atlas temporal knowledge graph.",
     add_completion=False,

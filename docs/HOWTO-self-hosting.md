@@ -21,7 +21,10 @@ Both start from the same base install. Commands assume Ubuntu 24.04 LTS and
 a user named `sextant`; adjust freely. Windows and macOS installs work the
 same way minus systemd (use Task Scheduler / launchd, see ARCHITECTURE.md).
 
-## 0. Base install (any server)
+## 0. Base install
+
+Running in a container instead? Stop here and follow [HOWTO-docker.md](HOWTO-docker.md); the
+rest of this page is the bare-metal path. (any server)
 
 ```bash
 sudo adduser --system --group --home /home/sextant sextant
