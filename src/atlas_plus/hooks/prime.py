@@ -257,6 +257,37 @@ def build_prime_context(task: str, memory_root: Optional[Path] = None) -> str:
         lines += [f"- {path}: {_q(snippet)[2:]}" for path, snippet in related]
         lines.append("")
 
+    # Rejected ideas and decisions that match the task words were never primed (AG20).
+    try:
+        from atlas_plus.mcp.memory_server.tools.anti import anti_matches
+        anti_hits = anti_matches(task, project_name or "")
+    except Exception:  # noqa: BLE001
+        anti_hits = []
+    if anti_hits:
+        lines += ["## Do NOT suggest (rejected earlier)"]
+        lines += [f"- {_q(str(e.get('reject_pattern', '')))[2:]}"
+                  + (f" (reason: {_q(str(e.get('reason')))[2:]})" if e.get("reason") else "") for e in anti_hits[:8]]
+        lines.append("")
+    try:
+        from atlas_plus.mcp.memory_server.tools.decision import list_decisions
+        decisions = list_decisions()
+    except Exception:  # noqa: BLE001
+        decisions = []
+    matched = []
+    for d in decisions:
+        blob = " ".join(str(d.get(k, "")) for k in ("title", "decision", "summary"))
+        blob += " " + " ".join(str(r) for r in (d.get("revisit_if") or []))
+        words = set(_tokenize(blob))
+        if len(words & set(task_tokens)) >= 2:
+            matched.append(d)
+    if matched:
+        lines += ["## Decisions that touch this task (revisit conditions)"]
+        for d in matched[:5]:
+            conds = [str(r) for r in (d.get("revisit_if") or []) if str(r) and "(none recorded)" not in str(r)]
+            lines.append(f"- {_q(str(d.get('title') or d.get('path') or 'decision'))[2:]}"
+                         + (f" -- revisit if: {'; '.join(_q(c)[2:] for c in conds)}" if conds else " (no revisit conditions)"))
+        lines.append("")
+
     # Temporal graph -- current facts matching the task
     temporal = _temporal_facts(task_tokens)
     if temporal:

@@ -49,8 +49,12 @@ def test_api_batches_queue_when_key_present(monkeypatch):
     assert all(c.get("kind") == "research_runner_api" for c in calls)
 
 
-def test_local_research_batch_is_not_gated(monkeypatch):
+def test_local_research_batch_is_not_gated(monkeypatch, tmp_path):
     monkeypatch.delenv("RESEARCH_API_KEY", raising=False)
+    # The batch needs the runner on disk (a stranger's nightly job blocked without it, AG21 sweep 12).
+    (tmp_path / "research").mkdir()
+    (tmp_path / "research" / "research_runner.py").write_text("# runner", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_WORKSPACE_ROOT", str(tmp_path))
     calls = []
 
     async def fake_queue(**kwargs):

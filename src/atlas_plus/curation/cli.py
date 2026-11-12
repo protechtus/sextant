@@ -22,9 +22,32 @@ def cmd_duplicates(
     threshold: float = typer.Option(0.40, "--threshold", "-t", help="Jaccard similarity floor (0-1)"),
     scope: str = typer.Option("", "--scope", "-s", help="Subdirectory to restrict search"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    facts: bool = typer.Option(False, "--facts", "-f",
+                               help="repeated FACTS across notes (exact and near), not similar files"),
 ):
-    """Find near-duplicate files in .memory/."""
-    from atlas_plus.curation.duplicates import find_duplicates
+    """Find near-duplicate files in .memory/ (or, with --facts, repeated facts)."""
+    from atlas_plus.curation.duplicates import find_duplicates, find_fact_duplicates
+    if facts:
+        rows = find_fact_duplicates(scope=scope)
+        if json_output:
+            import json
+            typer.echo(json.dumps(rows, indent=2))
+            return
+        if not rows:
+            console.print("[green]No repeated facts found.[/green]")
+            return
+        table = Table(title="Repeated facts", show_lines=True)
+        table.add_column("Kind")
+        table.add_column("File 1", style="cyan", overflow="fold")
+        table.add_column("File 2", style="cyan", overflow="fold")
+        table.add_column("Fact", overflow="fold")
+        for r in rows[:60]:
+            table.add_row(r["kind"], r["file1"], r["file2"], r["fact"])
+        console.print(table)
+        exact = sum(1 for r in rows if r["kind"] == "exact")
+        console.print(f"\n[yellow]{exact} exact and {len(rows) - exact} near repeat(s)"
+                      f"{' (first 60 shown; --json for all)' if len(rows) > 60 else ''}.[/yellow]")
+        return
     pairs = find_duplicates(threshold=threshold, scope=scope)
 
     if json_output:
@@ -33,12 +56,13 @@ def cmd_duplicates(
         return
 
     if not pairs:
-        console.print("[green]No duplicates found.[/green]")
+        console.print("[green]No duplicate files found. Repeated facts inside notes: "
+                      "atlas-review-memory duplicates --facts[/green]")
         return
 
     table = Table(title=f"Potential Duplicates (threshold={threshold})", show_lines=True)
-    table.add_column("File 1", style="cyan")
-    table.add_column("File 2", style="cyan")
+    table.add_column("File 1", style="cyan", overflow="fold")   # truncated paths could not be acted on (AG20)
+    table.add_column("File 2", style="cyan", overflow="fold")
     table.add_column("Similarity", justify="right")
     for p in pairs:
         table.add_row(p.file1, p.file2, f"{p.similarity:.2f}")
@@ -98,16 +122,26 @@ def cmd_contradictions(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Detect contradictory facts between related .memory/ files (LLM-powered)."""
-    from atlas_plus.curation.contradictions import find_contradictions
-    results = find_contradictions(scope=scope, dry_run=dry_run)
+    from atlas_plus.curation import contradictions as _ct
+    results = _ct.find_contradictions(scope=scope, dry_run=dry_run)
+    stats = _ct.LAST_STATS
 
     if json_output:
         import json
         typer.echo(json.dumps([r.as_dict() for r in results], indent=2))
+        if not dry_run and stats["unchecked"] and not stats["checked"]:
+            raise typer.Exit(2)
         return
 
+    if not dry_run and stats["unchecked"] and not stats["checked"]:
+        # "No contradictions detected" used to print when nothing was checked at all (AG20).
+        console.print(f"[yellow]No model answered: {stats['unchecked']} candidate pair(s) were not checked "
+                      "(start Ollama at ATLAS_OLLAMA_URL, or set a provider key with ATLAS_LOCAL_ONLY=off). "
+                      "Nothing was detected because nothing was checked.[/yellow]")
+        raise typer.Exit(2)
     if not results:
-        console.print("[green]No contradictions detected.[/green]")
+        console.print(f"[green]No contradictions detected[/green] ({stats['checked']} pair(s) checked"
+                      + (f", {stats['unchecked']} not answered" if stats['unchecked'] else "") + ").")
         return
 
     table = Table(title="Potential Contradictions", show_lines=True)
@@ -429,8 +463,8 @@ def cmd_unconfirmed_decay(
     --threshold days and whose `confidence` is not already 'low'. Reports them;
     with --write, sets `confidence: low` in each file's frontmatter.
 
-    Only files with an explicit `last_confirmed` field are considered.
-    Files without it are skipped (we don't know their validation state).
+    A note never confirmed counts from its last edit (`updated`) or first observation and
+    is listed with `last_confirmed: never`.
 
     Examples:
       atlas-review-memory unconfirmed-decay               # dry-run report
@@ -442,6 +476,7 @@ def cmd_unconfirmed_decay(
     candidates = downgrade_stale_confirmations(
         threshold_days=threshold,
         dry_run=not write,
+        interactive=True,   # a person at the terminal (AG20, sweep 12)
     )
 
     if json_output:
@@ -1400,7 +1435,7 @@ def cmd_suggest_tags(
         rel = str(md_file.relative_to(MEMORY_ROOT)).replace("\\", "/")
         applied = False
         if write:
-            applied = inject_tags(md_file, tags)
+            applied = inject_tags(md_file, tags, interactive=True)
             if not applied:
                 already_tagged_count += 1
 

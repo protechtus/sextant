@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import queue
 import shlex
 import subprocess
@@ -254,6 +255,32 @@ def _timeout_seconds() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """`--json`: one object {"ok": bool, "steps": [...]} instead of JSON lines plus a prose
+    line, for installer agents (AG24, sweep 12)."""
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if "--json" in args_list:
+        import contextlib
+        import io
+        args_list = [a for a in args_list if a != "--json"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = _main_lines(args_list)
+        steps = []
+        for line in buf.getvalue().splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    steps.append(json.loads(line))
+                except ValueError:
+                    steps.append({"step": "text", "text": line})
+            elif line:
+                steps.append({"step": "text", "text": line})
+        print(json.dumps({"ok": rc == 0, "steps": steps}, indent=2))
+        return rc
+    return _main_lines(args_list)
+
+
+def _main_lines(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="sextant verify",
         description="Start the memory server over stdio and prove a write and a search work.",
@@ -278,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
                          "wsl launcher the names are added to WSLENV so they cross into the distro")
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds to wait between calls (diagnostics)")
+    ap.add_argument("--json", action="store_true",
+                    help="one JSON object {ok, steps} instead of JSON lines and a prose line")
     ap.add_argument("--skip-remember", action="store_true",
                     help="diagnostics: search only, write nothing, report the hit count without failing")
     args = ap.parse_args(argv)

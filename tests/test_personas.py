@@ -865,7 +865,7 @@ def test_verify_splits_launchers_and_proves_this_write():
     cmd = rt.server_command(command='wsl --distribution="Ubuntu 22.04" -- /home/me/py')
     assert cmd[1] in ('--distribution=Ubuntu 22.04', '--distribution="Ubuntu 22.04"') or "Ubuntu 22.04" in " ".join(cmd)
     assert cmd[-3:] == ["-m", rt.SERVER_MODULE, "--stdio"]
-    src = inspect_source(rt.main)
+    src = inspect_source(rt._main_lines)   # main() is the --json wrapper now (AG24, sweep 12)
     assert "found_this_write" in __import__("inspect").getsource(rt._run_calls) and "_discard_log()" in src and '"method" not in reply' in src
     import os as _os
     _os.environ["ATLAS_VERIFY_TIMEOUT"] = "2.5"
@@ -1338,7 +1338,7 @@ def test_cli_remember_under_the_kill_switch_says_not_stored(tmp_path, monkeypatc
 def test_verify_fact_names_the_verify_and_docs_follow():
     from atlas_plus import roundtrip as rt
     import inspect
-    assert 'Sextant install verified on' in inspect.getsource(rt.main)
+    assert 'Sextant install verified on' in inspect.getsource(rt._main_lines)
     ai = (_REPO / "docs" / "AGENT-INSTALL.md").read_text(encoding="utf-8")
     assert "installed by an agent" not in ai and 'query="Sextant install verified"' in ai
 

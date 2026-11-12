@@ -324,7 +324,16 @@ def main() -> None:
 
     log.info("Atlas Telegram bot started (long-poll). Press Ctrl-C to stop.")
     log.info("Allowed users: %s", ALLOWED_USERS or "UNRESTRICTED")
-    app.run_polling(drop_pending_updates=True)
+    try:
+        app.run_polling(drop_pending_updates=True)
+    except Exception as exc:  # noqa: BLE001
+        # A 320-line httpx traceback when Telegram is unreachable (AG21, sweep 12): one line.
+        name = exc.__class__.__name__
+        if "NetworkError" in name or "Connect" in name or "Timeout" in name:
+            log.error("cannot reach Telegram (%s: %s); check the network, HTTPS_PROXY and the token, then retry",
+                      name, str(exc)[:300])
+            raise SystemExit(1)
+        raise
 
 
 if __name__ == "__main__":

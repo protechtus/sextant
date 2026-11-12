@@ -162,7 +162,7 @@ def suggest_tags_for_file(
     return suggested[:max_tags]
 
 
-def inject_tags(path: Path, tags: list[str]) -> bool:
+def inject_tags(path: Path, tags: list[str], interactive: bool = False) -> bool:
     """Write tags: [tag1, tag2, ...] into a file's frontmatter.
 
     Idempotent: if tags already exist, returns False without modifying the file.
@@ -172,8 +172,8 @@ def inject_tags(path: Path, tags: list[str]) -> bool:
         return False
     # ATL-018 / audit HIGH-3 completion: gate this .memory/ frontmatter mutator (fail-closed
     # when ATLAS_AUTONOMOUS is off/unset).
-    from atlas_plus.autonomous import require_autonomous_writes
-    require_autonomous_writes("curation_tag_write")
+    from atlas_plus.autonomous import require_write
+    require_write("curation_tag_write", interactive=interactive)   # a human's --write is interactive (AG20)
     # Read-modify-write under the cross-process corpus lock, versioned, atomic: a plain
     # write_text here silently dropped a concurrent append_fact (round-B 2026-11-09, 17b).
     from atlas_plus.mcp.memory_server.routing import locked_atomic_rewrite

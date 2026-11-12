@@ -180,7 +180,8 @@ From the shell, the same corpus is yours directly:
 sextant remember "I take my coffee black" --scope preference:coffee   # store a fact
 sextant search "coffee"                                               # find it (shows the confidence band)
 sextant --help                 # the CLI family
-atlas-review-memory summary    # corpus health at a glance
+atlas-review-memory summary    # corpus health at a glance (counts)
+sextant review report          # the weekly check: repeated facts, never-confirmed notes, stale notes, decisions to revisit
 ```
 
 ## 5b. Bring your existing knowledge
@@ -290,6 +291,15 @@ default; leave it off until you trust the loop.
 Your corpus is a directory of plain markdown -- backing it up is copying a
 folder. Zip it, sync it with any tool you already trust (rclone, Syncthing,
 a cloud-drive client), or make it a git repo and push it somewhere private.
+`sextant-init` writes a `.gitignore` in the corpus that keeps the per-machine
+parts out of git: `versions/` (history copies, one set per machine), the
+write locks and the search index. Two people on one corpus through git works
+for notes (a note both wrote the same day merges like any text file; keep
+both sides), with three things to know: `identity/user.md` is one file, so a
+shared corpus primes everyone with the same identity (set `ATLAS_USER_NAME`
+for the display name); import an export once and pull it, rather than
+importing on both machines (the import stamps carry a timestamp); and after
+a merge with conflict markers, doctor names the notes to resolve first.
 Everything else (`~/.atlas`, the FTS and embedding indexes) is derived state
 that `sextant-fts-rebuild` (alias `atlas-fts-rebuild`) and `sextant-embed-index` rebuild from the markdown,
 so the corpus is the only thing you need to protect. If you back up to a

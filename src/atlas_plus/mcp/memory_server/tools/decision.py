@@ -124,8 +124,8 @@ def memory_remember_decision(
         "project": str(project or "workspace").replace("\n", " ").strip(),
         "made": now_iso,
         "source": str(source),
-        "revisit_if": [str(r) for r in revisit_if] if revisit_if else ["(none recorded)"],
-        "conditions": [str(c) for c in conditions] if conditions else ["(none recorded)"],
+        "revisit_if": [str(r) for r in revisit_if] if revisit_if else [],   # the literal "(none recorded)" was data (AG20)
+        "conditions": [str(c) for c in conditions] if conditions else [],
     }
     fm = "---\n" + _yaml.safe_dump(fm_fields, sort_keys=False, allow_unicode=True,
                                    default_flow_style=False, width=10**6) + "---"

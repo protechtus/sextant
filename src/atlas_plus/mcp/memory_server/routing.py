@@ -214,14 +214,38 @@ def locked_atomic_rewrite(target: Path, fn: "Callable[[str], str]") -> None:
 # last milliseconds; STALE only needs to be far above that.
 _LOCK_TIMEOUT = 10.0
 _LOCK_STALE = 30.0
+_LOCK_ANCIENT = 1800.0   # a lock file last touched over 30 min ago was never a live writer (AG19)
+
+
+_HOST_ID: str | None = None
 
 
 def _lock_host() -> str:
+    """Identity of THIS process table: hostname plus OS plus the machine id. WSL reports the
+    Windows computer name, so a Windows waiter looked up a Linux pid in its own table and broke
+    a LIVE WSL lock (AG22, sweep 12)."""
+    global _HOST_ID
+    if _HOST_ID is not None:
+        return _HOST_ID
     import socket as _socket
     try:
-        return _re.sub(r"[^A-Za-z0-9.-]", "", _socket.gethostname())[:60] or "host"
+        name = _re.sub(r"[^A-Za-z0-9.-]", "", _socket.gethostname())[:40] or "host"
     except OSError:
-        return "host"
+        name = "host"
+    machine = ""
+    try:
+        if os.name != "nt":
+            for cand in ("/etc/machine-id", "/var/lib/dbus/machine-id", "/proc/sys/kernel/random/boot_id"):
+                try:
+                    machine = Path(cand).read_text(encoding="ascii", errors="ignore").strip()[:8]
+                    if machine:
+                        break
+                except OSError:
+                    continue
+    except Exception:  # noqa: BLE001
+        machine = ""
+    _HOST_ID = f"{name}.{os.name}{'.' + machine if machine else ''}"[:60]
+    return _HOST_ID
 
 
 def _pid_alive(pid: int) -> bool:
@@ -280,6 +304,23 @@ def _proc_start(pid: int) -> str:
         return stat.rsplit(")", 1)[1].split()[19]
     except (OSError, IndexError, ValueError):
         return ""
+
+
+def _break_lock(lock_path: Path) -> bool:
+    """Remove a lock judged dead by claiming it first: the file is renamed to a unique name and
+    the renamed file deleted, so a second waiter that judged the same lock dead finds nothing to
+    rename and cannot delete the fresh lock a first waiter has since taken (AG22, sweep 12)."""
+    import uuid as _uuid
+    claimed = lock_path.with_name(lock_path.name + f".dead-{_uuid.uuid4().hex[:8]}")
+    try:
+        os.replace(lock_path, claimed)
+    except OSError:
+        return False
+    try:
+        claimed.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return True
 
 
 def _lock_holder_dead(lock_path: Path) -> bool:
@@ -415,6 +456,9 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                          "plain directory tree (nothing was written)")
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / (_hashlib.sha256(_lock_key(target).encode("utf-8")).hexdigest()[:16] + ".lock")
+    if lock_path.is_dir():
+        # A planted directory stalled every write to the note for 40 s and then failed (AG22).
+        raise ValueError(f"{lock_path} is a directory where the write lock file goes; remove it")
     # The deadline must be able to OUTLAST one full stale-observation window,
     # or an orphaned lock (crashed writer) could never be recovered from.
     deadline = _time.monotonic() + timeout + stale
@@ -478,10 +522,7 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                 if _lock_holder_dead(lock_path):
                     log.info("write lock on %s was left by a process that no longer runs; clearing it",
                              target.name)
-                    try:
-                        lock_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    _break_lock(lock_path)
                     first_seen = None
                     continue
             if first_seen is not None and now - first_seen[0] > 5 and now - waited_notice > 5:
@@ -489,16 +530,21 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
                 log.warning("still waiting for the write lock on %s (held for %.0f s by another writer; "
                             "a lock a crashed writer left is broken after %.0f s)",
                             target.name, now - first_seen[0], stale)
+            if _time.time() - mtime > _LOCK_ANCIENT:
+                # A committed or copied lock from another machine (a corpus shared through git)
+                # cost every write 30 s; no writer holds a lock for half an hour, so a lock that
+                # old is broken at once even across a clock skew of minutes (AG19, sweep 12).
+                log.info("write lock on %s is %.0f min old; breaking it", target.name, (_time.time() - mtime) / 60)
+                _break_lock(lock_path)
+                first_seen = None
+                continue
             if first_seen is None or first_seen[1] != mtime:
                 first_seen = (now, mtime)  # new holder (or first sighting)
             elif now - first_seen[0] > stale:
                 # Held unchanged for `stale`s: crashed writer. Windows may
                 # refuse the unlink while the (dead-but-open) handle lingers;
                 # treat that as "observe again", never a crash.
-                try:
-                    lock_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                _break_lock(lock_path)
                 first_seen = None
                 continue
             if now > deadline:
@@ -690,6 +736,10 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
             segments = param.split("/")
             if any(seg in ("", ".", "..") or seg.startswith(".") for seg in segments):
                 raise ValueError(f"Invalid scope parameter {param!r}: an empty, '.', '..' or hidden segment.")
+            if any(seg.lower() in _CORPUS_INTERNAL_DIRS for seg in segments):
+                # `reference:_atlas/x` was written and searchable but could never be read (AG22).
+                raise ValueError(f"Invalid scope parameter {param!r}: a segment names one of Sextant's own "
+                                 "directories (_atlas, versions, archive, _sync).")
         # Windows reserved device names: opening e.g. CON.md addresses the
         # CONSOLE DEVICE and blocks forever (empirically hung the MCP server
         # thread, expert-pass 2026-08-26). Rejected on every OS for corpus
@@ -939,6 +989,9 @@ def confirm_fact(target: Path, source: str = "agent") -> bool:
         raw = target.read_text(encoding="utf-8", errors="replace")
         raw = _update_frontmatter_field(raw, "updated", date_str)
         raw = _update_frontmatter_field(raw, "last_confirmed", date_str)
+        if "decisions" in target.parts:
+            # Confirming a decision is reviewing it (the decisions command keyed on last_reviewed, AG20).
+            raw = _update_frontmatter_field(raw, "last_reviewed", date_str)
         _atomic_write_text(target, raw)
     return True
 
@@ -947,6 +1000,7 @@ def downgrade_stale_confirmations(
     threshold_days: int = 90,
     memory_root: Optional[Path] = None,
     dry_run: bool = False,
+    interactive: bool = False,
 ) -> list[dict]:
     """Lower confidence to 'low' for files whose last_confirmed is older than threshold_days.
 
@@ -999,14 +1053,15 @@ def downgrade_stale_confirmations(
         except Exception:
             continue
 
-        # Only act on files that have been explicitly confirmed at some point
+        # A note never confirmed counts from its last edit (or first observation): skipping it
+        # hid every planted never-confirmed fact from the curator (AG20, sweep 12).
         last_confirmed_raw = fm.get("last_confirmed")
-        if not last_confirmed_raw:
+        never = not last_confirmed_raw
+        ref_raw = last_confirmed_raw or fm.get("updated") or fm.get("first_observed")
+        if not ref_raw:
             continue
-
-        # Parse last_confirmed date
         try:
-            lc_str = str(last_confirmed_raw)[:10]
+            lc_str = str(ref_raw)[:10]
             lc_date = date.fromisoformat(lc_str)
         except (ValueError, AttributeError):
             continue
@@ -1023,13 +1078,20 @@ def downgrade_stale_confirmations(
         downgraded.append({
             "path": rel_path,
             "old_confidence": current_conf,
-            "last_confirmed": lc_str,
+            "last_confirmed": "never" if never else lc_str,
             "age_days": age_days,
         })
 
         if not dry_run:
-            # ATL-018 / audit HIGH-3 completion: gate the .memory/ frontmatter downgrade write.
-            require_autonomous_writes("memory_confidence_downgrade")
+            # A human at the terminal passes interactive=True; the nightly job is gated by
+            # ATLAS_AUTONOMOUS (the recommended fix used to raise under the default config, AG20).
+            from atlas_plus.autonomous import require_write
+            require_write("memory_confidence_downgrade", interactive=interactive)
+            try:
+                from .versioning import version_before_write as _vbw
+                _vbw(md_file, root=root)
+            except Exception:  # noqa: BLE001
+                pass
             # Re-read under the cross-process lock: the scan-time `raw` may be
             # stale by the time we mutate, and the write must be atomic
             # (Codex audit item 9: this was an unlocked plain write_text).

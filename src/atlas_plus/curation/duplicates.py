@@ -84,6 +84,99 @@ class DuplicatePair:
         }
 
 
+_FACT_SKIP_PREFIXES = ("#", "---", "<!--", "```", "|", ">")
+_PROVENANCE_RE = re.compile(r"\s*<!--[^>]*-->")
+_NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
+
+
+def _note_facts(text: str) -> list[str]:
+    """The fact lines of a note: body lines that are not headings, rules, comments or tables."""
+    body = text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            body = text[end + 4:]
+    out = []
+    for line in body.splitlines():
+        s = _PROVENANCE_RE.sub("", line).strip()
+        if len(s) < 25 or s.startswith(_FACT_SKIP_PREFIXES):
+            continue
+        out.append(s)
+    return out
+
+
+def _norm_fact(s: str) -> str:
+    return " ".join(_NON_WORD_RE.sub(" ", s.lower()).split())
+
+
+def find_fact_duplicates(
+    memory_root: Optional[Path] = None,
+    scope: str = "",
+    near_threshold: float = 0.7,
+    limit: int = 500,
+) -> list[dict]:
+    """Repeated FACTS across (and inside) notes: exact repeats after normalisation, and near
+    repeats by token-set Jaccard. The file-level scan above dilutes a repeated fact inside a
+    seven-fact note; a curator had no command that listed duplicate facts (AG20, sweep 12)."""
+    root = memory_root or MEMORY_ROOT
+    search_root = root / scope if scope else root
+    files = [
+        p for p in search_root.rglob("*.md")
+        if not any(part in _NON_CURATABLE_DIRS for part in p.relative_to(root).parts)
+        and not is_excluded_mirror(p.relative_to(root).parts)
+        and not p.name.startswith("_")
+    ]
+    exact: dict[str, list[tuple[str, str]]] = {}
+    entries: list[tuple[str, str, frozenset]] = []
+    index: dict[str, list[int]] = {}
+    for f in sorted(files):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(f.relative_to(root)).replace("\\", "/")
+        for fact in _note_facts(text):
+            norm = _norm_fact(fact)
+            if len(norm) < 20:
+                continue
+            exact.setdefault(norm, []).append((rel, fact))
+            toks = frozenset(t for t in norm.split() if len(t) >= 4)
+            if len(toks) >= 4:
+                idx = len(entries)
+                entries.append((rel, fact, toks))
+                for t in toks:
+                    index.setdefault(t, []).append(idx)
+    out: list[dict] = []
+    seen_pairs: set[tuple[int, int]] = set()
+    for norm, hits in exact.items():
+        if len(hits) > 1:
+            for (r1, f1), (r2, _f2) in zip(hits, hits[1:]):
+                out.append({"kind": "exact", "file1": r1, "file2": r2, "similarity": 1.0, "fact": f1[:160]})
+    # Near repeats: candidates share at least 3 index tokens; exact pairs are already reported.
+    counts: dict[int, int]
+    for i, (rel, fact, toks) in enumerate(entries):
+        counts = {}
+        for t in toks:
+            for j in index.get(t, ()):
+                if j > i:
+                    counts[j] = counts.get(j, 0) + 1
+        for j, shared in counts.items():
+            if shared < 3 or (i, j) in seen_pairs:
+                continue
+            other = entries[j]
+            if _norm_fact(fact) == _norm_fact(other[1]):
+                continue
+            sim = shared / len(toks | other[2])
+            if sim >= near_threshold:
+                seen_pairs.add((i, j))
+                out.append({"kind": "near", "file1": rel, "file2": other[0], "similarity": round(sim, 2),
+                            "fact": fact[:160], "other": other[1][:160]})
+        if len(out) >= limit:
+            break
+    out.sort(key=lambda d: (d["kind"] != "exact", -d["similarity"]))
+    return out[:limit]
+
+
 def find_duplicates(
     memory_root: Optional[Path] = None,
     threshold: float = DEFAULT_THRESHOLD,

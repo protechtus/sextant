@@ -95,6 +95,13 @@ def find_stale(
         updated = _parse_updated(fm)
         if updated is None:
             continue
+        # A note confirmed recently is not stale however old its last edit (AG20, sweep 12).
+        lc = str(fm.get("last_confirmed") or "")[:10]
+        try:
+            if lc and (today - date.fromisoformat(lc)).days <= cutoff_days:
+                continue
+        except ValueError:
+            pass
 
         age_days = (today - updated).days
         if age_days > cutoff_days:

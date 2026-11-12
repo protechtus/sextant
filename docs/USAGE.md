@@ -42,8 +42,10 @@ Three specialized flavors matter more than they look:
 - **Anti-memory**: "we tried that and rejected it -- don't suggest it
   again" (`memory_anti_remember_tool` with a category `scope` such as
   `libraries` or `project:<name>`, a `reject_pattern`, and `applies_to`
-  `workspace` or `project`; listed via `memory_anti_list_tool`). Stops the groundhog-day loop where every
-  fresh session re-proposes the same dead end.
+  `workspace` or `project`; listed via `memory_anti_list_tool`). A later
+  `memory_remember` that repeats a rejected idea is stored with an
+  `anti_warning` naming the rejection, and `atlas-prime` lists the rejected
+  ideas that match the task words under "Do NOT suggest".
 - **Autocommit**: set `ATLAS_MEMORY_AUTOCOMMIT=on` with a git-repo
   corpus and every interactive write becomes a commit.
 
@@ -61,11 +63,14 @@ library, `research_search_tool` searches it with citations.
 Facts go stale; a memory system that cannot say "this might be outdated"
 becomes confidently wrong. When your assistant re-verifies something,
 have it "confirm that fact" (`memory_confirm_tool`) -- that refreshes
-`last_confirmed`. Files unconfirmed past the decay threshold get their
-confidence downgraded by the (opt-in) nightly curation, and
+`last_confirmed`. `atlas-review-memory unconfirmed-decay` lists notes not
+confirmed within the threshold (a note never confirmed counts from its last
+edit and shows `never`); `--write` downgrades their confidence, by you at
+the terminal or by the nightly job when `ATLAS_AUTONOMOUS=on`.
 `memory_list_confirmed_tool` shows what has been checked recently.
-Detected contradictions are cross-linked in both files' frontmatter
-rather than silently overwritten.
+`atlas-review-memory contradictions` needs a model (Ollama, or a provider
+key with `ATLAS_LOCAL_ONLY=off`); without one it says so and exits 2 rather
+than reporting "none". It reports pairs; it does not edit the files.
 
 ## Time as a first-class fact
 

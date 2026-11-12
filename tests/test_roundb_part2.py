@@ -216,7 +216,7 @@ def test_decision_frontmatter_survives_colons_and_newlines(tmp_path, monkeypatch
     assert fm["title"] == "Use a: b"
     assert fm["status"] == "active"
     assert "\n" not in fm["project"]
-    assert fm["conditions"] == ["(none recorded)"]
+    assert fm["conditions"] == []   # empty conditions are an empty list, not the words "(none recorded)" (AG20, sweep 12)
 
 
 # ---------------- import scope ----------------

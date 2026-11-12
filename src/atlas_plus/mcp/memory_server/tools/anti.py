@@ -162,6 +162,9 @@ def propagate_anti_rejection(
     if len(keywords) < 2:
         # Pattern too short/generic to propagate meaningfully
         return {"flagged": 0, "skipped": 0, "paths": []}
+    # Two shared words flagged a note saying the OPPOSITE (AG20, sweep 12): most of the
+    # pattern's words must appear.
+    min_matches = max(_PROPAGATION_MIN_MATCHES, min(3, -(-len(keywords) * 3 // 5)))
 
     flagged_paths: list[str] = []
     skipped = 0
@@ -194,7 +197,7 @@ def propagate_anti_rejection(
         body = raw[body_start:].lower()
 
         matches = sum(1 for kw in keywords if kw in body)
-        if matches < _PROPAGATION_MIN_MATCHES:
+        if matches < min_matches:
             continue
 
         if _flag_frontmatter(raw, anti_scope, reject_pattern) is None:
@@ -328,6 +331,27 @@ def anti_remember(
         "error": None,
         "propagated": prop["flagged"],
     }
+
+
+def anti_matches(text: str, project: str = "") -> list[dict]:
+    """Anti-memory entries whose words the text repeats (most of the pattern's words). Used to
+    warn a writer and to prime a session: an anti-memory stopped nothing before (AG20)."""
+    low = text.lower()
+    out = []
+    try:
+        entries = list_anti()
+    except Exception:  # noqa: BLE001
+        return out
+    for e in entries:
+        if e.get("applies_to") == "project" and e.get("project") and project and e.get("project") != project:
+            continue
+        kws = _extract_keywords(str(e.get("reject_pattern", "")))
+        if len(kws) < 2:
+            continue
+        hits = sum(1 for k in kws if k in low)
+        if hits >= max(2, min(3, -(-len(kws) * 3 // 5))):
+            out.append(e)
+    return out
 
 
 def list_anti(applies_to: str = "", project: str = "") -> list[dict]:

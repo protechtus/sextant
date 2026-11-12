@@ -47,7 +47,15 @@ class AnthropicProvider(ModelProvider):
                  "input_schema": t.get("parameters") or {"type": "object", "properties": {}}}
                 for t in tools
             ]
-        resp = client.messages.create(**kwargs)
+        try:
+            resp = client.messages.create(**kwargs)
+        except TypeError as exc:
+            # Newer anthropic SDKs dropped `temperature` from Messages.create; every call
+            # through this provider failed with the TypeError buried (AG21, sweep 12).
+            if "temperature" not in str(exc) or "temperature" not in kwargs:
+                raise
+            kwargs.pop("temperature", None)
+            resp = client.messages.create(**kwargs)
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         try:

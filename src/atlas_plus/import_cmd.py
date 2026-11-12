@@ -115,11 +115,14 @@ def _chat_fingerprints(dest_root: Path) -> dict[tuple[str, str], str]:
     if not dest_root.is_dir():
         return out
     root = atlas_paths.memory_root()
-    for dirpath, _dirs, files in os.walk(dest_root):
+    for dirpath, dirnames, files in os.walk(dest_root, followlinks=False):
+        dirnames[:] = [n for n in dirnames if not _is_link(Path(dirpath) / n)]
         for name in files:
             if not name.lower().endswith(".md"):
                 continue
             p = Path(dirpath) / name
+            if _is_link(p):
+                continue
             try:
                 text = p.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
@@ -271,15 +274,23 @@ def _safe_scope(scope: str) -> str:
     return cleaned
 
 
-def _frontmatter_for(title: str, source: str, original: str) -> str:
-    return _fm_block({
+def _body_hash(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(_fm_body(text).replace("\r\n", "\n").strip().encode("utf-8", errors="replace")).hexdigest()
+
+
+def _frontmatter_for(title: str, source: str, original: str, imported_hash: str = "") -> str:
+    fields = {
         "id": _slug(title),
         "title": title,
         "type": "imported",
         "imported_from": source,
         "imported_at": _now_iso(),
         "original_path": original,
-    })
+    }
+    if imported_hash:
+        fields["imported_hash"] = imported_hash
+    return _fm_block(fields)
 
 
 def _fm_body(text: str) -> str:
@@ -294,7 +305,7 @@ def _already_imported(dest_text: str, raw: str) -> bool:
     return _fm_body(dest_text).strip() == _fm_body(raw).strip()
 
 
-def _stamp_existing_frontmatter(text: str, source: str, original: str) -> str:
+def _stamp_existing_frontmatter(text: str, source: str, original: str, imported_hash: str = "") -> str:
     """Merge provenance keys into a note that already has frontmatter.
 
     The user's own keys are kept (and win for `source`); the provenance keys
@@ -321,6 +332,8 @@ def _stamp_existing_frontmatter(text: str, source: str, original: str) -> str:
     data["imported_from"] = source
     data["imported_at"] = _now_iso()
     data["original_path"] = original
+    if imported_hash:
+        data["imported_hash"] = imported_hash
     body = text[m.end():]
     return _fm_block(data).rstrip("\n") + "\n\n" + body.lstrip("\r\n")
 
@@ -429,24 +442,38 @@ def _vault_still_has(vault: Path, origin: str) -> bool:
         return False
 
 
+def _fm_text(text: str) -> str:
+    """The frontmatter block only (between the opening and closing `---` lines), however long.
+    The origin used to be searched in the first 4 KB of the WHOLE file: a note with 4 KB of
+    frontmatter was imported again every run, and a fact mentioning `original_path:` in its body
+    made the note look imported (AG22, sweep 12)."""
+    m = re.match(r"---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
+    return m.group(1) if m else ""
+
+
 def _corpus_index(dest_root: Path, root: Path) -> list[dict]:
-    """Every note already under dest_root: corpus path, stamped original_path, body hash, and its
-    `_N` family (base stem and copy number). One walk per run."""
+    """Every note already under dest_root: corpus path, stamped original_path, body hash, import
+    stamps and its `_N` family. One walk per run; links are never followed."""
     import hashlib
     out: list[dict] = []
     if not dest_root.is_dir():
         return out
-    for dirpath, _dirs, files in os.walk(dest_root):
+    for dirpath, dirnames, files in os.walk(dest_root, followlinks=False):
+        d = Path(dirpath)
+        dirnames[:] = [n for n in dirnames if not _is_link(d / n)]
         for name in files:
             if not name.lower().endswith(".md"):
                 continue
-            p = Path(dirpath) / name
+            p = d / name
+            if _is_link(p):
+                continue
             try:
                 text = p.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
             body = _fm_body(text).replace("\r\n", "\n").strip()
-            m = _ORIGINAL_PATH_RE.search(text[:4096])
+            fm = _fm_text(text)
+            m = _ORIGINAL_PATH_RE.search(fm)
             origin = None
             if m:
                 try:
@@ -455,22 +482,35 @@ def _corpus_index(dest_root: Path, root: Path) -> list[dict]:
                 except yaml.YAMLError:
                     origin = None
             mm = re.match(r"^(.*)_(\d+)$", p.stem)
-            base = (mm.group(1) if mm else p.stem) + p.suffix
             try:
                 rel = p.relative_to(root).as_posix()
             except ValueError:
                 rel = str(p)
+            ih = re.search(r"^imported_hash:\s*'?([0-9a-f]{64})'?\s*$", fm, re.M)
+            ia = re.search(r"^imported_at:\s*'?([0-9T:+.-]+)'?\s*$", fm, re.M)
             out.append({"path": p, "rel": rel, "origin": origin,
                         "hash": hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest(),
-                        "base": (Path(dirpath) / base), "n": int(mm.group(2)) if mm else 1})
+                        "imported_hash": ih.group(1) if ih else None,
+                        "imported_at": ia.group(1) if ia else "",
+                        "n": int(mm.group(2)) if mm else 1})
     return out
 
 
 def _archive_note(root: Path, rel: str) -> str:
-    """Move a corpus note into archive/<same path> (never deleted); returns the archive path."""
+    """Move a corpus note into archive/<same path> (never deleted); returns the archive path. Both
+    ends must be plain paths inside the corpus: a junctioned archive/ pushed notes out of the
+    corpus and a junction under the import folder pulled an outside file in (AG22, sweep 12)."""
+    from atlas_plus._fsutil import inside, is_link
     src = root / rel
+    archive_root = root / "archive"
+    if archive_root.exists() and (is_link(archive_root) or not inside(archive_root, root)):
+        raise OSError(f"{archive_root} is a link that leaves the corpus; fix it before archiving")
+    if is_link(src) or not inside(src, root) or not src.is_file():
+        raise OSError(f"{rel} is a link, or resolves outside the corpus; not moved")
     dest = root / "archive" / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if not inside(dest.parent, root) or is_link(dest.parent):
+        raise OSError(f"{dest.parent} is a link that leaves the corpus; not moved")
     dest = _collision_free(dest)
     os.replace(src, dest)
     return dest.relative_to(root).as_posix()
@@ -526,14 +566,19 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
                                    .encode("utf-8", errors="replace")).hexdigest()
         entries = by_origin.get(rel_src) or by_origin.get(str(src)) or []
         if entries:
-            latest = max(entries, key=lambda e: e["n"])
-            if any(e["hash"] == body_hash for e in entries):
+            latest = max(entries, key=lambda e: (e.get("imported_at") or "", e["n"] if e["n"] < 1000 else 0))
+            # Unchanged when the corpus copy still holds this body, OR when the stamp says this
+            # exact vault body was what we imported: a fact appended to the corpus copy made the
+            # vault note look "edited" and --archive-stale archived the note with the new fact
+            # (AG19, sweep 12).
+            if any(e["hash"] == body_hash or e.get("imported_hash") == body_hash for e in entries):
                 unchanged += 1
                 continue
             edited += 1
             target = _collision_free(dest)
-            mark_stale(latest["rel"], f"edited in the vault; the current copy is "
-                                      f"{target.relative_to(root).as_posix()}")
+            why = ("edited in the vault" if latest.get("imported_hash") else
+                   "differs from the corpus copy (edited in the vault, or facts were added to the corpus copy)")
+            mark_stale(latest["rel"], f"{why}; the current copy is {target.relative_to(root).as_posix()}")
         else:
             prior = by_hash.get(body_hash)
             target = _collision_free(dest)
@@ -550,8 +595,8 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
         if not execute:
             would += 1
             continue
-        stamped = _stamp_existing_frontmatter(raw, "obsidian", rel_src) if _has_frontmatter(raw) else None
-        out_text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src) + raw
+        stamped = _stamp_existing_frontmatter(raw, "obsidian", rel_src, body_hash) if _has_frontmatter(raw) else None
+        out_text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src, body_hash) + raw
         target.parent.mkdir(parents=True, exist_ok=True)
         _write_lf(target, out_text)
         imported += 1
@@ -560,7 +605,7 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
     for origin, entries in by_origin.items():
         if origin in vault_rels:
             if len(entries) > 1:
-                latest = max(entries, key=lambda e: e["n"])
+                latest = max(entries, key=lambda e: (e.get("imported_at") or "", e["n"] if e["n"] < 1000 else 0))
                 for e in entries:
                     if e is not latest:
                         mark_stale(e["rel"], f"older copy; the current copy is {latest['rel']}")
@@ -949,7 +994,10 @@ def main() -> None:
         print(f"import failed: {src} is not valid JSON -- check it's the right "
               f"export file ({e})", file=sys.stderr)
         raise SystemExit(1)
-    except (ValueError, OSError) as e:
+    except OSError as e:
+        print(f"import failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    except ValueError as e:
         print(f"import failed: {e} -- did you pass the wrong --source for this "
               f"file?", file=sys.stderr)
         raise SystemExit(1)

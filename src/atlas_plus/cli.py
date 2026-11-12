@@ -229,6 +229,14 @@ def cmd_ingest(ctx: typer.Context) -> None:
     _tapp()
 
 
+@app.command("review", **_PASSTHROUGH)
+def cmd_review(ctx: typer.Context) -> None:
+    """Curate the corpus (same as atlas-review-memory): `sextant review report` is the weekly check."""
+    from atlas_plus.curation.cli import main as review_main
+
+    _delegate(review_main, "sextant review", ctx.args)
+
+
 @app.command("versions", **_PASSTHROUGH)
 def cmd_versions(ctx: typer.Context) -> None:
     """Report the corpus history (versions/) and prune old copies (same as sextant-versions)."""
@@ -369,7 +377,8 @@ def cmd_remember(
 
     if fact == "-":
         import sys as _sys
-        fact = _sys.stdin.read().strip()
+        raw_in = _sys.stdin.buffer.read() if hasattr(_sys.stdin, "buffer") else _sys.stdin.read().encode("utf-8", "replace")
+        fact = raw_in.decode("utf-8", errors="replace").lstrip("\ufeff").strip()
         if not fact:
             console.print("[red]Not stored:[/red] nothing on standard input")
             raise typer.Exit(2)
@@ -384,6 +393,8 @@ def cmd_remember(
     console.print(f"Remembered in {result['file']}")
     if result.get("possible_duplicate"):
         console.print(f"[yellow]{result.get('duplicate_hint')}[/yellow]")
+    if result.get("anti_warning"):
+        console.print(f"[yellow]{result.get('anti_warning')}[/yellow]")
 
 
 @app.command("search")
@@ -409,7 +420,9 @@ def cmd_search(
     results, mode = memory_search_hybrid(query=query, scope=effective, limit=limit)
     if not results:
         try:
-            corpus_files = sum(1 for _ in atlas_paths.memory_root().rglob("*.md"))
+            _root = atlas_paths.memory_root()
+            corpus_files = sum(1 for p in _root.rglob("*.md")
+                               if not {"versions", "_atlas", "archive", "_sync"} & set(p.relative_to(_root).parts))
         except OSError:
             corpus_files = 0
         if corpus_files == 0:
@@ -549,8 +562,9 @@ def gather_components(probe_ports: bool = True) -> list[dict]:
     out.append({
         "name": "Telegram bot",
         "what": "mobile control surface",
-        "status": ("ready" if os.environ.get("TELEGRAM_BOT_TOKEN") else "not configured"),
-        "disable": "optional -- unset TELEGRAM_BOT_TOKEN / don't run the bot",
+        "status": ("ready" if (os.environ.get("ATLAS_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN"))
+                   else "not configured"),
+        "disable": "optional -- unset ATLAS_TELEGRAM_BOT_TOKEN / don't run the bot",
     })
     from atlas_plus.autonomous import autonomous_enabled
     auto = autonomous_enabled()
@@ -610,7 +624,9 @@ def main() -> None:
     try:
         app()
     except OSError as exc:
-        if exc.errno in (22, 32) or exc.__class__.__name__ == "BrokenPipeError":
+        # Only a stream error with no path behind it is a closed pipe; a failed init on a bad
+        # path raised EINVAL too and exited 0 in silence (AG22, sweep 12).
+        if exc.filename is None and (exc.errno in (22, 32) or exc.__class__.__name__ == "BrokenPipeError"):
             try:
                 _sys.stdout.close()
             except Exception:  # noqa: BLE001

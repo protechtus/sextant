@@ -159,7 +159,8 @@ def memory_remember(
     # creating a stray `.memory` under the home default whenever the client's env never
     # reached the server (registration without -e, GUI-launched client), so the user's facts
     # landed in a corpus nobody looks at while memory_health said degraded (sweep 2026-11-11).
-    root = target.parents[1]
+    from .. import routing as _routing
+    root = Path(_routing.MEMORY_ROOT)   # not target.parents[1]: a slash topic is deeper (AG22)
     if not root.exists():
         return {"ok": False, "file": None, "version_copy": None,
                 "error": (f"memory root does not exist: {root} -- run sextant-init there, or pass "
@@ -189,6 +190,20 @@ def memory_remember(
 
     # Post-write duplicate check (non-blocking -- failure returns ok=True anyway)
     dup = _find_duplicate(fact, target)
+    # A rejected idea stored again gets a warning naming the rejection (AG20, sweep 12): the
+    # write stands (a note restating WHY something was rejected is a valid fact), the caller
+    # decides.
+    anti_hit = None
+    try:
+        from .anti import anti_matches
+        hits = anti_matches(fact)
+        if hits:
+            h = hits[0]
+            anti_hit = (f"this repeats a rejected idea: '{h.get('reject_pattern')}' "
+                        f"(anti-memory {h.get('scope')}; reason: {h.get('reason') or 'none given'}); "
+                        "review it with memory_anti_list_tool before acting on this fact")
+    except Exception:  # noqa: BLE001
+        anti_hit = None
 
     return {
         "ok": True,
@@ -197,6 +212,7 @@ def memory_remember(
         "error": None,
         "possible_duplicate": dup is not None,
         "duplicate_hint": f"Similar content at {dup['path']} (sim={dup['score']})" if dup else None,
+        "anti_warning": anti_hit,
     }
 
 

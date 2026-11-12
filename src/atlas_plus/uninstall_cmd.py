@@ -28,6 +28,7 @@ The corpus is plain markdown -- the report reminds you to archive it first.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -680,7 +681,8 @@ def main() -> None:
     parser.add_argument("--corpus", action="store_true", help="remove the memory corpus (YOUR DATA)")
     parser.add_argument("--all", action="store_true", help="remove both")
     parser.add_argument("--dry-run", action="store_true",
-                        help="report only (already the default; accepted for habit)")
+                        help="report only, even with --state/--corpus/--all (a safe preview)")
+    parser.add_argument("--json", action="store_true", help="print the report as one JSON object")
     parser.add_argument("--yes", "-y", action="store_true", help="required for any deletion")
     parser.add_argument(
         "--confirm-path",
@@ -695,6 +697,12 @@ def main() -> None:
     args = parser.parse_args()
 
     info = report()
+    if args.json:
+        print(json.dumps(info, indent=2, default=str))
+        if not args.dry_run and (args.state or args.corpus or args.all):
+            print("refused: --json is a report; run the removal without it", file=sys.stderr)
+            raise SystemExit(1)
+        return
     c, s = info["corpus"], info["state"]
     print("Sextant on this machine:")
     print(f"  corpus: {c['path']}")
@@ -739,8 +747,11 @@ def main() -> None:
     print("           run `pip uninstall sextant-ai` (or `uv tool uninstall sextant-ai` / `pipx uninstall sextant-ai`)")
     print("           and delete the clone or venv yourself (a uv tool or pipx install has neither).")
 
-    do_state = args.state or args.all
-    do_corpus = args.corpus or args.all
+    do_state = (args.state or args.all) and not args.dry_run
+    do_corpus = (args.corpus or args.all) and not args.dry_run
+    if args.dry_run and (args.state or args.corpus or args.all):
+        print("\n--dry-run: nothing was changed (drop --dry-run to remove).")
+        return
     if not do_state and not do_corpus:
         print("\nReport only. Nothing was changed. To remove: --state, --corpus or --all, each with --yes;\n"
               "the corpus also needs --confirm-path <corpus path> and the state dir --confirm-state-path\n"

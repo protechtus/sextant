@@ -444,6 +444,46 @@ def render(info: dict, client: str = "all") -> str:
     return "\n".join(lines)
 
 
+def _merge(existing, piece):
+    """Deep-merge a JSON piece into an existing object: mappings merge key by key, hook arrays
+    gain entries that are not already there, scalars from the piece win."""
+    if isinstance(existing, dict) and isinstance(piece, dict):
+        out = dict(existing)
+        for k, v in piece.items():
+            out[k] = _merge(existing.get(k), v) if k in existing else v
+        return out
+    if isinstance(existing, list) and isinstance(piece, list):
+        out = list(existing)
+        for item in piece:
+            if item not in out:
+                out.append(item)
+        return out
+    return piece
+
+
+def _write_out(path: Path, file_text: str, piece) -> None:
+    """Write a JSON piece to --out. An existing JSON file is MERGED into, not replaced, and
+    backed up first: `--out opencode.json` dropped the user's other servers and `--out
+    settings.json` wiped their permissions (AG24, sweep 12)."""
+    if path.exists() and piece is not None:
+        raw = path.read_text(encoding="utf-8-sig")
+        if raw.strip():
+            try:
+                existing = json.loads(raw)
+            except ValueError as exc:
+                raise ValueError(f"{path} exists and is not valid JSON ({exc}); merge the block by hand or "
+                                 "move the file aside") from None
+            if not isinstance(existing, dict):
+                raise ValueError(f"{path} exists and is not a JSON object; merge the block by hand")
+            merged = _merge(existing, piece)
+            from datetime import datetime as _dt
+            backup = path.with_name(path.name + ".bak-" + _dt.now().strftime("%Y%m%d%H%M%S"))
+            backup.write_text(raw, encoding="utf-8", newline="\n")
+            print(f"sextant setup: merged into {path} (backup: {backup.name})", file=sys.stderr)
+            file_text = json.dumps(merged, indent=2)
+    path.write_text(file_text + "\n", encoding="utf-8", newline="\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
@@ -490,20 +530,38 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
     info = describe(name=args.name)
-    output = json.dumps(info, indent=2) if args.json else render(info, args.client)
+    if args.json and args.client not in ("all",):
+        # `--client X --json` used to ignore --client and print everything (AG24, sweep 12).
+        pieces = {"json": info.get("client_config_json"), "opencode": info.get("opencode_json"),
+                  "hooks": info.get("settings_json"),
+                  "codex": {"command": info.get("codex"), "toml": info.get("codex_toml")},
+                  "claude-code": {"command": info.get("claude_code")}}
+        output = json.dumps(pieces.get(args.client, info), indent=2)
+    else:
+        output = json.dumps(info, indent=2) if args.json else render(info, args.client)
     print(output)
     if args.out:
         # The file form of a JSON piece is the JSON alone: on WSL the hooks output carries a
         # prose line and a second object for the Windows side, which made the file unparseable
         # (AG9, sweep 10).
         file_text = output
+        piece = None
         if not args.json and args.client == "hooks" and info.get("settings_json"):
-            file_text = json.dumps(info["settings_json"], indent=2)
+            piece = info["settings_json"]
         elif not args.json and args.client == "json":
-            file_text = json.dumps(info["client_config_json"], indent=2)
+            piece = info["client_config_json"]
         elif not args.json and args.client == "opencode":
-            file_text = json.dumps(info["opencode_json"], indent=2)
-        Path(args.out).write_text(file_text + "\n", encoding="utf-8", newline="\n")
+            piece = info["opencode_json"]
+        if piece is not None:
+            file_text = json.dumps(piece, indent=2)
+        try:
+            _write_out(Path(args.out), file_text, piece)
+        except OSError as exc:
+            print(f"sextant setup: cannot write {args.out}: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"sextant setup: {exc}", file=sys.stderr)
+            return 1
     # Only a requested SHELL line that could not be printed is a failure: the JSON blocks need
     # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11).
     shell_forms = args.client in ("all", "claude-code", "hooks", "codex") and not args.json

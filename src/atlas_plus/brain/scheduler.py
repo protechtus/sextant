@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
@@ -273,6 +274,13 @@ async def _sla_check() -> None:
 
 
 async def _research_batch() -> None:
+    # The research runner is a separate pipeline; without it the nightly task blocked and
+    # retried every night for a stranger (AG21, sweep 12).
+    from atlas_plus import paths as _paths
+    root = Path(os.environ.get("ATLAS_WORKSPACE_ROOT") or getattr(_paths, "workspace_root", lambda: Path.cwd())())
+    if not (Path(root) / "research" / "research_runner.py").exists():
+        log.info("research_runner.py not present under %s; skipping the research batch", root)
+        return
     await _queue_worker_task(
         instruction="run --batch 3 --priority P3",
         session_id="scheduler-research-batch",

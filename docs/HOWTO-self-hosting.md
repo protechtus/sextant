@@ -54,7 +54,7 @@ ATLAS_MCP_TOKEN=<long random>
 ATLAS_WEB_API_KEY=<long random>
 # Brain API (if running Brain)
 ATLAS_BRAIN_API_KEY=<long random>
-# Optional: OLLAMA_BASE_URL, TELEGRAM_BOT_TOKEN, ATLAS_NTFY_URL
+# Optional: OLLAMA_BASE_URL, ATLAS_TELEGRAM_BOT_TOKEN (+ ATLAS_TELEGRAM_ALLOWED_USERS), ATLAS_NTFY_URL
 ```
 
 Generate tokens with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.

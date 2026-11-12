@@ -43,6 +43,8 @@ _TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1"   # SQLite before 3
 # Index text format tag, stored with the tokenizer name in atlas_meta: a change here rebuilds
 # every existing index once (the format is baked into the stored text, like the tokenizer).
 _INDEX_TAG = " +cjk2"
+_MAX_FM_CHARS = 262_144         # frontmatter larger than this is not parsed (AG22, sweep 12)
+_MAX_FM_INDEX_CHARS = 65_536    # at most this much frontmatter text is indexed per note
 
 # unicode61 has no notion of CJK word boundaries: a run of ideographs between spaces was ONE
 # token, so `東京都` never matched `東京` and `人口` found nothing inside a sentence (AG17,
@@ -66,7 +68,7 @@ _CJK_ASCII_BOUNDARY_RE = re.compile(
 # unicode61, never typed by a user) that breaks adjacency. Stripped from snippets.
 _SENTINEL = "\ue000"
 _BREAK_RE = re.compile("[\n\u3001\u3002\uff0c\uff0e\uff1b\uff1a\uff01\uff1f\u300c\u300d\u300e\u300f"
-                       "\uff08\uff09\u3010\u3011]+|[.,;:!?]+(?=\s|$)")
+                       "\uff08\uff09\u3010\u3011]+|[.,;:!?]+(?=\\s|$)")   # `\\s`: a SyntaxWarning on first run (AG24)
 
 
 def _cjk_split(text: str) -> str:
@@ -106,7 +108,7 @@ def _index_body(frontmatter_json: str, body: str) -> str:
     except (ValueError, TypeError):
         values = []
     if values:
-        text += "\n" + _norm_index_text("\n".join(values))
+        text += "\n" + _norm_index_text("\n".join(values)[:_MAX_FM_INDEX_CHARS])
     return text
 
 
@@ -385,6 +387,8 @@ def _parse_md(raw: str) -> tuple[str, str, float | None]:
             fm_str = raw[3:end].strip()
             body = raw[end + 4:].strip()
             try:
+                if len(fm_str) > _MAX_FM_CHARS:
+                    raise ValueError("frontmatter too large to parse")   # a 50 MB tag list cost a minute per search (AG22)
                 fm = yaml.safe_load(fm_str) or {}
                 confirmed_ts = _parse_confirmed_ts(fm)
             except Exception:

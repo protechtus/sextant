@@ -25,6 +25,17 @@ from atlas_plus import paths as atlas_paths
 
 _SCOPE_DIRS = ["identity", "feedback", "projects", "reference", "sessions"]
 
+_GITIGNORE = """\
+# Written by sextant-init. Per-machine state that must not travel with a shared corpus:
+# history copies (one per machine, names collide), write locks, the search index.
+versions/
+_atlas/.locks/
+_atlas/*.sqlite
+_atlas/*.sqlite-*
+*.w-tmp
+*.imp-tmp
+"""
+
 _IDENTITY_TEMPLATE = """\
 ---
 id: user
@@ -88,6 +99,9 @@ def run_init(dry_run: bool = False) -> dict:
     _ensure_file(memory_root / "identity" / "user.md", _IDENTITY_TEMPLATE)
     for scope, blurb in _SCOPE_READMES.items():
         _ensure_file(memory_root / scope / "_README.md", blurb)
+    # A corpus pushed to git carried per-machine history copies and lock files; two people then
+    # hit add/add conflicts on `versions/` and a committed lock stalled every write (AG19).
+    _ensure_file(memory_root / ".gitignore", _GITIGNORE)
     # The marker claims the directory for the destructive commands, so it may only go into a
     # directory that is empty, new, or already Sextant's (round-B re-audit 2026-11-09, row 2:
     # ATLAS_STATE_DIR=~/Documents must stop here, not after the first `reset --state`).

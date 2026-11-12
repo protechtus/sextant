@@ -10,8 +10,10 @@ from typing import Optional
 from atlas_plus.curation.duplicates import _snippet, _tokenize, _jaccard
 from atlas_plus.mcp.memory_server.config import EXCLUDED_DIRS, MEMORY_ROOT
 
-RELATED_THRESHOLD = 0.15  # lower than duplicate — we want candidate pairs
+RELATED_THRESHOLD = 0.15  # lower than duplicate -- we want candidate pairs
 MAX_PAIRS_PER_CALL = 5    # batch size to keep prompts manageable
+SNIPPET_CHARS = 1200      # the first 300 characters never reached a contradiction past fact two (AG20)
+LAST_STATS = {"candidates": 0, "checked": 0, "unchecked": 0}   # what the last run could and could not check
 
 
 @dataclass
@@ -101,7 +103,7 @@ def find_contradictions(
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
             tokens[f] = _tokenize(text)
-            snippets[f] = _snippet(f, max_chars=300)
+            snippets[f] = _snippet(f, max_chars=SNIPPET_CHARS)
         except OSError:
             tokens[f] = set()
             snippets[f] = ""
@@ -116,6 +118,7 @@ def find_contradictions(
             if RELATED_THRESHOLD <= sim < 0.85:  # exclude near-duplicates (handled by T1)
                 candidates.append((f1, f2))
 
+    LAST_STATS.update({"candidates": len(candidates), "checked": 0, "unchecked": 0})
     if dry_run or not candidates:
         return [
             ContradictionPair(
@@ -146,7 +149,9 @@ def find_contradictions(
         try:
             text, _ = complete(prompt)
         except ProviderError:
+            LAST_STATS["unchecked"] += len(batch)
             continue
+        LAST_STATS["checked"] += len(batch)
 
         # Parse response
         text = text.strip()

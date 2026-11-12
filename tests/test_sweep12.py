@@ -1,0 +1,436 @@
+"""Pipeline sweep 12, agentic wave (2026-11-12): AG19 corpus in git, AG21 optional layers, AG24
+installer agent (plus AG20, AG22, AG23 as they fold). One test per fixed finding."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def corpus(tmp_path, monkeypatch):
+    monkeypatch.delenv("ATLAS_AUTONOMOUS", raising=False)
+    monkeypatch.delenv("ATLAS_INTERACTIVE_WRITES", raising=False)
+    mem = tmp_path / "mem"
+    (mem / "_atlas").mkdir(parents=True)
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(mem))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus.mcp.memory_server import config, routing, versioning, fts
+    monkeypatch.setattr(config, "MEMORY_ROOT", mem)
+    monkeypatch.setattr(routing, "MEMORY_ROOT", mem, raising=False)
+    monkeypatch.setattr(routing, "ROUTING_CONFIG", mem / "_atlas" / "routing.yaml", raising=False)
+    monkeypatch.setattr(versioning, "MEMORY_ROOT", mem, raising=False)
+    monkeypatch.setattr(fts, "MEMORY_ROOT", mem, raising=False)
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "search.sqlite", raising=False)
+    return mem
+
+
+# ---- AG24: installer agent ------------------------------------------------------------------
+
+def test_setup_out_merges_into_an_existing_config_with_a_backup(tmp_path, capsys):
+    from atlas_plus.setup_cmd import main as setup_main
+    target = tmp_path / "opencode.json"
+    target.write_text(json.dumps({"model": "x/y", "mcp": {"other": {"command": ["o"]}}}), encoding="utf-8")
+    assert setup_main(["--client", "opencode", "--out", str(target)]) == 0
+    merged = json.loads(target.read_text(encoding="utf-8"))
+    assert merged["model"] == "x/y" and "other" in merged["mcp"] and "sextant" in merged["mcp"]
+    assert list(tmp_path.glob("opencode.json.bak-*"))
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"permissions": {"allow": ["Bash"]},
+                                    "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}),
+                        encoding="utf-8")
+    assert setup_main(["--client", "hooks", "--out", str(settings)]) == 0
+    merged = json.loads(settings.read_text(encoding="utf-8"))
+    assert merged["permissions"] == {"allow": ["Bash"]}
+    assert any("echo hi" in json.dumps(e) for e in merged["hooks"]["Stop"])
+    assert any("atlas_plus.hooks.run" in json.dumps(e) for e in merged["hooks"]["SessionStart"])
+    assert setup_main(["--client", "hooks", "--out", str(settings)]) == 0   # idempotent: no duplicates
+    again = json.loads(settings.read_text(encoding="utf-8"))
+    assert again["hooks"]["Stop"] == merged["hooks"]["Stop"]
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert setup_main(["--client", "json", "--out", str(bad)]) == 1
+    assert "not valid JSON" in capsys.readouterr().err
+    assert setup_main(["--client", "json", "--out", str(tmp_path / "nope" / "x.json")]) == 1
+    assert "cannot write" in capsys.readouterr().err
+
+
+def test_setup_client_with_json_prints_that_piece(capsys):
+    from atlas_plus.setup_cmd import main as setup_main
+    assert setup_main(["--client", "opencode", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "mcp" in out and "client_config_json" not in out
+
+
+def test_uninstall_dry_run_is_a_preview_and_json_is_a_report(tmp_path, monkeypatch, capsys):
+    from atlas_plus import uninstall_cmd
+    mem = tmp_path / "mem"
+    (mem / "identity").mkdir(parents=True)
+    (mem / "identity" / "user.md").write_text("# me", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(mem))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ATLAS_MCP_PORT", "1")
+    monkeypatch.setattr(sys, "argv", ["sextant-uninstall", "--all", "--dry-run"])
+    uninstall_cmd.main()
+    assert "nothing was changed" in capsys.readouterr().out and mem.exists()
+    monkeypatch.setattr(sys, "argv", ["sextant-uninstall", "--json"])
+    uninstall_cmd.main()
+    info = json.loads(capsys.readouterr().out)
+    assert info["corpus"]["exists"] is True and "client_configs" in info
+
+
+def test_verify_json_is_one_object(capsys):
+    from atlas_plus.roundtrip import main as verify_main
+    rc = verify_main(["--json", "--python", str(Path("C:/nope/python.exe"))])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1 and out["ok"] is False and any(s.get("step") == "start" for s in out["steps"])
+
+
+def test_fts_source_compiles_without_warnings():
+    import warnings
+    from atlas_plus.mcp.memory_server import fts
+    src = Path(fts.__file__).read_text(encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        compile(src, str(fts.__file__), "exec")
+
+
+# ---- AG19: corpus shared through git -------------------------------------------------------
+
+def test_init_writes_a_gitignore_for_per_machine_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import init_cmd
+    monkeypatch.setattr(sys, "argv", ["sextant-init"])
+    with pytest.raises(SystemExit) as exc:
+        init_cmd.main()
+    assert exc.value.code in (0, None)
+    text = (tmp_path / "mem" / ".gitignore").read_text(encoding="utf-8")
+    assert "versions/" in text and "_atlas/.locks/" in text and "_atlas/*.sqlite" in text
+
+
+def test_reimport_keeps_a_note_that_gained_a_corpus_fact(tmp_path, monkeypatch):
+    """A fact appended to an imported note made the next re-import archive it (AG19 F1)."""
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    from atlas_plus import import_cmd
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "idea.md").write_text("the idea\n", encoding="utf-8")
+    assert import_cmd.import_obsidian(v, "reference/obsidian", execute=True)["imported"] == 1
+    note = tmp_path / "mem" / "reference" / "obsidian" / "idea.md"
+    assert "imported_hash:" in note.read_text(encoding="utf-8")
+    note.write_text(note.read_text(encoding="utf-8") + "\n## 2026-11-12\n\nmid-merge fact\n", encoding="utf-8")
+    r = import_cmd.import_obsidian(v, "reference/obsidian", execute=True, archive_stale=True)
+    assert r["unchanged"] == 1 and r["stale"] == [] and r["archived"] == []
+    assert "mid-merge fact" in note.read_text(encoding="utf-8")
+    (v / "idea.md").write_text("the idea, revised\n", encoding="utf-8")
+    r = import_cmd.import_obsidian(v, "reference/obsidian", execute=False)
+    assert r["edited"] == 1 and "edited in the vault" in r["stale"][0]
+    legacy = tmp_path / "mem" / "reference" / "obsidian" / "old.md"
+    legacy.write_text("---\nid: old\noriginal_path: old.md\n---\nbody plus a corpus fact\n", encoding="utf-8")
+    (v / "old.md").write_text("body\n", encoding="utf-8")
+    r = import_cmd.import_obsidian(v, "reference/obsidian", execute=False)
+    assert any("facts were added to the corpus copy" in line for line in r["stale"])
+
+
+def test_an_ancient_lock_is_broken_at_once(corpus):
+    import hashlib
+    from atlas_plus.mcp.memory_server import routing
+    target = corpus / "reference" / "shared.md"
+    lock_dir = corpus / "_atlas" / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock = lock_dir / (hashlib.sha256(routing._lock_key(target).encode("utf-8")).hexdigest()[:16] + ".lock")
+    lock.write_text("99999:deadbeef:ALICE-PC:12345", encoding="ascii")
+    old = time.time() - 3 * 3600
+    os.utime(lock, (old, old))
+    t0 = time.monotonic()
+    with routing._write_lock(target):
+        pass
+    assert time.monotonic() - t0 < 3.0
+
+
+def test_doctor_names_conflict_markers(corpus, monkeypatch):
+    from atlas_plus.doctor import cli as doctor
+    monkeypatch.setattr(doctor, "MEMORY_ROOT", corpus, raising=False)
+    (corpus / "reference").mkdir()
+    (corpus / "reference" / "idea.md").write_text("---\nid: idea\n<<<<<<< HEAD\nimported_at: a\n=======\n"
+                                                  "imported_at: b\n>>>>>>> theirs\n---\nbody\n", encoding="utf-8")
+    res = doctor.check_memory_corpus()
+    assert res["conflict_markers"] == ["reference/idea.md"] and "resolve the merge" in res["conflict_markers_hint"]
+
+
+# ---- AG21: optional layers -----------------------------------------------------------------
+
+def test_anthropic_provider_retries_without_temperature(monkeypatch):
+    from atlas_plus.llm import anthropic as prov
+
+    class _Msgs:
+        calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if "temperature" in kwargs:
+                raise TypeError("Messages.create() got an unexpected keyword argument 'temperature'")
+            class _Block:
+                type = "text"
+                text = "ok"
+            class _Resp:
+                content = [_Block()]
+                stop_reason = "end_turn"
+                usage = None
+            return _Resp()
+
+    class _Client:
+        messages = _Msgs()
+
+    p = prov.AnthropicProvider(default_model="claude-x")
+    monkeypatch.setattr(p, "_get_client", lambda: _Client())
+    try:
+        from atlas_plus.llm import Message
+    except ImportError:
+        Message = getattr(prov, "Message", None)
+    if Message is None:
+        pytest.skip("message type not importable here")
+    msgs = [Message(role="user", content="hi")]
+    out = p._chat(msgs, model="claude-x", temperature=0.3, max_tokens=5, timeout=5)
+    assert _Msgs.calls[-1].get("temperature") is None and len(_Msgs.calls) == 2
+    assert out is not None
+
+
+def test_components_reads_the_documented_telegram_variable(monkeypatch):
+    from atlas_plus import cli
+    monkeypatch.setenv("ATLAS_TELEGRAM_BOT_TOKEN", "123:PLACEHOLDER")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    rows = cli._components() if hasattr(cli, "_components") else None
+    if rows is None:
+        src = Path(cli.__file__).read_text(encoding="utf-8")
+        assert 'os.environ.get("ATLAS_TELEGRAM_BOT_TOKEN")' in src
+    else:
+        assert any(r["name"] == "Telegram bot" and r["status"] == "ready" for r in rows)
+
+
+def test_scheduler_job_map_covers_every_registered_job():
+    from atlas_plus.brain import server
+    for job in ("db-backup", "embed-index", "claude-supervisor", "auto-session-log", "research-batch"):
+        assert job in server._SCHEDULER_JOB_MAP, job   # listed but untriggerable (AG21)
+
+
+def test_local_only_flag_serialises_as_a_boolean(monkeypatch):
+    from atlas_plus.brain import agents
+    monkeypatch.setenv("ATLAS_LOCAL_ONLY", "on")
+    assert json.dumps({"local_only": bool(agents._LOCAL_ONLY)}) == '{"local_only": true}'
+    src = Path(__import__("atlas_plus.brain.server", fromlist=["x"]).__file__).read_text(encoding="utf-8")
+    assert '"local_only": _agents._LOCAL_ONLY' not in src
+
+
+# ---- AG22: security round four --------------------------------------------------------------
+
+def test_lock_host_names_the_os_and_a_dead_lock_is_claimed_by_rename(corpus):
+    from atlas_plus.mcp.memory_server import routing
+    host = routing._lock_host()
+    assert os.name in host and host.startswith(host.split(".")[0])
+    lock = corpus / "x.lock"
+    lock.write_text("1:a:b", encoding="ascii")
+    assert routing._break_lock(lock) is True and not lock.exists()
+    assert routing._break_lock(lock) is False
+    # a token from the same hostname but another OS is never judged by this process table
+    other = host.replace(os.name, "posix" if os.name == "nt" else "nt")
+    lock.write_text(f"{_dead_pid()}:deadbeef:{other}:1", encoding="ascii")
+    assert routing._lock_holder_dead(lock) is False
+
+
+def _dead_pid() -> int:
+    import subprocess
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+def test_directory_at_the_lock_path_is_an_immediate_error(corpus):
+    import hashlib
+    from atlas_plus.mcp.memory_server import routing
+    target = corpus / "reference" / "planted.md"
+    lock_dir = corpus / "_atlas" / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    (lock_dir / (hashlib.sha256(routing._lock_key(target).encode("utf-8")).hexdigest()[:16] + ".lock")).mkdir()
+    t0 = time.monotonic()
+    with pytest.raises(ValueError, match="is a directory"):
+        with routing._write_lock(target):
+            pass
+    assert time.monotonic() - t0 < 2.0
+
+
+def test_slash_topics_refuse_internal_names_and_deep_topics_write(corpus):
+    from atlas_plus.mcp.memory_server.routing import resolve_target
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+    for bad in ("reference:a/_atlas/x", "reference:versions/x", "reference:a/Archive/x"):
+        with pytest.raises(ValueError, match="Sextant's own"):
+            resolve_target(bad)
+    r = memory_remember("reference:a/b/deep", "a deep fact", interactive=True)
+    assert r["ok"] is True, r
+    assert (corpus / "reference" / "a" / "b" / "deep.md").exists()
+
+
+def test_import_index_ignores_body_origin_and_huge_frontmatter_and_links(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    from atlas_plus import import_cmd
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "bigfm.md").write_text("---\nid: bigfm\ntags: [" + ", ".join(f"t{i}" for i in range(1500)) + "]\n---\nbody\n",
+                                encoding="utf-8")
+    (v / "meeting_2024.md").write_text("meeting notes v1\n", encoding="utf-8")
+    assert import_cmd.import_obsidian(v, "reference/obsidian", execute=True)["imported"] == 2
+    r = import_cmd.import_obsidian(v, "reference/obsidian", execute=True)
+    assert r["imported"] == 0 and r["unchanged"] == 2
+    (v / "meeting_2024.md").write_text("meeting notes v2\n", encoding="utf-8")
+    import_cmd.import_obsidian(v, "reference/obsidian", execute=True)
+    r = import_cmd.import_obsidian(v, "reference/obsidian", execute=True, archive_stale=True)
+    live = tmp_path / "mem" / "reference" / "obsidian"
+    assert "v2" in (live / "meeting_2024_2.md").read_text(encoding="utf-8")
+    assert not (live / "meeting_2024.md").exists() and (tmp_path / "mem" / "archive" / "reference" / "obsidian" / "meeting_2024.md").exists()
+    mine = live / "mine.md"
+    mine.write_text("---\nid: mine\n---\noriginal_path: notes/old.md is a fact, not a stamp\n", encoding="utf-8")
+    r = import_cmd.import_obsidian(v, "reference/obsidian", execute=False)
+    assert not any("mine.md" in line for line in r["stale"])
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "victim.md").write_text("---\nid: v\noriginal_path: gone.md\n---\nx\n", encoding="utf-8")
+    if _symlink(outside, live / "linked"):
+        r = import_cmd.import_obsidian(v, "reference/obsidian", execute=True, archive_stale=True)
+        assert (outside / "victim.md").exists()
+
+
+def _symlink(src: Path, dst: Path) -> bool:
+    try:
+        os.symlink(str(src), str(dst), target_is_directory=src.is_dir())
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
+def test_pipe_wrapper_does_not_hide_a_real_error():
+    from atlas_plus import cli
+    import errno as _errno
+
+    def boom():
+        raise OSError(_errno.EINVAL, "bad path", "C:/bad<ws/.memory")
+
+    saved = cli.app
+    cli.app = boom
+    try:
+        with pytest.raises(OSError):
+            cli.main()
+    finally:
+        cli.app = saved
+
+
+def test_huge_frontmatter_is_bounded(corpus):
+    from atlas_plus.mcp.memory_server import fts
+    (corpus / "reference").mkdir()
+    (corpus / "reference" / "big.md").write_text("---\nid: big\ntags: [" + ", ".join(f"tagword{i}" for i in range(200_000)) + "]\n---\nbody BIGMARK\n",
+                                                 encoding="utf-8")
+    t0 = time.monotonic()
+    fts.rebuild(force=True)
+    assert time.monotonic() - t0 < 20
+    assert fts.search("BIGMARK")
+
+
+# ---- AG20: curator ------------------------------------------------------------------------
+
+def test_fact_duplicates_are_found(corpus):
+    from atlas_plus.curation.duplicates import find_fact_duplicates
+    (corpus / "reference").mkdir()
+    (corpus / "reference" / "a.md").write_text(
+        "---\nid: a\n---\n\n## 2026-11-12\n\nThe staging database runs on port 5432 behind the bastion host  <!-- source:agent -->\n"
+        "Another unrelated fact about pelicans and their diet of fish\n", encoding="utf-8")
+    (corpus / "reference" / "b.md").write_text(
+        "---\nid: b\n---\n\n## 2026-11-12\n\nthe staging database runs on port 5432 behind the bastion host.\n"
+        "The staging database listens on port 5432 behind the bastion host and the jump box\n", encoding="utf-8")
+    rows = find_fact_duplicates(memory_root=corpus)
+    kinds = {(r["kind"], r["file1"], r["file2"]) for r in rows}
+    assert ("exact", "reference/a.md", "reference/b.md") in kinds
+    assert any(r["kind"] == "near" for r in rows)
+
+
+def test_never_confirmed_notes_count_and_recent_confirms_are_not_stale(corpus):
+    from atlas_plus.mcp.memory_server.routing import downgrade_stale_confirmations
+    from atlas_plus.curation.stale import find_stale
+    (corpus / "reference").mkdir()
+    (corpus / "reference" / "old.md").write_text("---\nid: old\nupdated: 2025-01-01\nconfidence: high\n---\nx\n", encoding="utf-8")
+    (corpus / "reference" / "fresh.md").write_text("---\nid: fresh\nupdated: 2025-01-01\nlast_confirmed: 2026-11-10\nconfidence: high\n---\ny\n", encoding="utf-8")
+    rows = downgrade_stale_confirmations(memory_root=corpus, dry_run=True)
+    assert [r["path"] for r in rows] == ["reference/old.md"] and rows[0]["last_confirmed"] == "never"
+    stale = {s.path for s in find_stale(memory_root=corpus, months=6)}
+    assert "reference/old.md" in stale and "reference/fresh.md" not in stale
+    rows = downgrade_stale_confirmations(memory_root=corpus, dry_run=False, interactive=True)
+    assert "confidence: low" in (corpus / "reference" / "old.md").read_text(encoding="utf-8")
+    assert list((corpus / "versions").rglob("old_*"))
+
+
+def test_contradictions_say_when_no_model_answered(corpus, monkeypatch):
+    from atlas_plus.curation import contradictions as ct
+    from atlas_plus.summarizer import providers
+    (corpus / "reference").mkdir()
+    (corpus / "reference" / "p1.md").write_text("---\nid: p1\n---\nthe API port for the billing service is 8080 on staging\n", encoding="utf-8")
+    (corpus / "reference" / "p2.md").write_text("---\nid: p2\n---\nthe API port for the billing service is 9090 on staging\n", encoding="utf-8")
+
+    def no_model(prompt):
+        raise providers.ProviderError("no model")
+
+    monkeypatch.setattr(providers, "complete", no_model)
+    monkeypatch.setattr(ct, "MEMORY_ROOT", corpus, raising=False)
+    out = ct.find_contradictions(memory_root=corpus)
+    assert out == [] and ct.LAST_STATS["unchecked"] >= 1 and ct.LAST_STATS["checked"] == 0
+
+
+def test_anti_memory_warns_and_primes(corpus, monkeypatch):
+    from atlas_plus.mcp.memory_server.tools import anti, remember
+    monkeypatch.setattr(anti, "ANTI_ROOT", corpus / "anti", raising=False)
+    monkeypatch.setattr(anti, "_MEMORY_ROOT", corpus, raising=False)
+    r = anti.anti_remember(scope="libraries", reject_pattern="use redis for caching sessions",
+                           applies_to="workspace", interactive=True)
+    assert r.get("ok", True), r
+    hits = anti.anti_matches("we should use redis for caching sessions again")
+    assert hits and hits[0]["reject_pattern"] == "use redis for caching sessions"
+    assert not anti.anti_matches("code review is required before merging")
+    w = remember.memory_remember("reference:cache", "Let us use redis for caching sessions", interactive=True)
+    assert w["ok"] is True and "rejected idea" in (w.get("anti_warning") or "")
+    from atlas_plus.hooks import prime
+    monkeypatch.setattr(prime, "MEMORY_ROOT", corpus, raising=False)
+    text = prime.build_prime_context("redis caching sessions", memory_root=corpus) if "memory_root" in \
+        prime.build_prime_context.__code__.co_varnames else prime.build_prime_context("redis caching sessions")
+    assert "Do NOT suggest (rejected earlier)" in text and "use redis for caching sessions" in text
+
+
+def test_decisions_store_empty_conditions_and_confirm_sets_last_reviewed(corpus, monkeypatch):
+    from atlas_plus.mcp.memory_server.tools import decision, remember, read as _read
+    for mod in (decision, remember, _read):
+        for name in dir(mod):
+            if name.endswith("ROOT"):
+                monkeypatch.setattr(mod, name, corpus / "decisions" if "DECISION" in name else corpus, raising=False)
+    d = decision.memory_remember_decision(title="Adopt Typer", decision="use typer for the CLI", interactive=True) \
+        if "interactive" in decision.memory_remember_decision.__code__.co_varnames else \
+        decision.memory_remember_decision(title="Adopt Typer", decision="use typer for the CLI")
+    path = Path(d["file"]) if d.get("file") else next((corpus / "decisions").glob("*.md"))
+    text = path.read_text(encoding="utf-8")
+    assert "revisit_if: []" in text and "(none recorded)" not in text.split("---")[1]
+    rel = path.relative_to(corpus).as_posix()
+    c = remember.memory_confirm(rel, interactive=True)
+    assert c["ok"] is True
+    assert "last_reviewed:" in path.read_text(encoding="utf-8")
+
+
+def test_weekly_report_lands_in_the_state_dir_and_names_real_commands(corpus, tmp_path):
+    from atlas_plus.curation.weekly_report import generate_report
+    (corpus / "reference").mkdir()
+    (corpus / "reference" / "n.md").write_text("---\nid: n\nupdated: 2024-01-01\n---\nsome fact text that is long enough to count\n",
+                                                encoding="utf-8")
+    report, out_path = generate_report(memory_root=corpus, dry_run=False)
+    assert "## Repeated facts" in report and "## Never confirmed" in report
+    assert "atlas-review-memory archive <path> --yes" in report and "--interactive" not in report
+    assert out_path.exists() and out_path.parent.name == "reports" and corpus not in out_path.parents
+    assert not list((corpus / "_atlas").glob("cleanup-*.md"))

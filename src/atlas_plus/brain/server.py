@@ -602,7 +602,7 @@ async def diagnostic():
         from . import agents as _agents
         routing = {
             "smart_routing": _agents._SMART_ROUTING,
-            "local_only": _agents._LOCAL_ONLY,
+            "local_only": bool(_agents._LOCAL_ONLY),   # the flag object serialised as {} (AG21)
             "cache_size": len(_agents._ROUTING_CACHE),
         }
     except Exception:
@@ -1039,6 +1039,11 @@ _SCHEDULER_JOB_MAP = {
     "research-api-batch-1": lambda: brain_scheduler._research_api_batch_1(),
     "research-api-batch-2": lambda: brain_scheduler._research_api_batch_2(),
     "zombie-cleanup":       lambda: brain_scheduler._zombie_cleanup(),
+    # The listed jobs could not be triggered (AG21, sweep 12).
+    "db-backup":            lambda: brain_scheduler._db_backup_daily(),
+    "embed-index":          lambda: brain_scheduler._embed_index_nightly(),
+    "claude-supervisor":    lambda: brain_scheduler._claude_supervisor_weekly(),
+    "auto-session-log":     lambda: brain_scheduler._auto_session_log(),
 }
 
 
@@ -1204,7 +1209,7 @@ async def routing_stats():
     category_counts = Counter(_agents._ROUTING_CACHE.values())
     return {
         "smart_routing": _agents._SMART_ROUTING,
-        "local_only": _agents._LOCAL_ONLY,
+        "local_only": bool(_agents._LOCAL_ONLY),
         "cache_size": len(_agents._ROUTING_CACHE),
         "cache_capacity": 500,
         "category_distribution": dict(category_counts.most_common()),

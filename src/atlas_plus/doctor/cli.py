@@ -645,6 +645,13 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         "md_files": len(files),
         "identity_present": identity_present,
     }
+    conflicted = [f.rel for f in files if f.text and ("\n<<<<<<< " in f.text or f.text.startswith("<<<<<<< ")
+                                                      or "\n>>>>>>> " in f.text)]
+    if conflicted:
+        # A half-merged git pull left markers inside notes and doctor said ok (AG19, sweep 12).
+        result["conflict_markers"] = conflicted[:10]
+        result["conflict_markers_hint"] = (f"{len(conflicted)} note(s) hold git conflict markers (<<<<<<< / >>>>>>>): "
+                                           "resolve the merge before writing to them: " + ", ".join(conflicted[:5]))
     bad_names = [f.rel for f in files if f.bad_name]
     if bad_names:
         result["bad_names"] = bad_names[:10]
@@ -1524,7 +1531,7 @@ def render_text(data: dict) -> str:
             lines.append(f"  \033[33mempty\033[0m  root: {mc.get('root')}")
         if mc.get("hint"):
             lines.append(f"  \033[33m{mc['hint']}\033[0m")
-        for extra_key in ("not_utf8_hint", "bad_names_hint", "import_copies_hint", "locks_hint"):
+        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "import_copies_hint", "locks_hint"):
             if mc.get(extra_key):
                 lines.append(f"  \033[33m{mc[extra_key]}\033[0m")
         emb = mc.get("embed_index") or {}
@@ -1572,6 +1579,9 @@ def render_text(data: dict) -> str:
             if wk.get("stale_running", 0) > 0:
                 lines.append(f"  \033[31mStale running tasks: {wk['stale_running']} (heartbeat >30 min old)\033[0m")
             lines.append(f"  Last claim: {wk.get('last_claimed_at', 'never')}")
+            if wk.get("last_claimed_at", "never") == "never" and (wk.get("pending") or 0):
+                lines.append("  \033[33mno worker has ever claimed a task while tasks wait: the scheduler's jobs "
+                             "need atlas-brain-worker running\033[0m")
             lines.append(f"  Last done:  {wk.get('last_finished_at', 'never')}")
         else:
             lines.append(f"  Reason: {wk.get('reason', '?')}")
@@ -2232,6 +2242,13 @@ def main() -> int:
             print(_plain_if_piped(render_text(data)))
         return data
 
+    if args.strict and args.json and not args.watch:
+        # One parseable object: the trailing `strict:` line broke json.load (AG24, sweep 12).
+        data = collect()
+        bad = _unhealthy(data)
+        data["strict"] = {"ok": not bad, "failures": bad}
+        print(json.dumps(data, indent=2))
+        return 1 if bad else 0
     data = run_once()
     if args.strict and not args.watch:
         bad = _unhealthy(data)
