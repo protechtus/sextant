@@ -574,3 +574,136 @@ def test_chat_stream_progress_events_land_before_done():
     asyncio.run(scenario())
     src = (_REPO / "src" / "atlas_plus" / "brain" / "server.py").read_text(encoding="utf-8")
     assert "await _drain_progress()" in src and src.count("await _drain_progress()") == 2
+
+
+# ---- MN8: expert review of the sweep-10 code -------------------------------------------------
+
+def test_delimiter_guard_runs_on_the_scrubbed_fact(corpus):
+    """`-\x07--` passed the guard and the scrub then produced a literal `---` line (MN8 F1)."""
+    from atlas_plus.mcp.memory_server.routing import resolve_target, append_fact
+    target, fm = resolve_target("reference:f1")
+    with pytest.raises(ValueError, match="---"):
+        append_fact(target, "a\n-\x07--\nid: x", fm, interactive=True)
+    with pytest.raises(ValueError, match="---"):
+        append_fact(target, "a\n-\x85--\nid: x", fm, interactive=True)
+    assert not target.exists()
+
+
+def test_search_log_redacts_before_it_truncates(tmp_path, monkeypatch):
+    """A token straddling character 300 left `ghp_` plus 16 characters in the log (MN8 F2)."""
+    from atlas_plus.mcp.memory_server.tools import search_log as sl
+    log = tmp_path / "logs" / "mcp-search.ndjson"
+    monkeypatch.setattr(sl, "LOG_FILE", log)
+    token = "ghp_" + "A" * 36
+    sl.log_search(query="x" * 279 + " " + token, scope="", top_score=0.0, result_count=0)
+    rec = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert "ghp_A" not in rec["query"] and token[:8] not in log.read_text(encoding="utf-8")
+    assert len(rec["query"]) <= sl.QUERY_KEEP
+
+
+def test_search_log_rotation_is_guarded(tmp_path, monkeypatch):
+    """Two rotators: the second must not move the fresh log over the rotated history (MN8 F3)."""
+    import time
+    from atlas_plus.mcp.memory_server.tools import search_log as sl
+    log = tmp_path / "logs" / "mcp-search.ndjson"
+    log.parent.mkdir()
+    log.write_text("history\n" * 50, encoding="utf-8")
+    monkeypatch.setattr(sl, "LOG_FILE", log)
+    monkeypatch.setattr(sl, "ROTATE_BYTES", 100)
+    guard = log.with_suffix(".ndjson.rotating")
+    guard.write_text("", encoding="utf-8")          # another process holds the guard
+    sl.log_search(query="one", scope="", top_score=1.0, result_count=1)
+    assert not log.with_suffix(".ndjson.1").exists()   # no rotation while the guard is held
+    assert "history" in log.read_text(encoding="utf-8")
+    old = time.time() - sl.ROTATE_GUARD_STALE_S - 5
+    os.utime(guard, (old, old))                       # the holder died: a stale guard is cleared
+    sl.log_search(query="two", scope="", top_score=1.0, result_count=1)
+    assert not guard.exists()
+    sl.log_search(query="three", scope="", top_score=1.0, result_count=1)
+    rotated = log.with_suffix(".ndjson.1")
+    assert rotated.exists() and "history" in rotated.read_text(encoding="utf-8")
+    assert not guard.exists()
+
+
+@pytest.mark.parametrize("url,proxied", [
+    ("http://127.0.0.1:11434", False), ("http://localhost:11434", False), ("http://[::1]:11434", False),
+    ("http://embed.example.internal:11434", True), ("https://10.0.0.5:11434", True),
+])
+def test_embedder_skips_the_proxy_for_loopback_only(monkeypatch, url, proxied):
+    """The no-proxy opener applied to every host (MN8 F4)."""
+    from atlas_plus.mcp.memory_server import embeddings as emb
+    monkeypatch.delenv("ATLAS_EMBED_TIMEOUT", raising=False)
+    e = emb.OllamaEmbedder(base_url=url)
+    assert e.uses_proxy is proxied
+    assert (e._opener is emb._NO_PROXY_OPENER) is (not proxied)
+    assert e.timeout == 15.0
+
+
+def test_embed_timeout_is_configurable(monkeypatch):
+    from atlas_plus.mcp.memory_server import embeddings as emb
+    monkeypatch.setenv("ATLAS_EMBED_TIMEOUT", "2.5")
+    assert emb.OllamaEmbedder(base_url="http://127.0.0.1:1").timeout == 2.5
+    monkeypatch.setenv("ATLAS_EMBED_TIMEOUT", "soon")
+    assert emb.OllamaEmbedder(base_url="http://127.0.0.1:1").timeout == 15.0
+
+
+def test_tokenizer_migration_is_one_transaction(corpus, monkeypatch):
+    """A failure after the DROP must leave the old table and memory_files intact (MN8 F6)."""
+    import sqlite3
+    from atlas_plus.mcp.memory_server import fts
+    db = corpus / "_atlas" / "search.sqlite"
+    monkeypatch.setattr(fts, "FTS_DB", db, raising=False)
+    conn = fts._connect()
+    conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('tokenizer','porter ascii')")
+    conn.execute("INSERT INTO memory_files(path, mtime) VALUES ('a.md', 1)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(fts, "_CREATE_FTS", "CREATE VIRTUAL TABLE memory_fts USING fts5(path, tokenize='{tokenizer}') garbage")
+    monkeypatch.setattr(fts, "_TOKENIZER_FALLBACK", "also broken")
+    with pytest.raises(sqlite3.OperationalError):
+        fts._connect()
+    raw = sqlite3.connect(str(db))
+    names = {r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "memory_fts" in names
+    assert raw.execute("SELECT COUNT(*) FROM memory_files").fetchone()[0] == 1
+    assert raw.execute("SELECT value FROM atlas_meta WHERE key='tokenizer'").fetchone()[0] == "porter ascii"
+    raw.close()
+
+
+@pytest.mark.parametrize("name", ["null", "yes", "&a", "[a", "{a", "@a", "`a", "!a", "%a", "'a", "a #b", "2026-11-12", "0x1f", "1_000"])
+def test_yaml_hostile_names_keep_their_id_and_title(corpus, name):
+    """`reference:null` read back as None; `reference:[a` did not parse (MN8, name validation)."""
+    import yaml
+    from atlas_plus.mcp.memory_server.routing import resolve_target, append_fact
+    target, fm = resolve_target(f"reference:{name}")
+    append_fact(target, "a fact", fm, interactive=True)
+    raw = target.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(raw.split("---")[1])
+    assert parsed["id"] == target.stem
+    assert isinstance(parsed["title"], str) and parsed["title"].strip()
+    assert parsed["type"] == "reference"
+
+
+def test_plain_names_stay_unquoted(corpus):
+    from atlas_plus.mcp.memory_server.routing import resolve_target, append_fact, _yaml_scalar
+    assert _yaml_scalar("acme-corp") == "acme-corp" and _yaml_scalar("Acme Corp") == "Acme Corp"
+    assert _yaml_scalar("null") == '"null"' and _yaml_scalar("[a") == '"[a"'
+    target, fm = resolve_target("reference:acme-corp")
+    append_fact(target, "a fact", fm, interactive=True)
+    assert "\nid: acme-corp\ntitle: Acme Corp\n" in target.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("bad", ["\u3164", "\u115f\u1160", "\u2800", "abc\u3164def", "-", "~", "#", "\U0001F600" * 120,
+                                 "\u4e00" * 120, "\u00e9" * 120])
+def test_blank_looking_and_overlong_names_are_refused_before_any_write(corpus, bad):
+    from atlas_plus.mcp.memory_server.routing import resolve_target
+    with pytest.raises(ValueError):
+        resolve_target(f"reference:{bad}")
+    assert not (corpus / "reference").exists() or not list((corpus / "reference").iterdir())
+
+
+def test_names_within_the_byte_budget_are_accepted(corpus):
+    from atlas_plus.mcp.memory_server.routing import resolve_target
+    resolve_target("reference:" + "\u00e9" * 100)    # 200 UTF-8 bytes
+    resolve_target("reference:" + "\u4e00" * 66)     # 198 bytes
+    resolve_target("reference:" + "ab" * 60)          # 120 characters

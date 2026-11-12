@@ -138,6 +138,10 @@ def _connect() -> sqlite3.Connection:
         if row is None or row[0] not in (_TOKENIZER, _TOKENIZER_FALLBACK):
             # First run on an index built with another tokenizer: drop it and forget every
             # file's mtime so the next update_incremental rebuilds from the corpus.
+            # One transaction: DDL does not open an implicit one in sqlite3, so a crash between
+            # the DROP and the commit left no table and a full memory_files (MN8, sweep 10).
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
             conn.execute("DROP TABLE IF EXISTS memory_fts")
             conn.execute("DELETE FROM memory_files")
             if row is not None:

@@ -55,9 +55,16 @@ class OllamaEmbedder:
     """Minimal client for Ollama's embeddings endpoint. Stdlib only."""
 
     def __init__(self, base_url: str | None = None, model: str | None = None,
-                 timeout: float = 15.0) -> None:
+                 timeout: float | None = None) -> None:
         self.base_url = (base_url or os.environ.get("ATLAS_EMBED_URL")
                          or "http://127.0.0.1:11434").rstrip("/")
+        if timeout is None:
+            # 15 s is the budget for a cold model load on a loopback Ollama; a hung remote
+            # service costs that per search, so it is configurable (MN8, sweep 10).
+            try:
+                timeout = float(os.environ.get("ATLAS_EMBED_TIMEOUT") or 15.0)
+            except ValueError:
+                timeout = 15.0
         # Scheme allowlist (bandit B310 hardening): ATLAS_EMBED_URL is
         # user-config; refuse file:// and custom schemes before any urlopen.
         if not self.base_url.startswith(("http://", "https://")):
@@ -66,6 +73,10 @@ class OllamaEmbedder:
             )
         self.model = model or os.environ.get("ATLAS_EMBED_MODEL") or "nomic-embed-text"
         self.timeout = timeout
+        # Proxy variables are skipped for loopback only: a remote ATLAS_EMBED_URL behind a
+        # required corporate proxy went direct and failed silently (MN8, sweep 10).
+        self.uses_proxy = not _is_loopback_url(self.base_url)
+        self._opener = urllib.request.build_opener() if self.uses_proxy else _NO_PROXY_OPENER
 
     def embed(self, text: str) -> list[float]:
         # /api/embed (modern), not the legacy /api/embeddings: newer Ollama
@@ -81,7 +92,7 @@ class OllamaEmbedder:
         )
         # A loopback call never goes through HTTPS_PROXY (AG11: a proxy variable added 1.9 s to
         # every search and 3.8 s to doctor).
-        with _NO_PROXY_OPENER.open(req, timeout=self.timeout) as resp:  # nosec B310 (scheme allowlisted in __init__)
+        with self._opener.open(req, timeout=self.timeout) as resp:  # nosec B310 (scheme allowlisted in __init__)
             data = json.loads(resp.read().decode("utf-8"))
         rows = data.get("embeddings")
         vec = rows[0] if isinstance(rows, list) and rows else None
@@ -91,6 +102,12 @@ class OllamaEmbedder:
 
 
 _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _is_loopback_url(url: str) -> bool:
+    import urllib.parse
+    host = (urllib.parse.urlsplit(url).hostname or "").strip("[]").lower()
+    return host in ("localhost", "::1") or host.startswith("127.")
 
 
 def _normalize(vec: list[float]) -> list[float]:

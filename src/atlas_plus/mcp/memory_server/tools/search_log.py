@@ -33,11 +33,37 @@ def _is_link(p: Path) -> bool:
     return bool(attrs & getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
 
+ROTATE_GUARD_STALE_S = 60   # a guard file older than this belongs to a process that died mid-rotation
+
+
 def _rotate_if_large() -> None:
+    """Rotate the log to `.1` past ROTATE_BYTES, one process at a time: two servers that both
+    saw a 5 MB log both renamed, and the second rename moved the fresh one-line log over the
+    history the first had just rotated (MN8, sweep 10). The guard is an O_EXCL file; the size
+    is re-checked once it is held."""
     try:
-        if LOG_FILE.exists() and LOG_FILE.stat().st_size > ROTATE_BYTES:
-            import os as _os
-            _os.replace(LOG_FILE, LOG_FILE.with_suffix(".ndjson.1"))
+        if not (LOG_FILE.exists() and LOG_FILE.stat().st_size > ROTATE_BYTES):
+            return
+        guard = LOG_FILE.with_suffix(".ndjson.rotating")
+        try:
+            fd = os.open(str(guard), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                import time as _time
+                if _time.time() - guard.stat().st_mtime > ROTATE_GUARD_STALE_S:
+                    guard.unlink()
+            except OSError:
+                pass
+            return
+        try:
+            os.close(fd)
+            if LOG_FILE.stat().st_size > ROTATE_BYTES:
+                os.replace(LOG_FILE, LOG_FILE.with_suffix(".ndjson.1"))
+        finally:
+            try:
+                guard.unlink()
+            except OSError:
+                pass
     except OSError:
         pass
 
@@ -60,7 +86,10 @@ def log_search(
             "ts": datetime.now(timezone.utc).isoformat(),
             # ATL-017: never persist secrets pasted into a search; and never the whole query
             # (a 50,000,000-character query made a 50 MB line, AG10 sweep 10)
-            "query": redact(query[:QUERY_KEEP]),
+            # Redact BEFORE the cut: a token straddling character 300 left its first half in the
+            # log (MN8, sweep 10). The window is four times the kept length (search already caps
+            # queries at 2,000 characters), so the regexes never run over a 50 MB string.
+            "query": redact(query[:QUERY_KEEP * 4])[:QUERY_KEEP],
             "query_chars": len(query),
             "scope": scope or "",
             "top_score": round(top_score, 4),

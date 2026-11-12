@@ -102,7 +102,8 @@ the README before exposing anything.
 | `ATLAS_SEMANTIC_SEARCH` | `on` | Hybrid semantic search kill switch; `off` = keyword FTS only. |
 | `ATLAS_FTS_FRESHNESS_WINDOW` | `10` | Seconds between index-freshness sweeps on search. Within the window, searches reuse the index (a burst pays the sweep once); this process's own memory writes always void the window, so remember-then-search stays exact. `0` = sweep on every search. |
 | `ATLAS_EMBED_MODEL` | `nomic-embed-text` | Embedding model (Ollama). |
-| `ATLAS_EMBED_URL` | Ollama default | Embedding endpoint override. |
+| `ATLAS_EMBED_URL` | Ollama default | Embedding endpoint override. Proxy variables apply to a remote host only; loopback goes direct. |
+| `ATLAS_EMBED_TIMEOUT` | `15` | Seconds to wait for one embedding call (a hung endpoint costs this per search). |
 
 ## Models and providers
 

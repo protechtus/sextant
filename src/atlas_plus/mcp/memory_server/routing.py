@@ -14,7 +14,9 @@ Epistemic provenance fields (Angle 5):
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import json as _json
 import os
+import re as _re
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -230,6 +232,25 @@ def _looks_like_short_name(name: str) -> bool:
         if c == "~" and i + 1 < len(name) and name[i + 1].isdigit():
             return True
     return False
+
+
+# A plain YAML scalar that every parser reads back as the same string: starts with a letter
+# or underscore, then letters, digits, space, dot, underscore, dash. Anything else (a leading
+# `[`, `{`, `&`, `@`, `` ` ``, `!`, `%`, `'`, `-`, `~`, a ` #` comment, a number or date) is
+# written double-quoted. `reference:null` made a note whose id read back as None and
+# `reference:[a` one whose frontmatter did not parse at all (MN8, sweep 10).
+_PLAIN_SCALAR_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_ .\-]*$")
+_YAML_WORDS = frozenset({"null", "~", "true", "false", "yes", "no", "on", "off", "y", "n"})
+# Letters by category that render as nothing: the Hangul fillers and the Braille blank.
+_BLANK_LOOKING = frozenset({"\u115f", "\u1160", "\u3164", "\uffa0", "\u2800"})
+MAX_NAME_BYTES = 200   # UTF-8 bytes or UTF-16 units: 255 on NTFS/ext4 less `.md` and the temp suffix
+
+
+def _yaml_scalar(value) -> str:
+    s = str(value)
+    if s.lower() in _YAML_WORDS or " #" in s or not _PLAIN_SCALAR_RE.match(s) or s != s.strip():
+        return _json.dumps(s, ensure_ascii=False)
+    return s
 
 
 def _scrub_controls(text: str) -> str:
@@ -476,8 +497,11 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
         # the line/paragraph separators are line breaks to YAML and broke the frontmatter; a
         # zero-width joiner or a right-to-left override makes a name that displays as another
         # (AG10, sweep 10). ord < 32 and 127 are inside category Cc.
-        if any(_ud.category(c) in _FORBIDDEN_CATEGORIES for c in param):
+        if any(_ud.category(c) in _FORBIDDEN_CATEGORIES or c in _BLANK_LOOKING for c in param):
             raise ValueError(f"Invalid scope parameter {param!r}: control or invisible characters are not allowed.")
+        if param and not any(c.isalnum() for c in param):
+            # `reference:-` or a Braille blank: a note nobody can name back (MN8, sweep 10).
+            raise ValueError(f"Invalid scope parameter {param!r}: a name needs at least one letter or digit.")
         if any(c in param for c in '*?"<>|'):
             raise ValueError(f"Invalid scope parameter {param!r}: the characters * ? \" < > | cannot be used in a file name.")
         if _looks_like_short_name(param):
@@ -491,6 +515,12 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
             raise ValueError(f"Invalid scope parameter {param!r}: must not end with a dot (Windows strips it).")
         if len(param) > 120:
             raise ValueError(f"Invalid scope parameter: {len(param)} characters; the limit is 120.")
+        encoded = max(len(param.encode("utf-8")), len(param.encode("utf-16-le")) // 2)
+        if encoded > MAX_NAME_BYTES:
+            # 120 emoji are 480 UTF-8 bytes and 240 UTF-16 units: the write failed deep inside the
+            # temp file with an OSError naming an internal path (MN8, sweep 10).
+            raise ValueError(f"Invalid scope parameter: {len(param)} characters encode to {encoded} bytes; "
+                             f"a file name holds {MAX_NAME_BYTES}. Use a shorter name.")
     else:
         key = scope.strip().lower()
         param = ""
@@ -590,12 +620,14 @@ def append_fact(
     # Delimiter guard ONLY: keeps a fact from closing the frontmatter block.
     # It is deliberately not a general YAML/Markdown sanitizer -- the body is
     # never fed back through a YAML parser.
-    if "---" in fact:
-        raise ValueError("Fact cannot contain '---' (YAML frontmatter delimiter).")
     if len(fact) > MAX_FACT_CHARS:
         raise ValueError(f"Fact too long: {len(fact):,} characters; the limit is {MAX_FACT_CHARS:,}. "
                          "Store the document as a file and remember its path instead.")
+    # The scrub runs FIRST: `-\x07--` passed the guard and the scrub then assembled the
+    # delimiter it was meant to block (MN8, sweep 10).
     fact = _scrub_controls(fact)
+    if "---" in fact:
+        raise ValueError("Fact cannot contain '---' (YAML frontmatter delimiter).")
     date_str = date.today().isoformat()
     today_header = f"## {date_str}"
     conf_level = _map_confidence(confidence, source)
@@ -636,6 +668,8 @@ def append_fact(
                 fm["source_task"] = task_id[:36]
             fm_lines = ["---"]
             for k, v in fm.items():
+                if k in ("id", "title", "source_session", "source_task"):
+                    v = _yaml_scalar(v)
                 fm_lines.append(f"{k}: {v}")
             fm_lines.append("---\n")
             content = "\n".join(fm_lines) + f"\n{today_header}\n\n{tagged_fact}\n"
