@@ -57,6 +57,8 @@ registration reaches only the MCP server process, not the hooks.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `ATLAS_MCP_HOST` / `ATLAS_MCP_PORT` | `127.0.0.1` / `8765` | MCP memory server (HTTP mode). In a container set `ATLAS_MCP_HOST=0.0.0.0` and publish the port on the host's loopback only (`-p 127.0.0.1:8765:8765`); the default bind is unreachable through a port publish. |
+| `ATLAS_MCP_ALLOWED_HOSTS` | unset | Comma-separated Host names the HTTP MCP server accepts besides loopback (`sextant.example.com`, `192.168.1.5`). Needed behind a reverse proxy or on a LAN: the server otherwise answers 421 to any non-loopback Host (DNS-rebinding guard). With `ATLAS_MCP_HOST` set beyond loopback and no list, the Host check is off and the bearer token is the guard. |
+| `ATLAS_MCP_LOG_LEVEL` | `WARNING` | Log level of the MCP server (`DEBUG`, `INFO`, ...). `INFO` shows one line per request on stderr, which some clients display as noise. |
 | `ATLAS_WEB_HOST` / `ATLAS_WEB_PORT` | `127.0.0.1` / `8766` | Web dashboard. |
 | `ATLAS_BRAIN_HOST` / `ATLAS_BRAIN_PORT` | `127.0.0.1` / `8767` | Brain task-queue API. |
 | `ATLAS_SYNC_HOST` / `ATLAS_SYNC_PORT` | `127.0.0.1` / `8768` | Device-sync hub. |

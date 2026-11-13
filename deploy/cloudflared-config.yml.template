@@ -27,5 +27,7 @@ credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL_UUID>.json
 ingress:
   - hostname: atlas-mcp.<YOUR_DOMAIN>
     service: http://127.0.0.1:8765
+    # The tunnel forwards the public Host; start the server with
+    # ATLAS_MCP_ALLOWED_HOSTS=atlas-mcp.<YOUR_DOMAIN> or it answers 421 (docs/CONFIGURATION.md).
   # Everything else is refused at the connector.
   - service: http_status:404

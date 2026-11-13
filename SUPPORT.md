@@ -12,7 +12,7 @@ what that means so nobody has to guess.
 | A feature idea | Issues, "Feature request" template | Small ideas can go straight to a PR; large ones get discussed first |
 | A question, or "is this expected?" | Issues, "Question" template | Check the README, [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) and [docs/USAGE.md](docs/USAGE.md) first |
 | A security problem | The private process in [SECURITY.md](SECURITY.md) | Never a public issue |
-| Nothing to report, you just want release notes | The mailing list on usesextant.com, or "Watch > Releases" on this repository | Announcements only; replies there are not a support channel |
+| Nothing to report, you just want release notes | "Watch > Releases" on this repository, or email hello@protechtus.com with the subject `Sextant updates` to be told when a release ships | Announcements only; replies there are not a support channel |
 
 Blank issues are turned off. The templates exist so the first reply never has
 to be "which OS, which version?".

@@ -163,7 +163,11 @@ sextant.example.com {
         reverse_proxy 127.0.0.1:8768
     }
 
-    # MCP server for remote MCP clients (optional -- omit if unused)
+    # MCP server for remote MCP clients (optional -- omit if unused).
+    # The server checks the Host header: start it with
+    # ATLAS_MCP_ALLOWED_HOSTS=sextant.example.com (or ATLAS_MCP_HOST=0.0.0.0 with no
+    # list, which turns the Host check off and leaves the bearer token as the guard);
+    # with neither, every request through this route answers 421 Invalid Host header.
     handle /mcp* {
         reverse_proxy 127.0.0.1:8765
     }

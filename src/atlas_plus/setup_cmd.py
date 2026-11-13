@@ -422,7 +422,7 @@ def render(info: dict, client: str = "all") -> str:
                 lines.append("   (`claude` is not on PATH here, so section 1 applies on the client machine)")
             lines += ["   " + h["serve"],
                       "   (binds 127.0.0.1:8765; the token is required; ready when the log says "
-                      "`Uvicorn running on`, about 8 s)",
+                      "`Uvicorn running on`, a few seconds)",
                       "   In a container: " + h["serve_container"],
                       "   (0.0.0.0 inside the container, and publish the port on the host's loopback "
                       "only: -p 127.0.0.1:8765:8765)",

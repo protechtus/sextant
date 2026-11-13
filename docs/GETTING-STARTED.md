@@ -217,7 +217,7 @@ not just keywords; without it, keyword search works exactly as before).
 Facts from the shell: a line that starts with `---` is refused (it would
 close the note's frontmatter); dashes mid-sentence are fine. In PowerShell
 5.1 a fact that contains double quotes is easier to pass on standard input:
-`"Ilse said: \"The sea waits.\"" | sextant remember - --scope project:novel`
+`'Ilse said: "The sea waits."' | sextant remember - --scope project:novel`
 (`-` reads the fact from stdin). A topic may name a subfolder note from an
 imported vault: `--scope reference:obsidian/README`.
 

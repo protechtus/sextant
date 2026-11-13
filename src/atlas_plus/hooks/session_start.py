@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from atlas_plus import paths as atlas_paths
 from atlas_plus.hooks._quote import quote_note as _q
+from atlas_plus.hooks._quote import comment_gap as _comment_gap, one_line as _ol
 
 
 def _under_projects(path: Path) -> bool:
@@ -59,7 +60,7 @@ def _read_file(path: Path, max_chars: int = 600) -> str:
         # never leading, whitespace: `\s*<!--` was quadratic on a long run of spaces.
         text = text[: max(max_chars * 32, 65536)]
         if "<!--" in text:
-            text = _SOURCE_COMMENT.sub("", text)
+            text = _SOURCE_COMMENT.sub(_comment_gap, text)
         text = text.strip()
         if len(text) <= max_chars:
             return text
@@ -415,7 +416,7 @@ def main() -> None:
     project_info = _detect_project()
     if project_info:
         name, project_dir = project_info
-        lines += [f"## Active project: {name}", f"Path: {project_dir}", ""]
+        lines += [f"## Active project: {_ol(name)}", f"Path: {project_dir}", ""]
         if (project_dir / ".git").exists():
             lines += ["### Git state", _q(_git_summary(project_dir)), ""]   # commit subjects are third-party text (MN16)
 

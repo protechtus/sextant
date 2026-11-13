@@ -27,6 +27,53 @@ from atlas_plus import activity as _activity
 
 log = logging.getLogger("atlas.mcp.server")
 
+_LOG_LEVEL = os.environ.get("ATLAS_MCP_LOG_LEVEL", "WARNING").strip().upper() or "WARNING"
+if _LOG_LEVEL not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+    _LOG_LEVEL = "WARNING"
+
+_HUMAN_SOURCES = frozenset({"human-direct", "human", "telegram"})
+
+
+def _agent_source(source: str) -> str:
+    """An MCP caller is an agent and cannot claim the operator's own provenance.
+
+    `human-direct`, `human` and `telegram` mean the operator typed the fact (CLI, dashboard,
+    bot); they map to high confidence without a score. A caller on the MCP wire that names
+    one of them is written as `agent` (sweep 13, AG27: a prompt-injected agent could otherwise
+    plant facts that look like the operator's own writes).
+    """
+    s = (source or "agent").strip().lower()
+    return "agent" if s in _HUMAN_SOURCES else (source or "agent")
+
+
+def _transport_security():
+    """Host-header policy for the HTTP transport.
+
+    The MCP SDK guards loopback binds against DNS rebinding by refusing any Host that is not
+    127.0.0.1/localhost (HTTP 421). Behind a reverse proxy or on a LAN the Host is the public
+    name, so a bind beyond loopback would refuse every documented remote route (sweep 13,
+    AG26/AG27). Rules: loopback bind -> the SDK default; a wider bind with
+    ATLAS_MCP_ALLOWED_HOSTS set -> that list (plus loopback) is enforced; a wider bind with no
+    list -> the Host check is off (the bearer token guards /mcp; --no-auth is refused off
+    loopback at startup).
+    """
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+    except Exception:  # pragma: no cover - older SDK without the setting
+        return None
+    host = os.environ.get("ATLAS_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    extra = [h.strip() for h in os.environ.get("ATLAS_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    if host in ("127.0.0.1", "localhost", "::1") and not extra:
+        return None
+    if not extra:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    for h in extra:
+        hosts.append(h if ":" in h.rstrip("]") and not h.startswith("[") else f"{h}:*")
+        origins += [f"http://{h}", f"https://{h}", f"http://{h}:*", f"https://{h}:*"]
+    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
+
 # Bearer token for HTTP mode. Must be set when --http-auth is used.
 # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
 _MCP_TOKEN = os.environ.get("ATLAS_MCP_TOKEN", "")
@@ -76,7 +123,8 @@ def _instructions() -> str:
 # serverInfo.name is what every client shows on first contact; it said atlas-memory while the
 # product is Sextant (known since sweep 8; fixed for the flip, 2026-11-12). The version in
 # serverInfo is the MCP SDK's own, not ours.
-mcp = FastMCP("sextant", instructions=_instructions(), website_url="https://usesextant.com")
+mcp = FastMCP("sextant", instructions=_instructions(), website_url="https://usesextant.com",
+              log_level=_LOG_LEVEL, transport_security=_transport_security())
 
 # Every tool registration below passes through this wrapper so each call
 # pulses the activity feed (the Helm live map). It records the tool NAME,
@@ -370,7 +418,7 @@ def memory_remember_tool_v2(
     Returns {ok, file, version_copy, error, possible_duplicate, duplicate_hint}.
     """
     return memory_remember(
-        scope=scope, fact=fact, source=source, confidence=confidence,
+        scope=scope, fact=fact, source=_agent_source(source), confidence=confidence,
         session_id=session_id or None, task_id=task_id or None, interactive=True,
     )
 
@@ -390,7 +438,7 @@ def memory_confirm_tool(path: str, source: str = "agent") -> dict:
 
     Returns {ok, path, confirmed, error}.
     """
-    return memory_confirm(path=path, source=source, interactive=True)
+    return memory_confirm(path=path, source=_agent_source(source), interactive=True)
 
 
 @mcp.tool()
@@ -1231,7 +1279,7 @@ def main() -> None:
         from . import embeddings as _preload_embeddings  # noqa: F401
     except Exception:  # noqa: BLE001 - optional dependency set may be absent
         pass
-    logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
+    logging.basicConfig(level=getattr(logging, _LOG_LEVEL, logging.WARNING), format="%(name)s %(levelname)s %(message)s")
 
     from atlas_plus.branding import product
     parser = argparse.ArgumentParser(description=f"{product()} MCP memory server")

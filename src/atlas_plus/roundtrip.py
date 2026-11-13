@@ -42,7 +42,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 SERVER_MODULE = "atlas_plus.mcp.memory_server.server"
@@ -81,6 +81,14 @@ def server_command(python: str | None = None, command: str | None = None) -> lis
             raise ValueError(f"--command could not be split ({exc}): {command!r}") from exc
         if not prefix:
             raise ValueError("--command is empty")
+        # The whole registered command pasted in (`<python> -m <module> --stdio`) is accepted:
+        # the module is appended once, not twice (sweep 13, AG29).
+        if prefix[-1] == "--stdio":
+            prefix = prefix[:-1]
+        if len(prefix) >= 2 and prefix[-2:] == ["-m", SERVER_MODULE]:
+            prefix = prefix[:-2]
+        if not prefix:
+            raise ValueError("--command names only the module; it needs the interpreter or launcher in front")
         return [*prefix, "-m", SERVER_MODULE, "--stdio"]
     return [python or sys.executable, "-m", SERVER_MODULE, "--stdio"]
 
@@ -310,7 +318,7 @@ def _main_lines(argv: list[str]) -> int:
     ap.add_argument("--skip-remember", action="store_true",
                     help="diagnostics: search only, write nothing, report the hit count without failing")
     args = ap.parse_args(argv)
-    fact = args.fact or f"Sextant install verified on {date.today().isoformat()} (sextant verify)."
+    fact = args.fact or f"Sextant install verified on {date.today().isoformat()} at {datetime.now():%H:%M} (sextant verify)."
 
     if args.url:
         skipped_http: list[str] = []

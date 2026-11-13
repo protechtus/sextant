@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 from atlas_plus import paths as atlas_paths
 from atlas_plus.hooks._quote import quote_note as _q
+from atlas_plus.hooks._quote import comment_gap as _comment_gap, one_line as _ol
 
 MEMORY_ROOT = atlas_paths.memory_root()
 PROJECTS_ROOT = atlas_paths.projects_root()
@@ -75,7 +76,7 @@ def _read_stripped(path: Path, max_chars: int = 800) -> str:
         # never leading, whitespace: `\s*<!--` was quadratic on a long run of spaces.
         text = text[: max(max_chars * 32, 65536)]
         if "<!--" in text:
-            text = _SOURCE_COMMENT.sub("", text)
+            text = _SOURCE_COMMENT.sub(_comment_gap, text)
         text = text.strip()
         if len(text) <= max_chars:
             return text
@@ -236,7 +237,10 @@ def build_prime_context(task: str, memory_root: Optional[Path] = None) -> str:
     identity_file = resolve_identity_path(root)
     if identity_file.exists():
         identity = _read_stripped(identity_file, max_chars=300)
-        lines += ["## Identity", _q(identity), ""]
+        if identity.lstrip().startswith("# Your Name") or "Introduce yourself to your own memory" in identity:
+            lines += ["## Identity", "(not filled in yet: identity/user.md still holds the sextant-init template)", ""]
+        else:
+            lines += ["## Identity", _q(identity), ""]
 
     # House rules -- the user's own, if they wrote any
     rules = _house_rules(root)
@@ -253,18 +257,18 @@ def build_prime_context(task: str, memory_root: Optional[Path] = None) -> str:
                     break
         if project_file.exists():
             proj_text = _read_stripped(project_file, max_chars=450)
-            lines += [f"## Project: {project_name}", _q(proj_text), ""]
+            lines += [f"## Project: {_ol(project_name)}", _q(proj_text), ""]
 
         tickets = _open_tickets(project_name)
         if tickets:
-            lines += [f"## Open tickets ({project_name})", "\n".join(tickets), ""]
+            lines += [f"## Open tickets ({_ol(project_name)})", "\n".join(tickets), ""]
 
     # Facts matching the task words, from any scope (persona rerun 2026-11-10: `atlas-prime
     # Postgres` showed nothing while `sextant search Postgres` found the project fact).
     related = _related_facts(task, root)
     if related:
         lines += ["## Related facts"]
-        lines += [f"- {path}: {_q(snippet)[2:]}" for path, snippet in related]
+        lines += [f"- {_ol(path)}: {_q(snippet)[2:]}" for path, snippet in related]
         lines.append("")
 
     # Rejected ideas and decisions that match the task words were never primed (AG20).
@@ -319,7 +323,7 @@ def build_prime_context(task: str, memory_root: Optional[Path] = None) -> str:
         for _, f in relevant:
             rel = f.relative_to(root).as_posix()
             text = _read_stripped(f, max_chars=220)
-            lines += [f"### {rel}", _q(text), ""]
+            lines += [f"### {_ol(rel)}", _q(text), ""]
 
     # Open questions from the newest dream (nightly meta-cognitive reflection).
     dream_q = _latest_dream_questions(root)

@@ -378,7 +378,7 @@ class TestSearchRenderEscaping:
         from atlas_plus.cli import app
         result = CliRunner().invoke(app, ["search", "markup"])
         assert result.exit_code == 0
-        assert "[red]" in result.output or "\[red]" in result.output
+        assert "[red]" in result.output or r"\[red]" in result.output
 
 
 class TestIngestForward:

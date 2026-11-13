@@ -5,4 +5,9 @@ include scripts/mcp_roundtrip.py
 include constraints.txt
 recursive-include deploy *.json
 recursive-include docs *.md
+# The sdist ships the whole test tree (conftest, __init__, integration/): a distro packager
+# running the shipped tests needs the fixtures the tests assume (sweep 13, AG30).
+graft tests
 global-exclude *.pyc
+global-exclude __pycache__
+global-exclude *.pyc.*

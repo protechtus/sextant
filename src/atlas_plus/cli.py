@@ -108,7 +108,7 @@ def _overview() -> None:
     # The clone's docs/, found from the package (an editable install), not from the current
     # directory: a package user inside some other project's `docs/` was pointed at that (AG7).
     _clone_docs = _P(__file__).resolve().parents[2] / "docs"
-    if (_clone_docs / "GETTING-STARTED.md").exists() or prefix != "sextant":
+    if (_clone_docs / "GETTING-STARTED.md").exists():  # a package install has no docs/ under any prefix (AG30)
         console.print("  docs        : docs/GETTING-STARTED.md | docs/USAGE.md | docs/CONFIGURATION.md")
     else:
         console.print("  docs        : https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md (USAGE.md, CONFIGURATION.md beside it)")
@@ -384,6 +384,9 @@ def cmd_remember(
         if not fact:
             console.print("[red]Not stored:[/red] nothing on standard input")
             raise typer.Exit(2)
+    if not fact.strip():
+        console.print("[red]Not stored:[/red] the fact is empty (give some words, or `-` to read standard input).")
+        raise typer.Exit(2)
     try:
         result = memory_remember(scope, fact, source="human-direct", interactive=True)
     except RuntimeError as exc:  # the write kill switch (ATLAS_INTERACTIVE_WRITES=off)
@@ -419,6 +422,11 @@ def cmd_search(
     if scope.strip() and not effective:
         console.print(f"[yellow]scope {scope!r} not understood (grammar: reference, project:<name>, "
                       "reference:<topic>, preference:<topic>); searching everything[/yellow]")
+    _mr = atlas_paths.memory_root()
+    if not _mr.is_dir():
+        # before init, a search must not create the state dir and an empty index (sweep 13, AG25)
+        console.print(f"[yellow]No corpus yet[/yellow] at {_mr}: run sextant-init first (nothing was created).")
+        raise typer.Exit(1)
     results, mode = memory_search_hybrid(query=query, scope=effective, limit=limit)
     if not results:
         try:

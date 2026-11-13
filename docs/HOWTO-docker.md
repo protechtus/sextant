@@ -26,7 +26,7 @@ docker compose exec mcp sextant verify       # stdio round-trip inside the image
 docker compose exec mcp sextant search "install verified"   # the fact verify just wrote is on the volume
 ```
 
-The server answers about 8 s after the container starts (the log line is
+The server answers a few seconds after the container starts (the log line is
 `Uvicorn running on`); a curl before that looks like a dead port. To prove a
 write over HTTP from the host, the way a remote client will use it:
 

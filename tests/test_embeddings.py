@@ -165,7 +165,10 @@ class TestVectorSearch:
 
 
 class TestHybrid:
-    def test_hybrid_mode_and_semantic_recall(self, corpus):
+    def test_hybrid_mode_and_semantic_recall(self, corpus, monkeypatch):
+        # publish.yml runs the suite with ATLAS_SEMANTIC_SEARCH=off; this test is about the
+        # hybrid path and must not inherit that switch from the environment (sweep 13, AG30).
+        monkeypatch.delenv("ATLAS_SEMANTIC_SEARCH", raising=False)
         embeddings.rebuild_index(embedder=FakeEmbedder())
         # "auth" never appears in ship.md/fruit.md; query word "auth" hits
         # login.md via BOTH retrievers; mode must be hybrid.

@@ -6,7 +6,7 @@ Please do NOT open a public issue for security problems. Use GitHub's private
 vulnerability reporting on this repository ("Report a vulnerability" under the
 Security tab). You will get an acknowledgement within a few days.
 
-If that button is missing (GitHub only offers it once the repository is public and the maintainer has enabled it), open an issue from any template (blank issues are off) titled `security contact request` with no details in it; the maintainer replies within a few days with a private channel. Never put the vulnerability itself in a public issue.
+Private vulnerability reporting is enabled on this repository. If the button is ever missing, email hello@protechtus.com with the subject `Sextant security` (no details in the subject), or open an issue from any template (blank issues are off) titled `security contact request` with no details in it; the maintainer replies within a few days with a private channel. Never put the vulnerability itself in a public issue.
 
 ## Scope
 
@@ -44,7 +44,11 @@ that header with the real client address (Caddy: `header_up
 Cf-Connecting-Ip {remote_host}`; nginx: `proxy_set_header Cf-Connecting-Ip
 $remote_addr`), and set `ATLAS_FORWARDED_IP_HEADER=none` if no proxy will
 ever sit in front: then every forwarded header is ignored. Keys shorter
-than 16 characters are refused at startup on every service.
+than 16 characters are refused at startup on every service, the ntfy command
+listener's shared secret included. One exemption exists: sources listed in
+`ATLAS_MCP_TRUSTED_PEERS` (a NAT gateway, the Docker bridge) are never locked
+out of the MCP server and their failures are not counted; never list a public
+range there.
 
 ## Supported versions
 

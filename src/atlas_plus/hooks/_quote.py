@@ -13,7 +13,18 @@ import re
 _MARKER_RE = re.compile(r"={3,}")
 _TAG_RE = re.compile(r"<(?=/?[A-Za-z!?])")
 # C0/C1 controls except tab (an ESC[2J in a decision cleared the screen under `sextant context`).
-_CONTROL_RE = re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]")
+# ... plus the invisible format characters a note can use to reorder or hide what the human
+# reads: zero-width space/joiners, bidi embeddings and overrides, isolates, BOM (sweep 13, AG29).
+_CONTROL_RE = re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+
+
+def comment_gap(m: "re.Match[str]") -> str:
+    """What replaces a stripped provenance comment: nothing at the end of a line, a space inline
+    (sweep 13, AG29: `this <!-- source: x --> and` primed as `thisand`)."""
+    s, a, b = m.string, m.start(), m.end()
+    at_line_start = a == 0 or s[a - 1] == "\n"
+    at_line_end = b >= len(s) or s[b - 1] == "\n" or s[b] == "\n"
+    return "" if at_line_end else " "
 
 
 def one_line(text: str) -> str:

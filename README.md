@@ -11,6 +11,15 @@
 
 > Every LLM session should start with the context of every previous session -- without manual priming.
 
+```bash
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install git+https://github.com/protechtus/sextant
+sextant init && sextant setup && sextant verify  # init a corpus, register your client, prove the round-trip
+```
+
+Four commands, about ten minutes, Python 3.11 or newer. The full walk-through is in
+[Quickstart](#quickstart) below. Not on PyPI yet: the first release ships when `v0.1.0` is tagged.
+
 Sextant is a self-hosted AI memory and orchestration platform (engine codename: Keel).
 MCP -- the Model Context Protocol -- is the plug-in standard AI clients like Claude Code,
 Claude Desktop, and Cursor use to reach external tools; Sextant speaks it natively.
@@ -65,7 +74,7 @@ machines; if that has never bothered you, the built-in is the right call.
 Supported platforms: Windows, Linux, macOS; Python 3.11+. git required.
 You also need an MCP client to connect to -- the walkthrough below uses the
 Claude Code CLI. If `claude --version` prints nothing, install Claude Code
-first ([anthropic.com/claude-code](https://www.anthropic.com/claude-code) has
+first ([anthropic.com/claude-code](https://claude.com/product/claude-code) has
 the installer for each OS); nothing in this quickstart installs it for you.
 Using Codex CLI or opencode instead? `sextant setup --client codex` and
 `sextant setup --client opencode` print their registration forms, and
@@ -82,8 +91,8 @@ ways once you know what you want:
 main without a clone (with the optional layers:
 `pip install "sextant-ai[telegram,summarizer] @ git+https://github.com/protechtus/sextant.git"`;
 `sextant setup` and `sextant verify` then replace every clone-only step), and
-`pip install sextant-ai` installs the released
-package from PyPI (v0.1.0 and later). Do NOT `pip install
+`pip install sextant-ai` will install the released
+package from PyPI once `v0.1.0` is tagged (until then, install from git as above). Do NOT `pip install
 sextant` -- that is an unrelated third-party package (a helm-charts CLI), not
 this project.
 

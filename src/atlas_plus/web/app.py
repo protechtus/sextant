@@ -162,8 +162,22 @@ def _cookie_origin_ok(request) -> bool:
     return bool(req_host) and host == req_host and port == req_port
 
 
+def _refuse_cross_site(request) -> None:
+    """No-auth dev mode still refuses browser cross-site writes (sweep 13, AG27).
+
+    A browser always sends Origin on a cross-origin POST; the dashboard's own pages send
+    the dashboard's origin and local tools (curl, the CLI) send none. So a write that
+    carries a foreign Origin can only be another site driving the user's browser.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if request.headers.get("origin") and not _cookie_origin_ok(request):
+        raise HTTPException(status_code=403, detail="cross-site request refused: writes need the dashboard's own Origin, even with --no-auth")
+
+
 def _check_auth(request: Request, header_only: bool = False) -> None:
     if _ALLOW_NO_AUTH and not API_KEY:
+        _refuse_cross_site(request)
         return
     if not API_KEY:
         raise HTTPException(status_code=503, detail="ATLAS_WEB_API_KEY not set.")
@@ -4258,6 +4272,10 @@ async def ws_chat(websocket: WebSocket, session_id: str):
     elif not _ALLOW_NO_AUTH:
         # No key and not explicitly in no-auth dev mode -- reject.
         await websocket.close(code=4401)
+        return
+    elif websocket.headers.get("origin") and not _cookie_origin_ok(websocket):
+        # no-auth dev mode: a page on another origin must not drive the chat socket (sweep 13, AG27)
+        await websocket.close(code=4403)
         return
     await websocket.accept()
     try:

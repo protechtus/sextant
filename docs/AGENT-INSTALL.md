@@ -242,7 +242,9 @@ If the human's client is Codex CLI or opencode rather than Claude Code,
 table) and `sextant setup --client opencode` (the `mcp` block for
 `opencode.json`) print the registration; check with `codex mcp list` or
 `opencode mcp list`, and prove the configured command with
-`sextant verify --command "<that command>" --env ATLAS_WORKSPACE_ROOT=<value>`.
+`sextant verify --command "<that command>" --env ATLAS_WORKSPACE_ROOT=<value>` (double quotes
+around the whole command; verify appends the server module itself, and accepts the command
+with or without the trailing `-m atlas_plus.mcp.memory_server.server --stdio`).
 Those clients have no session hooks: offer to paste the output of
 `sextant-session-start` into AGENTS.md or the client's instructions file
 (ASK first), and say that end-of-session summaries are Claude Code only.

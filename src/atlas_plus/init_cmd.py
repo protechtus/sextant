@@ -82,7 +82,14 @@ def run_init(dry_run: bool = False) -> dict:
         else:
             created.append(str(p))
             if not dry_run:
-                p.mkdir(parents=True, exist_ok=True)
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                except PermissionError as exc:
+                    raise SystemExit(
+                        f"sextant-init: cannot create {p}: permission denied ({exc.strerror}). "
+                        "The directory belongs to another user. In Docker a bind-mounted /data must be "
+                        "writable by the container user (uid 1000): on the host, chown -R 1000:1000 <dir>."
+                    ) from None
 
     def _ensure_file(p: Path, content: str) -> None:
         if p.exists():
