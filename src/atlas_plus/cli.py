@@ -593,6 +593,16 @@ _STATUS_STYLE = {
     "not running": "yellow", "not configured": "dim", "disabled": "dim",
 }
 
+@app.command("find", hidden=True)
+def cmd_find(
+    query: str = typer.Argument(..., help="What to look for (meaning-aware when the semantic index exists)."),
+    scope: str = typer.Option("", "--scope", help="Restrict to a corpus subdirectory (reference) or a write scope (project:<name>, reference:<topic>)."),
+    limit: int = typer.Option(10, "--limit", "-n"),
+) -> None:
+    """Alias of `search` (the first guess a newcomer types)."""
+    cmd_search(query=query, scope=scope, limit=limit)
+
+
 
 @app.command("components")
 def cmd_components(

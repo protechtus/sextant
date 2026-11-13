@@ -197,7 +197,7 @@ def _related_facts(task: str, root: Path, limit: int = 3) -> list[tuple[str, str
         return []
     out = []
     for r in results or []:
-        snippet = " ".join(str(r.get("snippet") or "").split())[:160]
+        snippet = " ".join(_SOURCE_COMMENT.sub(_comment_gap, str(r.get("snippet") or "")).split())[:160]
         path = str(r.get("path") or "")
         if path:
             out.append((path, snippet))

@@ -11,13 +11,15 @@
 
 > Every LLM session should start with the context of every previous session -- without manual priming.
 
-```bash
-python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+```text
+python -m venv .venv                                  # then activate it: . .venv/bin/activate  (PowerShell: .venv\Scripts\Activate.ps1)
 pip install git+https://github.com/protechtus/sextant
-sextant init && sextant setup && sextant verify  # init a corpus, register your client, prove the round-trip
+sextant init                                          # a corpus (plain Markdown) and a state dir
+sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it
+sextant verify                                        # proves the round-trip; your client is connected once the setup line has run
 ```
 
-Four commands, about ten minutes, Python 3.11 or newer. The full walk-through is in
+One command per line (no `&&`: PowerShell 5.1 has none), about ten minutes, Python 3.11 or newer. The full walk-through is in
 [Quickstart](#quickstart) below. Not on PyPI yet: the first release ships when `v0.1.0` is tagged.
 
 Sextant is a self-hosted AI memory and orchestration platform (engine codename: Keel).

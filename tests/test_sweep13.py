@@ -225,10 +225,14 @@ def test_verify_fact_carries_the_time():
 
 def test_public_readme_first_screen_installs_and_says_not_on_pypi():
     root = Path(__file__).resolve().parents[1]
-    readme = (root / "docs" / "README-PUBLIC.md").read_text(encoding="utf-8")
+    src = root / "docs" / "README-PUBLIC.md"            # the private tree
+    if not src.exists():
+        src = root / "README.md"                       # the public tree ships it as README.md
+    readme = src.read_text(encoding="utf-8")
     head = readme[:2500]
     assert re.search(r"pip install git\+https://github\.com/[\w.-]+/sextant\b", head)
-    assert "sextant init && sextant setup && sextant verify" in head
+    assert "sextant init" in head and "sextant setup" in head and "sextant verify" in head
+    assert "&&" not in head.split("```")[1]  # the install block runs as written on PowerShell 5.1 (MN19)
     assert "Not on PyPI yet" in head
     assert "https://www.anthropic.com/claude-code" not in readme
 

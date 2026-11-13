@@ -670,6 +670,15 @@ def _prog() -> str:
 
 
 def main() -> None:
+    try:
+        _main()
+    except KeyboardInterrupt:
+        # a Ctrl-C at a confirmation prompt is an answer, not a crash (sweep 13, MN19)
+        print("\naborted: nothing was removed", file=sys.stderr)
+        raise SystemExit(130)
+
+
+def _main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
     parser = argparse.ArgumentParser(
