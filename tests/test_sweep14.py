@@ -176,3 +176,69 @@ def test_turkish_dotted_i_folds_to_one_note(tmp_path, monkeypatch):
     b = memory_remember("reference:istanbul", "another", source="agent")
     assert a.get("ok") and b.get("ok") and a["file"] == b["file"]
     assert "\u0307" not in Path(a["file"]).name
+
+
+# --- imports at scale (AG35) ---
+
+
+def test_import_walk_skips_reserved_device_names(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import import_cmd
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "fine.md").write_text("# fine\n\nbody\n", encoding="utf-8")
+    reserved = vault / "aux.md"
+    if os.name == "nt":
+        reserved = Path("\\\\?\\" + str(vault / "aux.md"))
+    try:
+        reserved.write_text("# aux\n", encoding="utf-8")
+    except OSError:
+        pytest.skip("cannot create a reserved-name file here")
+    (tmp_path / "mem" / "reference").mkdir(parents=True)
+    report = import_cmd.import_obsidian(vault, "reference/obsidian", execute=False)
+    assert "aux.md" in " ".join(report.get("skipped_reserved_names", []))
+    assert report["planned"] == 1 and "truncated" in report
+
+
+def test_import_report_names_truncated_notes(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import import_cmd
+
+    monkeypatch.setattr(import_cmd, "MAX_IMPORT_CHARS", 500)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "big.md").write_text("# big\n\n" + "x" * 2000 + "\n", encoding="utf-8")
+    (tmp_path / "mem" / "reference").mkdir(parents=True)
+    report = import_cmd.import_obsidian(vault, "reference/obsidian", execute=True)
+    assert report["imported"] == 1 and report["truncated"] and "big" in report["truncated"][0]
+    text = next((tmp_path / "mem" / "reference" / "obsidian").rglob("big*.md")).read_text(encoding="utf-8")
+    assert "import_vault:" in text and "[truncated by sextant import" in text
+
+
+def test_archive_stale_is_per_vault(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import import_cmd
+
+    (tmp_path / "mem" / "reference").mkdir(parents=True)
+    v1 = tmp_path / "v1"; v1.mkdir(); (v1 / "one.md").write_text("# one\n\nalpha\n", encoding="utf-8")
+    v2 = tmp_path / "v2"; v2.mkdir(); (v2 / "two.md").write_text("# two\n\nbeta\n", encoding="utf-8")
+    import_cmd.import_obsidian(v1, "reference/obsidian", execute=True)
+    report = import_cmd.import_obsidian(v2, "reference/obsidian", execute=True, archive_stale=True)
+    assert not report["stale"], report["stale"]          # vault 1's note is not vault 2's business
+    assert list((tmp_path / "mem" / "reference" / "obsidian").rglob("one*.md"))
+
+
+def test_inbound_refs_match_multiword_stems(tmp_path):
+    from atlas_plus.curation.orphan import _build_inbound_refs
+
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    (root / "reference" / "Meeting Notes.md").write_text("# Meeting Notes\n\nagenda\n", encoding="utf-8")
+    (root / "reference" / "other.md").write_text("see [[Meeting Notes]] and the meeting notes from June\n", encoding="utf-8")
+    (root / "reference" / "unrelated.md").write_text("nothing here\n", encoding="utf-8")
+    counts = _build_inbound_refs(root)
+    assert counts["Meeting Notes"] == 1 and counts["unrelated"] == 0

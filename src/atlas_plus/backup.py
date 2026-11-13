@@ -304,14 +304,15 @@ def now(
         src = t["source"]
         dest = t["dest"]
         name = t["name"]
-        extra = []
+        extra = ["--no-unicode-normalization"]  # NFC and NFD siblings both survive the trip (AG35)
         for exc in t.get("exclude", []):
             extra += ["--exclude", exc]
 
         # Guard: a misconfigured/empty source would mirror emptiness onto the
         # remote. Refuse to sync a local directory holding almost nothing.
-        n_files = _count_files_capped(src, _MIN_SYNC_SOURCE_FILES)
-        if n_files is not None and n_files < _MIN_SYNC_SOURCE_FILES:
+        _min_files = 1 if "state" in name else _MIN_SYNC_SOURCE_FILES  # a fresh .atlas has four files and is real (AG35)
+        n_files = _count_files_capped(src, _min_files)
+        if n_files is not None and n_files < _min_files:
             var = "ATLAS_STATE_DIR" if "state" in name else "ATLAS_MEMORY_ROOT"
             msg = (f"SYNC REFUSED {name}: source {src} has only {n_files} file(s) "
                    f"(< {_MIN_SYNC_SOURCE_FILES}); check {var}")
@@ -347,7 +348,7 @@ def now(
             src = t["source"]
             dest = t["dest_template"].format(date=date_str)
             name = t["name"]
-            extra = []
+            extra = ["--no-unicode-normalization"]
             for exc in t.get("exclude", []):
                 extra += ["--exclude", exc]
             _log(f"Archiving {name}: {src} -> {dest}")

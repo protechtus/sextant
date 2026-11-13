@@ -214,6 +214,8 @@ semantic index with `sextant-embed-index` to enable semantic search
 (`ollama pull nomic-embed-text` once, then searches understand meaning,
 not just keywords; without it, keyword search works exactly as before).
 
+Each vault gets its own `--scope` (for example `--scope reference/work-vault`): `--archive-stale` judges staleness per vault (notes carry an `import_vault` stamp), and notes a different vault imported into the same scope by an older build look stale to it until they are re-imported once. A note over 4,000,000 characters is cut there with a marker at its end and listed under `truncated` in the report. A ChatGPT or Claude conversation that gained turns since the last import is updated in place (a version copy is kept). Notion exports: unzip first and point at the folder (HTML pages are not imported); Hugo and Jekyll content folders import as plain Markdown. Restore a backup with `rclone copy <remote>:<root>/memory <new-workspace>/.memory`.
+
 Facts from the shell: a line that starts with `---` is refused (it would
 close the note's frontmatter); dashes mid-sentence are fine. In PowerShell
 5.1 a fact that contains double quotes is easier to pass on standard input:

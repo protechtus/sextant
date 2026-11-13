@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from atlas_plus import paths as atlas_paths
+from atlas_plus.mcp.memory_server.routing import _is_reserved_device_name
 
 _SKIP_DIRS = {".obsidian", ".git", ".trash", "node_modules", "__pycache__"}
 # Obsidian's templates folder holds placeholders (`<% tp.date.now() %>`), not notes (MN15).
@@ -147,6 +148,33 @@ def _chat_fingerprints(dest_root: Path) -> dict[tuple[str, str], str]:
     return out
 
 
+def _find_prior_note(prior: str, dest_root: Path) -> Path | None:
+    """The corpus file a fingerprint names, whichever way the index spelled it."""
+    cands = [Path(prior), dest_root / Path(prior).name]
+    for up in range(1, 4):
+        try:
+            cands.append(dest_root.parents[up - 1] / prior)
+        except IndexError:
+            break
+    for c in cands:
+        if c.is_file():
+            return c
+    return None
+
+
+def _grew(prior_path: Path, new_text: str) -> bool:
+    """True when the newly rendered conversation holds more body than the stored note."""
+    try:
+        old = prior_path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    if "[truncated by sextant import" in old:
+        return False
+    old_body = _fm_body(old).replace("\r\n", "\n").strip()
+    new_body = _fm_body(new_text).replace("\r\n", "\n").strip()
+    return len(new_body) > len(old_body) and new_body.startswith(old_body[:200])
+
+
 def _chat_already_imported(dest: Path, text_out: str, listing: dict[Path, list[str]]) -> bool:
     """True when ``dest`` or one of its ``_N`` collision copies already holds this
     conversation's body (frontmatter differs by ``imported_at`` only).
@@ -208,6 +236,9 @@ def _read_note(src: Path) -> tuple[str | None, str | None]:
         return raw.decode("cp1252", errors="replace"), "not UTF-8: decoded as cp1252"
 
 
+_TRUNCATED: list[str] = []  # notes cut at MAX_IMPORT_CHARS during this run, for the report (AG35)
+
+
 def _write_lf(target: Path, text: str) -> None:
     """Write an imported note: LF line endings (write_text made CRLF on Windows, AG14), control
     characters and lone surrogates scrubbed (a lone surrogate left a zero-byte note and aborted
@@ -215,6 +246,7 @@ def _write_lf(target: Path, text: str) -> None:
     from atlas_plus.mcp.memory_server.routing import _scrub_controls
     text = _scrub_controls(text)
     if len(text) > MAX_IMPORT_CHARS:
+        _TRUNCATED.append(f"{target.name}: {len(text):,} characters cut at {MAX_IMPORT_CHARS:,}")  # named in the report (AG35)
         text = text[:MAX_IMPORT_CHARS] + f"\n\n[truncated by sextant import: {len(text):,} characters]\n"
     tmp = target.with_name(f"{target.name}.{os.getpid()}.imp-tmp")
     try:
@@ -290,6 +322,20 @@ def _body_hash(text: str) -> str:
     return hashlib.sha256(_fm_body(text).replace("\r\n", "\n").strip().encode("utf-8", errors="replace")).hexdigest()
 
 
+_CURRENT_VAULT: dict[str, str] = {"id": ""}  # the vault being imported, for the stamps (AG35)
+
+
+def _vault_id(vault: Path) -> str:
+    """A short stable id of a vault (its resolved path): two vaults imported into one scope must
+    not judge each other's notes stale (AG35: a daily --archive-stale archived the other vault)."""
+    import hashlib as _h
+    try:
+        key = str(vault.resolve()).lower()
+    except OSError:
+        key = str(vault).lower()
+    return _h.sha256(key.encode("utf-8", "replace")).hexdigest()[:12]
+
+
 def _frontmatter_for(title: str, source: str, original: str, imported_hash: str = "") -> str:
     fields = {
         "id": _slug(title),
@@ -299,6 +345,8 @@ def _frontmatter_for(title: str, source: str, original: str, imported_hash: str 
         "imported_at": _now_iso(),
         "original_path": original,
     }
+    if _CURRENT_VAULT["id"]:
+        fields["import_vault"] = _CURRENT_VAULT["id"]
     if imported_hash:
         fields["imported_hash"] = imported_hash
     return _fm_block(fields)
@@ -343,6 +391,8 @@ def _stamp_existing_frontmatter(text: str, source: str, original: str, imported_
     data["imported_from"] = source
     data["imported_at"] = _now_iso()
     data["original_path"] = original
+    if _CURRENT_VAULT["id"]:
+        data["import_vault"] = _CURRENT_VAULT["id"]
     if imported_hash:
         data["imported_hash"] = imported_hash
     body = text[m.end():]
@@ -356,7 +406,7 @@ def plan_obsidian(vault: Path, scope: str) -> list[tuple[Path, Path]]:
     return _plan_obsidian(vault, scope)[0]
 
 
-_PLAN_EXTRAS: dict = {"templates": [], "non_markdown": 0}
+_PLAN_EXTRAS: dict = {"templates": [], "non_markdown": 0, "reserved": []}
 
 
 def _plan_obsidian(vault: Path, scope: str) -> tuple[list[tuple[Path, Path]], list[str]]:
@@ -369,6 +419,7 @@ def _plan_obsidian(vault: Path, scope: str) -> tuple[list[tuple[Path, Path]], li
     plan: list[tuple[Path, Path]] = []
     skipped_links: list[str] = []
     _PLAN_EXTRAS["templates"] = []
+    _PLAN_EXTRAS["reserved"] = []
     _PLAN_EXTRAS["non_markdown"] = 0
     try:
         vault_real = vault.resolve()
@@ -391,6 +442,11 @@ def _plan_obsidian(vault: Path, scope: str) -> tuple[list[tuple[Path, Path]], li
         dirnames[:] = keep
         for name in sorted(filenames):
             if name.startswith("."):
+                continue
+            if _is_reserved_device_name(name):
+                # `aux.md`, `con.md`: opening one blocks forever on Windows (AG35); a vault synced
+                # from a Mac or Linux box can hold them. Named in the report, never opened.
+                _PLAN_EXTRAS["reserved"].append((rel_dir / name).as_posix())
                 continue
             if not name.lower().endswith(".md"):
                 _PLAN_EXTRAS["non_markdown"] += 1
@@ -498,8 +554,10 @@ def _corpus_index(dest_root: Path, root: Path) -> list[dict]:
             except ValueError:
                 rel = str(p)
             ih = re.search(r"^imported_hash:\s*'?([0-9a-f]{64})'?\s*$", fm, re.M)
+            iv = re.search(r"^import_vault:\s*'?([0-9a-f]{12})'?\s*$", fm, re.M)
             ia = re.search(r"^imported_at:\s*'?([0-9T:+.-]+)'?\s*$", fm, re.M)
-            out.append({"path": p, "rel": rel, "origin": origin,
+            out.append({
+                "vault": iv.group(1) if iv else "","path": p, "rel": rel, "origin": origin,
                         "hash": hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest(),
                         "imported_hash": ih.group(1) if ih else None,
                         "imported_at": ia.group(1) if ia else "",
@@ -533,6 +591,8 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
     what `--yes` will do (MN15, sweep 11: the dry run listed only renames). Stale corpus copies
     (older copies of edited notes, notes no longer in the vault) are named, and `--archive-stale`
     moves them to archive/ instead of leaving them in search."""
+    _TRUNCATED.clear()
+    _CURRENT_VAULT["id"] = _vault_id(vault)
     import hashlib
     plan, skipped_links = _plan_obsidian(vault, scope)
     templates = list(_PLAN_EXTRAS.get("templates", []))
@@ -622,6 +682,8 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
                         mark_stale(e["rel"], f"older copy; the current copy is {latest['rel']}")
         elif not _vault_still_has(vault, origin):
             for e in entries:
+                if e.get("vault") and e["vault"] != _CURRENT_VAULT["id"]:
+                    continue  # another vault's note in the same scope: not ours to call stale (AG35)
                 mark_stale(e["rel"], "no longer in the vault (deleted, or renamed and edited)")
 
     archived: list[str] = []
@@ -636,6 +698,7 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
             "unchanged": unchanged, "edited": edited, "renamed": renamed, "new": new,
             "skipped_already_imported": unchanged, "destination": scope,
             "skipped_links": skipped_links, "skipped_binary": skipped_binary,
+            "skipped_reserved_names": list(_PLAN_EXTRAS.get("reserved", [])), "truncated": list(_TRUNCATED),
             "decoded_non_utf8": decoded, "skipped_templates": templates, "skipped_non_markdown": non_md,
             "renamed_notes": renamed_lines, "stale": stale, "archived": archived,
             "sample_destinations": writes[:20]}
@@ -734,7 +797,7 @@ def _chat_dest(dest_root: Path, stamp, title: str) -> Path:
 def import_chatgpt(export_file: Path, execute: bool) -> dict:
     conversations = plan_chatgpt(export_file)
     dest_root = atlas_paths.memory_root() / "reference" / "imports" / "chatgpt"
-    imported = skipped = already = would = 0
+    imported = skipped = already = would = updated = 0
     skipped_reasons: list[str] = []
     older_build: list[str] = []
     listing: dict[Path, list[str]] = {}
@@ -777,11 +840,25 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
             continue
         prior = known.get(_chat_fingerprint(text))
         if prior is not None:
-            # An older build filed this conversation under another name (both branches, or the
-            # run date): it is the same conversation, not a new one (MN13, sweep 11).
+            # The same conversation already filed (an older build's name, or an export that
+            # gained turns since). When it grew, the note is updated in place behind a version
+            # copy (AG35: new turns were silently dropped as 'older build').
+            prior_path = _find_prior_note(prior, dest_root)
+            if prior_path is not None and _grew(prior_path, text):
+                if execute:
+                    try:
+                        from atlas_plus.mcp.memory_server.versioning import version_before_write
+                        version_before_write(prior_path, root=dest_root.parents[2] if len(dest_root.parents) > 2 else dest_root.parent)
+                    except Exception:  # noqa: BLE001 - a missing versions root never blocks the update
+                        pass
+                    _write_lf(prior_path, text)
+                updated += 1
+                older_build.append(f"{title!r} gained turns since the last import: {prior} "
+                                   + ("updated in place (version copy kept)" if execute else "would be updated in place"))
+                continue
             already += 1
-            older_build.append(f"{title!r} is already imported as {prior} (by an older build; its text may "
-                               "differ from today's rendering)")
+            older_build.append(f"{title!r} is already imported as {prior} (same conversation; the stored text "
+                               "differs from today's rendering, an older build's or a truncated one)")
             continue
         if not execute:
             would += 1
@@ -794,7 +871,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
     return {"source": "chatgpt", "planned": len(conversations),
             "imported": imported, "would_import": would, "skipped_already_imported": already,
             "skipped_empty": skipped, "skipped_reasons": skipped_reasons,
-            "already_imported_by_an_older_build": older_build,
+            "already_imported_by_an_older_build": older_build, "updated": updated, "truncated": list(_TRUNCATED),
             "destination": "reference/imports/chatgpt"}
 
 
@@ -822,7 +899,7 @@ def _load_claude_export(path: Path) -> list:
 def import_claude(export_file: Path, execute: bool) -> dict:
     conversations = _load_claude_export(export_file)
     dest_root = atlas_paths.memory_root() / "reference" / "imports" / "claude"
-    imported = skipped = already = would = 0
+    imported = skipped = already = would = updated = 0
     skipped_reasons: list[str] = []
     older_build: list[str] = []
     listing: dict[Path, list[str]] = {}
@@ -889,7 +966,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
     return {"source": "claude", "planned": len(conversations),
             "imported": imported, "would_import": would, "skipped_already_imported": already,
             "skipped_empty": skipped, "skipped_reasons": skipped_reasons,
-            "already_imported_by_an_older_build": older_build,
+            "already_imported_by_an_older_build": older_build, "updated": updated, "truncated": list(_TRUNCATED),
             "destination": "reference/imports/claude"}
 
 

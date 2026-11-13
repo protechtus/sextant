@@ -54,13 +54,22 @@ def _build_inbound_refs(memory_root: Path) -> dict[str, int]:
     # membership is equivalent for stems that are themselves all [A-Za-z0-9_-]. The (rare) stems
     # containing other characters keep the exact boundary-regex path.
     _alnum = re.compile(r"^[A-Za-z0-9_-]+$")
+    token_re = re.compile(r"[A-Za-z0-9_-]+")
     fast_stems: dict[str, list[str]] = {}     # lowercased token -> original stem(s) (handles case collisions)
-    slow_patterns: dict[str, re.Pattern] = {}
+    gram_stems: dict[tuple[str, ...], list[str]] = {}  # lowercased token tuple -> stems with spaces/punctuation
+    slow_patterns: dict[str, re.Pattern] = {}  # stems with no Latin token at all (CJK names): one regex each
     for stem in stems:
         if len(stem) < 4:
             continue
         if _alnum.match(stem):
             fast_stems.setdefault(stem.lower(), []).append(stem)
+            continue
+        grams = tuple(t.lower() for t in token_re.findall(stem))
+        if 1 <= len(grams) <= 12:
+            # `Meeting Notes` is the token pair (meeting, notes): matched as an adjacent n-gram of the
+            # file's tokens, one pass per file. The per-stem regex made doctor take 8 minutes on a
+            # 3,000-note Obsidian vault, every stem having a space (AG35, sweep 14).
+            gram_stems.setdefault(grams, []).append(stem)
         else:
             try:
                 slow_patterns[stem] = re.compile(
@@ -71,7 +80,7 @@ def _build_inbound_refs(memory_root: Path) -> dict[str, int]:
                 pass
 
     fast_token_set = set(fast_stems)
-    token_re = re.compile(r"[A-Za-z0-9_-]+")
+    gram_lengths = sorted({len(g) for g in gram_stems})
 
     for md_file in all_files:
         try:
@@ -79,11 +88,26 @@ def _build_inbound_refs(memory_root: Path) -> dict[str, int]:
         except OSError:
             continue
         this_stem = md_file.stem
-        tokens = {t.lower() for t in token_re.findall(content)}
+        toks = [t.lower() for t in token_re.findall(content)]
+        tokens = set(toks)
         for tok in tokens & fast_token_set:
             for stem in fast_stems[tok]:
                 if stem != this_stem:
                     inbound[stem] += 1
+        if gram_stems:
+            seen_grams: set[tuple[str, ...]] = set()
+            for n in gram_lengths:
+                if n == 1:
+                    seen_grams.update((t,) for t in tokens)
+                    continue
+                for i in range(len(toks) - n + 1):
+                    g = tuple(toks[i:i + n])
+                    if g in gram_stems:
+                        seen_grams.add(g)
+            for g in seen_grams:
+                for stem in gram_stems.get(g, ()):
+                    if stem != this_stem:
+                        inbound[stem] += 1
         for stem, pattern in slow_patterns.items():
             if stem == this_stem:
                 continue
