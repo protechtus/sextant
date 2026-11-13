@@ -1896,6 +1896,10 @@ def _run_curation_report(arg: str = "") -> None:
     convergence_count = 0
     decisions_count = 0
     for line in report_text.splitlines():
+        if "Repeated facts (" in line:
+            m = re.search(r"\((\d+) found", line)
+            if m:
+                counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
         if "Potential Duplicates (" in line:
             import re
             m = re.search(r"\((\d+) found", line)

@@ -199,8 +199,9 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
         )
     from atlas_plus.auth import bearer_token, constant_time_equals
 
-    def _deny(reason: str) -> None:
-        AUTH_FAILURES.record(
+    def _deny(reason: str, count: bool = True) -> None:
+        if count:
+          AUTH_FAILURES.record(
             path=request.url.path,
             client_ip=client_ip,
             cf_ip=cf_ip,
@@ -238,7 +239,10 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
         if header_only:
             _deny("cookie_not_accepted")   # this route takes the bearer only (extension inbox)
         if not _session_valid(cookie):
-            _deny("bad_session")
+            # a session cookie is 256 random bits: an unknown one is a stale tab after a restart
+            # or a rotation, not a guess, so it does not feed the lockout (AG31: a stale tab
+            # locked the operator out through the tunnel every minute)
+            _deny("bad_session", count=False)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             if not _cookie_origin_ok(request):
                 _deny("cookie_origin")
@@ -329,6 +333,24 @@ app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan,
 # subresource integrity, only those two origins may run script, nothing may frame the page,
 # and the referrer never leaves. 'unsafe-inline' stays for the page's own inline script and
 # Tailwind's generated styles.
+async def _json_object(request: Request, required: tuple[str, ...] = ()) -> dict:
+    """The request body as a JSON object, or a 400 that says what is wrong (AG31: the ticket
+    routes answered 500 and leaked KeyError text; the deep-JSON guard covered two routes)."""
+    raw = await request.body()
+    if _too_deep(raw):
+        raise HTTPException(status_code=400, detail="Body too deeply nested")
+    try:
+        body = json.loads(raw.decode("utf-8") if raw else "")
+    except (UnicodeDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    missing = [k for k in required if not body.get(k)]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing field(s): {', '.join(missing)}")
+    return body
+
+
 def _too_deep(raw: bytes, limit: int = 200) -> bool:
     """True when the JSON text nests deeper than ``limit``. json.loads raises RecursionError on
     100,000 brackets on the main thread but segfaults inside a worker thread on musl, whose
@@ -507,11 +529,13 @@ async def status_partial(request: Request):
     """
     _check_auth(request)
     mcp_port = os.environ.get("ATLAS_MCP_PORT", "8765")
+    mcp_base = (os.environ.get("ATLAS_MCP_URL") or f"http://127.0.0.1:{mcp_port}").rstrip("/")
+    ollama_base = (os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")
     # Fire all three checks concurrently; worst-case latency = slowest, not sum.
-    async with httpx.AsyncClient(timeout=3.0) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
         brain_req  = client.get(f"{BRAIN_URL}/health")
-        mcp_req    = client.get(f"http://127.0.0.1:{mcp_port}/health", headers=_mcp_headers)
-        ollama_req = client.get("http://localhost:11434/api/tags")
+        mcp_req    = client.get(f"{mcp_base}/health", headers=_mcp_headers)
+        ollama_req = client.get(f"{ollama_base}/api/tags")
         brain_r, mcp_r, ollama_r = await asyncio.gather(
             brain_req, mcp_req, ollama_req, return_exceptions=True
         )
@@ -731,7 +755,7 @@ async def agents_html(request: Request):
     # Fetch credit-exhausted agent names from Brain diagnostic
     credit_exhausted: set[str] = set()
     try:
-        async with httpx.AsyncClient(timeout=3.0) as _dc:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as _dc:
             _dr = await _dc.get(f"{BRAIN_URL}/diagnostic", headers=_brain_headers)
             if _dr.status_code == 200:
                 credit_exhausted = set(_dr.json().get("credit_exhausted_agents", []))
@@ -1350,16 +1374,31 @@ async def memory_files(request: Request):
         return "\n".join(parts)
 
     if not MEMORY_ROOT.exists():
-        return HTMLResponse('<div class="text-red-400 text-xs">MEMORY_ROOT not found.</div>')
+        return HTMLResponse('<div class="text-red-400 text-xs">No corpus yet: run sextant-init (the memory root does not exist).</div>')
     # to_thread: this walk previously ran synchronously INSIDE the async
     # handler, blocking the event loop for the whole render.
     html = await asyncio.to_thread(_render_tree, str(MEMORY_ROOT), str(MEMORY_ROOT))
     return HTMLResponse(f'<div class="space-y-0.5">{html}</div>')
 
 
+@app.get("/expired", response_class=HTMLResponse)
+async def session_expired_page():
+    """Where a stale tab lands after a 401: sessions live in memory, so a restart, a key rotation
+    or the 12-hour limit ends them (AG31, sweep 14)."""
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sextant: session expired</title>"
+        "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#cbd5e1;padding:3rem;max-width:40rem}"
+        "code{color:#67e8f9}</style></head><body><h1>Session expired</h1>"
+        "<p>The dashboard restarted, its key was rotated, or this session reached its 12-hour limit.</p>"
+        "<p>Open it again with your key: <code>http://&lt;host&gt;:&lt;port&gt;/?key=&lt;ATLAS_WEB_API_KEY&gt;</code></p>"
+        "<p>Sessions are held in memory on purpose; nothing was lost.</p></body></html>"
+    )
+
+
 @app.get("/api/memory/file", response_class=HTMLResponse)
-async def memory_file_read(request: Request, path: str = ""):
-    """Read a single memory file. ?path=identity/user.md"""
+async def memory_file_read(request: Request, path: str = "", raw: str = ""):
+    """Read a single memory file. ?path=identity/user.md ; &raw=1 returns the whole file as text
+    (the editor loads that, so a save never truncates a long note: AG31, sweep 14)."""
     _check_auth(request)
     if not path or ".." in path:
         return HTMLResponse('<div class="text-red-400 text-xs">Invalid path.</div>')
@@ -1372,8 +1411,15 @@ async def memory_file_read(request: Request, path: str = ""):
         return HTMLResponse('<div class="text-red-400 text-xs">Path traversal rejected.</div>')
     if not target.exists():
         return HTMLResponse(f'<div class="text-red-400 text-xs">File not found: {_html_mod.escape(safe_path)}</div>')
-    content = target.read_text(encoding="utf-8", errors="replace")[:8000]
+    full = target.read_text(encoding="utf-8", errors="replace")
+    if raw:
+        from starlette.responses import PlainTextResponse
+        return PlainTextResponse(full)
+    content = full[:8000]
+    cut = (f'<div class="text-amber-400 text-xs mb-1">showing the first 8,000 of {len(full):,} characters; '
+           f'Edit loads the whole file</div>') if len(full) > 8000 else ''
     return HTMLResponse(
+        cut +
         f'<div class="flex items-center justify-between mb-1">'
         f'<span class="text-cyan-400 text-xs font-mono font-bold truncate">{_html_mod.escape(safe_path)}</span>'
         f'<button class="btn btn-slate text-xs shrink-0 ml-2" onclick="editMemoryFile({_js_arg(safe_path)})">Edit</button>'
@@ -1387,7 +1433,7 @@ async def memory_file_read(request: Request, path: str = ""):
 async def memory_file_write(request: Request):
     """Write (overwrite) a .memory/ file. Versions before writing."""
     _check_auth(request)
-    body = await request.json()
+    body = await _json_object(request, required=("path",))
     path = body.get("path", "")
     content = body.get("content", "")
     if not isinstance(path, str) or not isinstance(content, str) or not path or ".." in path:
@@ -1701,7 +1747,11 @@ def _get_mem_file_count() -> int:
     ts, count = _mem_file_count_cache
     if time.monotonic() - ts < _MEM_FILE_CACHE_TTL:
         return count
-    count = sum(1 for _ in MEMORY_ROOT.rglob("*.md")) if MEMORY_ROOT.exists() else 0
+    _skip = {"versions", "_atlas", "archive", "_sync"}
+    count = (sum(1 for p in MEMORY_ROOT.rglob("*.md")
+                 if not (_skip & set(p.relative_to(MEMORY_ROOT).parts))
+                 and not any(part.startswith(".") for part in p.relative_to(MEMORY_ROOT).parts))
+             if MEMORY_ROOT.exists() else 0)  # whole-file version copies are not notes (AG31)
     _mem_file_count_cache = (time.monotonic(), count)
     return count
 
@@ -1935,7 +1985,7 @@ async def pending_facts_count_proxy(request: Request):
     """Return {count} of pending facts -- used by Memory tab badge."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/pending-facts/count", headers=_brain_headers)
         if r.status_code == 200:
             return r.json()
@@ -2424,6 +2474,14 @@ async def memory_curation_report(request: Request, dry_run: bool = True):
 
         counts = {"duplicates": 0, "stale": 0, "convergence": 0, "decisions": 0, "rederivable": 0}
         for line in report_text.splitlines():
+            if "Repeated facts (" in line:
+                m = _re.search(r"\((\d+) found", line)
+                if m:
+                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
+            if "Repeated facts (" in line:
+                m = _re.search(r"\((\d+) found", line)
+                if m:
+                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
             if "Potential Duplicates (" in line:
                 m = _re.search(r"\((\d+) found", line)
                 if m:
@@ -2476,6 +2534,14 @@ async def memory_curation_report_panel(request: Request):
             "duplicates": 0, "stale": 0, "convergence": 0, "decisions": 0, "rederivable": 0,
         }
         for line in report_text.splitlines():
+            if "Repeated facts (" in line:
+                m = _re.search(r"\((\d+) found", line)
+                if m:
+                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
+            if "Repeated facts (" in line:
+                m = _re.search(r"\((\d+) found", line)
+                if m:
+                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
             if "Potential Duplicates (" in line:
                 m = _re.search(r"\((\d+) found", line)
                 if m:
@@ -3070,7 +3136,7 @@ async def inbox_promote(item_id: str, request: Request):
         body = {}
     from atlas_plus.inbox.store import promote_to_ticket
     try:
-        _item, ticket_id = promote_to_ticket(item_id, project=body.get("project", "atlas-memory+"))
+        _item, ticket_id = promote_to_ticket(item_id, project=body.get("project", "inbox"))
         return {"item_id": item_id, "ticket_id": ticket_id}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -3607,7 +3673,9 @@ async def create_ticket_endpoint(request: Request):
     Returns the created ticket dict. 400 when validation fails (bad assignee, empty title, etc.).
     """
     _check_auth(request)
-    body = await request.json()
+    if not MEMORY_ROOT.exists():
+        raise HTTPException(status_code=400, detail=f"memory root does not exist: {MEMORY_ROOT} -- run sextant-init there")
+    body = await _json_object(request, required=("title", "project"))
     from atlas_plus.tickets.store import create_ticket
     try:
         t = create_ticket(
@@ -3678,7 +3746,7 @@ async def update_ticket_status(ticket_id: str, request: Request):
     Returns updated ticket dict. 400 on invalid status or unknown ticket.
     """
     _check_auth(request)
-    body = await request.json()
+    body = await _json_object(request, required=("status",))
     from atlas_plus.tickets.store import update_ticket_status as _update
     try:
         t = _update(ticket_id.upper(), body["status"])
@@ -3833,7 +3901,15 @@ async def memory_search(request: Request, q: str = ""):
         if not q.strip():
             index_file = MEMORY_ROOT / "INDEX.md"
             if not index_file.exists():
-                return '<div class="text-slate-500 text-xs">Memory index not found. Check ATLAS_MEMORY_ROOT.</div>'
+                # nothing writes INDEX.md on a fresh install (AG31): show the corpus layout instead
+                if not MEMORY_ROOT.exists():
+                    return '<div class="text-slate-500 text-xs">No corpus yet: run sextant-init.</div>'
+                _skip = {"versions", "_atlas", "archive", "_sync"}
+                rows = []
+                for d in sorted(p for p in MEMORY_ROOT.iterdir() if p.is_dir() and p.name not in _skip and not p.name.startswith(".")):
+                    n = sum(1 for f in d.rglob("*.md") if not (_skip & set(f.relative_to(MEMORY_ROOT).parts)))
+                    rows.append(f'<div class="text-xs"><span class="text-cyan-400 font-mono">{_html_mod.escape(d.name)}/</span> <span class="text-slate-500">{n} note(s)</span></div>')
+                return ('<div class="text-slate-500 text-xs mb-1">Type words to search; the corpus holds:</div>' + "".join(rows)) if rows else '<div class="text-slate-500 text-xs">The corpus is empty: remember something first.</div>'
             content = index_file.read_text(encoding="utf-8", errors="replace")[:6000]
             return (
                 f'<pre class="text-xs text-slate-300 whitespace-pre-wrap overflow-auto leading-relaxed">'
@@ -4615,6 +4691,12 @@ window.addEventListener("DOMContentLoaded",function(){{if(typeof htmx==="undefin
       </div>
     </div>
     <div class="card">
+      <h2 class="text-xs font-bold text-slate-400 mb-1">Auth failures <span class="text-slate-600 font-normal">(lockouts, per source)</span></h2>
+      <div hx-get="/api/security/auth-failures.html" hx-trigger="load, every 60s" hx-swap="innerHTML">
+        <div class="text-slate-600 text-xs">loading...</div>
+      </div>
+    </div>
+    <div class="card">
       <h2 class="text-xs font-bold text-slate-400 mb-1">Build loops <span class="text-slate-600 font-normal">(governor)</span></h2>
       <div hx-get="/api/loop/status" hx-trigger="load, every 30s" hx-swap="innerHTML">
         <div class="text-slate-600 text-xs">loading...</div>
@@ -5264,6 +5346,12 @@ function switchTab(name){{
 }}
 
 // ---- SSE ----
+// A 401 from any panel means the session is gone (restart, rotation, 12 h): leave the page
+// instead of polling 43 panels into a lockout (AG31, sweep 14).
+document.body.addEventListener("htmx:responseError",function(e){{
+  const s=e.detail&&e.detail.xhr?e.detail.xhr.status:0;
+  if(s===401){{window.location.replace("/expired");}}
+}});
 const es=new EventSource("/events");
 es.onopen=()=>document.getElementById("conn").textContent="live";
 es.onerror=()=>document.getElementById("conn").textContent="off";
@@ -5499,6 +5587,7 @@ async function createTicket(){{
       headers:{{"Content-Type":"application/json"}},
       body:JSON.stringify({{title,project,priority,assignee,body}})}});
     const data=await resp.json();
+    if(!resp.ok){{document.getElementById("tk-result").textContent="not created: "+(data.detail||resp.status);return;}}
     document.getElementById("tk-result").textContent="created: "+data.id;
     document.getElementById("tk-title").value="";
     document.getElementById("tk-body").value="";
@@ -5508,9 +5597,10 @@ async function createTicket(){{
 
 async function updateTicket(id,status){{
   try{{
-    await fetch("/api/tickets/"+id+"/status",{{method:"PATCH",
+    const resp=await fetch("/api/tickets/"+id+"/status",{{method:"PATCH",
       headers:{{"Content-Type":"application/json"}},
       body:JSON.stringify({{status}})}});
+    if(!resp.ok){{let d={{}};try{{d=await resp.json();}}catch(e){{}}showToast("Status not changed: "+(d.detail||resp.status),"failed");return;}}
     reloadTickets();showTicketDetail(id);
   }}catch(ex){{console.error(ex);}}
 }}
@@ -5957,7 +6047,9 @@ async function editMemoryFile(path){{
   _mfEditPath=path;
   const pre=document.getElementById('mf-content');
   if(!pre)return;
-  const current=pre.textContent;
+  let current=pre.textContent;
+  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok)current=await rr.text();}}
+  catch(e){{showToast('Could not load the whole file: '+e.message,'failed');return;}}
   const r=document.getElementById('mem-results');
   // Static skeleton via innerHTML; the PATH lands via textContent -- a
   // synced corpus filename can carry < > on POSIX and must never parse

@@ -48,7 +48,53 @@ def drop_dir() -> Path:
     return atlas_paths.state_dir() / "transcripts" / "drop"
 
 
+def _read_text_any(path: Path) -> str:
+    """UTF-8 (BOM dropped), UTF-16 with a BOM, or UTF-8 with replacement: PowerShell 5.1's
+    `>` and `Set-Content` produce the first two, and they used to lose a record or be skipped
+    without a word (AG34)."""
+    raw = path.read_bytes()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    return raw.decode("utf-8-sig", errors="replace")
+
+
+def _claude_code_turn(msg: dict) -> dict | None:
+    """Claude Code's own transcript line (`type: user|assistant`, `message.content` blocks)
+    as a role/content message (AG34: the documented drop route skipped them all)."""
+    kind = str(msg.get("type", "")).strip().lower()
+    inner = msg.get("message")
+    if kind not in ("user", "assistant") or not isinstance(inner, dict):
+        return None
+    content = inner.get("content")
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text" and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+                elif block.get("type") == "tool_use":
+                    parts.append(f"[tool_use {block.get('name', '')}]")
+                elif block.get("type") == "tool_result":
+                    parts.append("[tool_result]")
+            elif isinstance(block, str):
+                parts.append(block)
+        content = "\n".join(parts)
+    if not isinstance(content, str) or not content.strip():
+        return None
+    out = {"role": kind, "content": content}
+    if msg.get("timestamp"):
+        out["ts"] = str(msg["timestamp"])
+    if isinstance(inner.get("model"), str):
+        out["model"] = inner["model"]
+    return out
+
+
 def _records_from_message(msg: dict, conv_id: str, position: int = 0) -> TurnRecord | None:
+    if "role" not in msg and msg.get("type") in ("user", "assistant"):
+        converted = _claude_code_turn(msg)
+        if converted is None:
+            return None
+        msg = converted
     role = str(msg.get("role", "")).strip().lower()
     content = msg.get("content", "")
     if role not in _ROLES or content in ("", None):
@@ -84,7 +130,7 @@ def _parse_file(path: Path) -> tuple[list[TurnRecord], int]:
     suffix = path.suffix.lower()
 
     if suffix == ".jsonl":
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in _read_text_any(path).splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -101,7 +147,7 @@ def _parse_file(path: Path) -> tuple[list[TurnRecord], int]:
                 records.append(rec)
     elif suffix == ".json":
         try:
-            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            data = json.loads(_read_text_any(path))
         except ValueError:
             return [], 1
         messages = data.get("messages") if isinstance(data, dict) else data

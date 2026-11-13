@@ -273,7 +273,7 @@ imported vault: `--scope reference:obsidian/README`.
   offline or with those hosts blocked, every panel stays at "loading..." and
   the page says so; the server's JSON endpoints still answer. Open
   `http://127.0.0.1:8766/?key=<your key>` once; that exchanges the key for a
-  session cookie and the bare URL works from then on (without the cookie it
+  session cookie and the bare URL works from then on (for twelve hours and until the server restarts; after that open it with `?key=` again) (without the cookie it
   answers 401, on purpose). Without the key the server refuses to start.
 - **Telegram control**: optional; `python -m pip install -e ".[telegram]"` from a clone,
   `pip install "sextant-ai[telegram]"` for a package install

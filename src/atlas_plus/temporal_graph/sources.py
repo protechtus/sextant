@@ -720,6 +720,28 @@ class SessionLogSource:
 # ClaudeCodeTranscriptSource (Direction E)
 # ---------------------------------------------------------------------------
 
+def _claude_project_dir(claude_root: Path) -> str:
+    """The Claude Code project folder for THIS workspace (`D:\\Work\\notes` -> `D--Work-notes`), matched
+    case-insensitively on disk; `ATLAS_CLAUDE_PROJECT_DIR` overrides. It was the maintainer's own
+    slug, so mining indexed nothing for anyone else (AG34)."""
+    override = os.environ.get("ATLAS_CLAUDE_PROJECT_DIR", "").strip()
+    if override:
+        return override
+    try:
+        from atlas_plus import paths as _paths
+        root = str(_paths.workspace_root())
+    except Exception:  # noqa: BLE001
+        root = ""
+    slug = re.sub(r"[^A-Za-z0-9]", "-", root) if root else ""
+    try:
+        for d in claude_root.iterdir():
+            if d.is_dir() and slug and d.name.lower() == slug.lower():
+                return d.name
+    except OSError:
+        pass
+    return slug
+
+
 _CLAUDE_CODE_ROOT = Path(os.environ.get(
     "ATLAS_CLAUDE_CODE_ROOT",
     str(Path.home() / ".claude" / "projects"),
@@ -829,9 +851,10 @@ class ClaudeCodeTranscriptSource:
     def __init__(
         self,
         claude_root: Optional[Path] = None,
-        target_dir: str = "c--Tools",
+        target_dir: str | None = None,
     ) -> None:
-        self._root = (claude_root or _CLAUDE_CODE_ROOT) / target_dir
+        _base = claude_root or _CLAUDE_CODE_ROOT
+        self._root = _base / (target_dir or _claude_project_dir(_base))
         self._claude_root = claude_root or _CLAUDE_CODE_ROOT
 
     def ingest(self, provider: TemporalGraphProvider, manifest: Optional[Manifest] = None) -> dict:
@@ -1096,9 +1119,10 @@ class TranscriptMiningSource:
     def __init__(
         self,
         claude_root: Optional[Path] = None,
-        target_dir: str = "c--Tools",
+        target_dir: str | None = None,
     ) -> None:
-        self._root = (claude_root or _CLAUDE_CODE_ROOT) / target_dir
+        _base = claude_root or _CLAUDE_CODE_ROOT
+        self._root = _base / (target_dir or _claude_project_dir(_base))
 
     def ingest(self, provider: TemporalGraphProvider, manifest: Optional[Manifest] = None) -> dict:
         """Mine tool-usage statistics from Claude Code JSONL files (TranscriptMiningSource).

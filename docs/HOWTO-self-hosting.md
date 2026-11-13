@@ -206,7 +206,7 @@ Hardening notes for a public deployment:
   ONLY what you use (delete the `/mcp*` block if no remote MCP client).
 - The web dashboard and MCP server rate-limit and lock out repeated auth
   failures per source (MCP: ten failures, then HTTP 429 for five minutes, the
-  correct token included); watch them in the dashboard's security panel. Every
+  correct token included); watch them in the dashboard's "Auth failures" panel. Every
   client behind one NAT shares a counter; `ATLAS_MCP_TRUSTED_PEERS` exempts a
   peer you own (never a public range). Keep the proxy on the same host (loopback)
   and let it set `Cf-Connecting-Ip` as above: then each remote client has its own

@@ -2508,6 +2508,10 @@ async def cmd_curation_report(update: Update, context: ContextTypes.DEFAULT_TYPE
         report_text, _ = generate_report(dry_run=True)
         dup = stale = convergence = decisions = 0
         for line in report_text.splitlines():
+            if "Repeated facts (" in line:
+                m = re.search(r"\((\d+) found", line)
+                if m:
+                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
             if "Potential Duplicates (" in line:
                 m = re.search(r"\((\d+) found", line)
                 if m:

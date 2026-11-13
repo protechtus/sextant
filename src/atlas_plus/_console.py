@@ -43,6 +43,14 @@ def _console_output_encoding() -> str:
 
 def utf8_stdout_when_piped() -> None:
     if os.name != "nt":
+        # POSIX with a non-UTF-8 locale (LC_ALL=C and PYTHONUTF8=0): `sextant search` crashed with
+        # UnicodeEncodeError on a Japanese note (AG33). Replace rather than raise.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                if stream is not None and hasattr(stream, "reconfigure") and (stream.encoding or "").lower().replace("-", "") not in ("utf8",):
+                    stream.reconfigure(errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
         return
     enc = _console_output_encoding()
     if not enc:

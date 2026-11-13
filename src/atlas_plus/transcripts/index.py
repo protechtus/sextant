@@ -211,15 +211,32 @@ class TranscriptIndex:
             ]
 
     def search(self, query: str, limit: int = 50) -> Iterator[dict]:
-        """FTS5 search across turn content, yielding dicts with conv_id, turn_id, snippet."""
+        """FTS5 search across turn content, yielding dicts with conv_id, turn_id, snippet.
+
+        A query that is not valid FTS5 syntax (`app.py`, `state-dir`, an unbalanced quote) is
+        retried as one literal phrase instead of raising (AG34).
+        """
+        import sqlite3 as _sqlite3
+
         with self._connect() as conn:
-            cur = conn.execute(
-                """SELECT t.turn_id, t.conv_id, t.source, t.role, t.ts, t.content_preview
-                   FROM turns_fts JOIN turns t ON t.turn_id = turns_fts.turn_id
-                   WHERE turns_fts MATCH ? LIMIT ?""",
-                (query, limit),
-            )
-            for row in cur.fetchall():
+            try:
+                cur = conn.execute(
+                    """SELECT t.turn_id, t.conv_id, t.source, t.role, t.ts, t.content_preview
+                       FROM turns_fts JOIN turns t ON t.turn_id = turns_fts.turn_id
+                       WHERE turns_fts MATCH ? LIMIT ?""",
+                    (query, limit),
+                )
+                rows = cur.fetchall()
+            except _sqlite3.OperationalError:
+                phrase = '"' + query.replace('"', '""') + '"'
+                cur = conn.execute(
+                    """SELECT t.turn_id, t.conv_id, t.source, t.role, t.ts, t.content_preview
+                       FROM turns_fts JOIN turns t ON t.turn_id = turns_fts.turn_id
+                       WHERE turns_fts MATCH ? LIMIT ?""",
+                    (phrase, limit),
+                )
+                rows = cur.fetchall()
+            for row in rows:
                 yield {
                     "turn_id": row[0],
                     "conv_id": row[1],

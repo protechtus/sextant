@@ -146,7 +146,7 @@ too: `apk add --no-cache git` is the only system package, every native
 dependency has a musllinux wheel, and nothing compiles. Two musl notes: the
 shipped test suite needs the `telegram` and `summarizer` extras installed or
 their tests are skipped, and musl gives non-main threads small stacks, so
-the dashboard rejects deeply nested JSON bodies before parsing them rather
+the dashboard's write routes reject deeply nested JSON bodies before parsing them rather
 than relying on a RecursionError. With `sleep infinity` as PID 1 (a
 debugging container) child processes are never reaped; the shipped image
 runs the server as PID 1 and needs no `init: true`.

@@ -224,13 +224,15 @@ def test_build_mining_source_indexes_jsonl(tmp_path):
     from unittest.mock import patch
     from atlas_plus.temporal_graph import sources as _src
 
-    # TranscriptMiningSource uses (claude_root / target_dir) where target_dir="c--Tools"
+    # TranscriptMiningSource uses (claude_root / <this workspace's Claude Code project dir>);
+    # ATLAS_CLAUDE_PROJECT_DIR names it explicitly here (sweep 14: it was hard-coded).
+    import os
     transcript_dir = tmp_path / "c--Tools"
     _write_jsonl_transcript(transcript_dir / "sess001.jsonl", ["Read", "Read", "Edit"])
 
     from atlas_plus.temporal_graph.build import build_temporal_graph
 
-    with patch.object(_src, "_CLAUDE_CODE_ROOT", tmp_path):
+    with patch.object(_src, "_CLAUDE_CODE_ROOT", tmp_path), patch.dict(os.environ, {"ATLAS_CLAUDE_PROJECT_DIR": "c--Tools"}):
         result = build_temporal_graph(
             source="mining",
             graph_root=tmp_path / "graph",

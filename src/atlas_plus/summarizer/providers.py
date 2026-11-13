@@ -20,7 +20,8 @@ from typing import Literal
 
 log = logging.getLogger("atlas.summarizer.providers")
 
-OLLAMA_URL = os.environ.get("ATLAS_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = (os.environ.get("ATLAS_OLLAMA_URL") or os.environ.get("ATLAS_BRAIN_OLLAMA_URL")
+              or os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")  # same order as the hook's probe (AG34)
 OLLAMA_MODEL = os.environ.get("ATLAS_SUMMARIZER_MODEL", "mistral")
 CLAUDE_MODEL = os.environ.get("ATLAS_SUMMARIZER_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 FORCED_PROVIDER = os.environ.get("ATLAS_SUMMARIZER_PROVIDER", "auto").lower()

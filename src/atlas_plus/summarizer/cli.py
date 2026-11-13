@@ -83,7 +83,11 @@ def main(
 
     # --- 1. Load ---
     console.print(f"Loading turns (source={source}, since={since})...")
-    turns = load_turns(source=source, conversation_id=conversation_id, since=since, until=until)
+    try:
+        turns = load_turns(source=source, conversation_id=conversation_id, since=since, until=until)
+    except ValueError as exc:  # a bad --since/--source is one line, not a traceback (AG34)
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
     if not turns:
         console.print("[yellow]No turns found for the given filters. Check --since or --source.[/yellow]")
         raise typer.Exit(1)
@@ -140,3 +144,7 @@ def main(
         console.print(f"[green]Written{dry_tag}:[/green] {label} -> {path}")
 
     console.print("\n[bold green]Done.[/bold green]")
+
+
+if __name__ == "__main__":  # the Stop hook spawns `python -m atlas_plus.summarizer.cli` (AG34: it was a no-op)
+    app()

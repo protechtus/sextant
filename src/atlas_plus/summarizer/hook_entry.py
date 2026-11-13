@@ -110,12 +110,15 @@ def _find_script(name: str) -> Path | None:
     return None
 
 
+_SESSION: dict[str, str] = {"id": ""}  # the Stop payload's session id, for the summarizer
+
+
 def _summarizer_unavailable_reason() -> str:
     """'' when a summarizing model is reachable, else one line saying what is missing."""
     try:
         from atlas_plus.llm.ollama_url import default_ollama_url
         import urllib.request
-        url = default_ollama_url()
+        url = (os.environ.get("ATLAS_OLLAMA_URL") or "").strip().rstrip("/") or default_ollama_url()  # the summarizer's own variable first (AG34)
         try:
             with urllib.request.urlopen(f"{url}/api/tags", timeout=1.5):
                 return ""
@@ -142,6 +145,8 @@ def _transcript_root_from_payload() -> str:
             return ""
         import json as _json
         payload = _json.loads(raw)
+        if isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
+            _SESSION["id"] = payload["session_id"].strip()[:120]
         tp = payload.get("transcript_path") if isinstance(payload, dict) else None
         if not tp:
             return ""
@@ -195,6 +200,7 @@ def main() -> int:
                 sys.executable, "-m", "atlas_plus.summarizer.cli",
                 "--source", "claude-code",
                 "--since", "today",
+                *(["--conversation-id", _SESSION["id"]] if _SESSION.get("id") else []),  # the finished session only (AG34)
                 "--auto-commit",
             ],
             cwd=project_dir,

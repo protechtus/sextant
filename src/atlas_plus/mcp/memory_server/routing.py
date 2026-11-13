@@ -276,6 +276,13 @@ def _pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return True
+    try:  # a SIGKILLed holder nobody reaped answers kill(0) but is a zombie: dead (AG36)
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            state = fh.read().rsplit(b")", 1)[-1].split()
+            if state and state[0] in (b"Z", b"X"):
+                return False
+    except OSError:
+        pass
     return True
 
 
@@ -519,8 +526,20 @@ def _write_lock(target: Path, timeout: float | None = None, stale: float | None 
     while True:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            os.write(fd, owner_token.encode("ascii"))
-            os.fsync(fd)
+            try:
+                os.write(fd, owner_token.encode("ascii"))
+                os.fsync(fd)
+            except OSError:
+                # ENOSPC after the create: an empty lock would block every later writer for
+                # 30 s (AG36). Close, remove, and let the error out.
+                try:
+                    os.close(fd)
+                finally:
+                    try:
+                        os.unlink(lock_path)
+                    except OSError:
+                        pass
+                raise
             break
         except (FileExistsError, PermissionError) as open_exc:
             # PermissionError too (CI windows lane, quality loop run 22):
@@ -753,7 +772,9 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
         key = key.strip().lower()  # `Reference:x` is `reference:x` (power-user pass 2026-11-10)
         # NFC first: a decomposed 'café' is the same note as the composed one, not a second
         # file that displays identically (AG10, sweep 10).
-        param = _ud.normalize("NFC", param.strip()).lower().replace(" ", "-")
+        # `İ`.lower() is `i` plus a combining dot (U+0307): fold it to a plain i before lowering so
+        # `İstanbul` and `istanbul` are one note with a readable name (AG33).
+        param = _ud.normalize("NFC", param.strip()).replace("İ", "I").lower().replace("\u0307", "").replace(" ", "-")
         # Reject path traversal in the parameter component
         # ':' too (audit 2026-11-09, row 25): "c:secret" is a drive-relative
         # path that drops the route's directory, and "notes:hidden" is an
@@ -1059,12 +1080,7 @@ def downgrade_stale_confirmations(
         return []
 
     today = date.today()
-    cutoff = date.fromisoformat(
-        (today.replace(year=today.year - (threshold_days // 365))
-         if threshold_days >= 365 else today).__class__.fromordinal(
-             today.toordinal() - threshold_days
-         ).isoformat()
-    )
+    cutoff = date.fromordinal(today.toordinal() - threshold_days)  # no .replace(year=...): Feb 29 crashed it (AG33)
 
     import yaml as _yaml
     downgraded: list[dict] = []

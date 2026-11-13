@@ -61,7 +61,7 @@ def cmd_search(
         return
     for h in hits:
         console.print(f"[bold]{h.get('conv_id', '?')}[/bold] {h.get('ts', '')} [dim]{h.get('role', '')}[/dim]")
-        preview = str(h.get("content_preview", h.get("snippet", "")))[:200]
+        preview = str(h.get("preview") or h.get("content_preview") or h.get("snippet") or "")[:200]
         console.print(f"  {preview}")
 
 

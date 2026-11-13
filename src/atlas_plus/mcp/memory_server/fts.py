@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 import unicodedata
 import threading
 import time
@@ -506,6 +507,15 @@ _CORRUPTION_MARKERS = ("malformed", "not a database", "vtable constructor failed
                        "database disk image", "fts5: corrupt", "no such table: memory_fts")
 
 
+_LAST_CONNECT_ERROR: dict[str, str] = {"text": ""}
+
+
+def last_connect_error() -> str:
+    """Why the last search returned nothing although the index could not be opened (disk full,
+    read-only state dir, locked); '' when the last connect succeeded (AG36: 'No hits' hid it)."""
+    return _LAST_CONNECT_ERROR["text"]
+
+
 def _is_corruption(exc: sqlite3.Error) -> bool:
     """True only for genuine corruption. A LOCKED/busy database is never corrupt."""
     msg = str(exc).lower()
@@ -604,6 +614,16 @@ def rebuild(force: bool = False) -> int:
 
 
 def main() -> None:
+    """One line on a full disk or a read-only state dir instead of a traceback (AG36)."""
+    try:
+        _main_guarded()
+    except sqlite3.OperationalError as exc:
+        print(f"sextant-fts-rebuild: could not open the search index: {exc}. The notes are intact; "
+              "the state dir is full, read-only or locked (free space or fix permissions, then run this again).", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def _main_guarded() -> None:
     """Console entry point for ``atlas-fts-rebuild`` / ``sextant-fts-rebuild``.
 
     The bare ``rebuild()`` is unsuitable as an entry point: console_scripts run
@@ -711,12 +731,14 @@ def search(query: str, scope: str = "", limit: int = 10,
                           "distro packages all have it) -- returning empty results", exc)
                 return []
             log.warning("FTS connect failed (not corruption, e.g. locked): %s -- returning empty results", exc)
+            _LAST_CONNECT_ERROR["text"] = str(exc)
             return []
         if not _healed and _heal_malformed():
             log.error("FTS DB was corrupt at connect (%s) -- self-healed; retrying query once", exc)
             return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw)
         log.error("FTS connect failed on a corrupt DB and self-heal did not recover: %s", exc)
         return []
+    _LAST_CONNECT_ERROR["text"] = ""
     try:
         if scope:
             # Escape LIKE wildcards in scope so a scope like "project_%foo"

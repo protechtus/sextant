@@ -234,12 +234,17 @@ def check_autonomous() -> dict:
 
 
 def check_disk() -> dict:
-    """Return drive usage stats (free_gb, total_gb, pct_used) for the PROJECTS_ROOT drive."""
+    """Return usage stats (free_gb, total_gb, pct_used) for the filesystem that holds the STATE
+    dir (the index and the locks live there; AG36: a full corpus disk read as 0.9 percent used of /)."""
     try:
         import shutil as _shutil
-        total, used, free = _shutil.disk_usage(str(PROJECTS_ROOT.anchor))
+        from atlas_plus import paths as _paths
+        _where = _paths.state_dir()
+        while not _where.exists() and _where.parent != _where:
+            _where = _where.parent
+        total, used, free = _shutil.disk_usage(str(_where))
         return {
-            "drive":    str(PROJECTS_ROOT.anchor),
+            "drive":    str(_where),
             "free_gb":  round(free / 1e9, 1),
             "total_gb": round(total / 1e9, 1),
             "pct_used": round(used / total * 100, 1),

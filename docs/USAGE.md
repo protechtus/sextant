@@ -92,7 +92,11 @@ agent identities with scoped access live in `personas/`
 
 ## Bringing transcripts from anywhere
 
-Claude Code sessions are captured automatically, but any tool that can
+Claude Code sessions are summarised by the Stop hook into `sessions/<date>.md` (when
+`ATLAS_AUTONOMOUS=on` reaches the hook and a local model answers); to index the
+transcripts themselves, run the tailer `python -m atlas_plus.transcripts.sources.claude_code`
+(it watches `~/.claude/projects`), or drop the `.jsonl` files into the drop directory as
+below (Claude Code's own line shape is accepted). Any tool that can
 write a file can feed the transcript index: drop `.jsonl` / `.json`
 chat exports (or plain `.md`/`.txt` notes) into the drop directory
 (`<state-dir>/transcripts/drop/` by default) and run

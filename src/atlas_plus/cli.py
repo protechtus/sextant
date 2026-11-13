@@ -451,6 +451,12 @@ def cmd_search(
         raise typer.Exit(1)
     results, mode = memory_search_hybrid(query=query, scope=effective, limit=limit)
     if not results:
+        from atlas_plus.mcp.memory_server import fts as _fts
+        _why = _fts.last_connect_error()
+        if _why:
+            console.print(f"[red]Search index unavailable:[/red] {_why}. The notes are intact; the state dir "
+                          f"({atlas_paths.state_dir()}) is full, read-only or locked. Free space or fix permissions, then search again.")
+            raise typer.Exit(1)
         try:
             _root = atlas_paths.memory_root()
             corpus_files = sum(1 for p in _root.rglob("*.md")
