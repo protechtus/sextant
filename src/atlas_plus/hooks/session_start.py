@@ -382,17 +382,24 @@ def main() -> None:
     from atlas_plus.identity import resolve_identity_path
     identity_file = resolve_identity_path(MEMORY_ROOT)
     if identity_file.exists():
-        identity = _read_file(identity_file, max_chars=400)
+        identity = _read_file(identity_file, max_chars=4000)  # the whole note, not its first 400 chars (MN30)
         try:
             from atlas_plus.identity import user_display_name
             name = user_display_name(MEMORY_ROOT)  # ATLAS_USER_NAME wins over the file title
         except Exception:  # noqa: BLE001
             name = ""
         if _is_template(identity, name):
-            # The scaffold's placeholder is not the user (MN7, sweep 10): say so instead of
-            # priming the assistant with template text as if it were identity.
-            lines += ["## Identity", "(not filled in yet: identity/user.md still holds the sextant-init "
-                      "template; edit it, or ask the assistant to remember who you are)", ""]
+            from atlas_plus.hooks._quote import identity_beyond_template
+            extra = identity_beyond_template(identity)
+            if extra:
+                # facts remembered under the scaffold are the identity; the scaffold is not (MN30)
+                lines += ["## Identity", "(identity/user.md still carries the sextant-init template text; "
+                          "the lines below were remembered into it)", _q(extra), ""]
+            else:
+                # The scaffold's placeholder is not the user (MN7, sweep 10): say so instead of
+                # priming the assistant with template text as if it were identity.
+                lines += ["## Identity", "(not filled in yet: identity/user.md still holds the sextant-init "
+                          "template; edit it, or ask the assistant to remember who you are)", ""]
         else:
             lines += ["## Identity"] + ([f"Name: {_q(name)[2:]}"] if name else []) + [_q(identity), ""]
 
@@ -474,6 +481,15 @@ def main() -> None:
 
     # --- Last session entry ---
     history_file = MEMORY_ROOT / "sessions" / "_history.md"
+    if not history_file.exists():
+        # the Stop hook writes sessions/<date>.md, never _history.md: the newest dated log is the
+        # last session (MN28: ten summaries on disk and none primed)
+        try:
+            dated = sorted((MEMORY_ROOT / "sessions").glob("20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"))
+        except OSError:
+            dated = []
+        if dated:
+            history_file = dated[-1]
     if history_file.exists():
         text = history_file.read_text(encoding="utf-8-sig", errors="replace")
         # Find the first ## entry

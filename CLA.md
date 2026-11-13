@@ -1,11 +1,12 @@
 # Sextant Contributor License Agreement (Individual)
 
 Thank you for contributing to Sextant. This lightweight agreement keeps the
-project's licensing simple and its future flexible. By signing (on your first pull request), you accept the terms below for that and
-all future contributions to this repository.
+project's licensing simple and its future flexible. You accept it by replying
+"I have read and agree to CLA.md" in your first pull request's thread; that comment is
+the record, and it covers that and all future contributions to this repository.
 
-(The automated CLA check is not enabled yet; until it is, a maintainer asks for your
-agreement on the pull request.)
+(An automated check may replace the comment later. A `Signed-off-by` trailer from
+`git commit -s` is welcome but is not this agreement.)
 
 "Project Steward" means Protechtus LLC, the maintainer of Sextant.
 "Contribution" means any original work of authorship you intentionally
@@ -41,7 +42,8 @@ entity terminates.
   grant these licenses.
 - If your employer has rights to intellectual property you create, you have
   permission to submit the Contribution on your own behalf, or your
-  employer has waived such rights or signed a corporate CLA.
+  employer has waived such rights or agreed in writing (email hello@protechtus.com for a
+  corporate agreement).
 - If your Contribution includes third-party work, you have identified it,
   and it carries a license compatible with the project's.
 
@@ -52,5 +54,5 @@ entity terminates.
 - The project is provided as-is; your Contributions are accepted as-is,
   without warranty obligations in either direction beyond Section 3.
 
-Questions before signing: open a discussion issue or see SECURITY.md for a
-private contact route.
+Questions before agreeing: open an issue from the Question template, or email
+hello@protechtus.com.

@@ -466,7 +466,9 @@ What it does not do (know these before you rely on it):
   backups (e.g. an rclone crypt remote) are your job.
 - **No multi-user auth.** One operator, one token per surface. It is not a
   team product; do not point five people at one instance and expect
-  isolation.
+  isolation: everyone with the token is the same operator, the `source` and
+  `session_id` a client writes are claims, not identities, and nothing records
+  who acted. Two or three people can share a corpus through git with hand merges.
 - **Prompt-level risks stay yours.** Anything an LLM reads from memory can
   influence it; Sextant stores and serves your notes, it does not referee
   what your model does with them.

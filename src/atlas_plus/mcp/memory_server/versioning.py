@@ -53,7 +53,56 @@ def _fill_claimed_slot(tmp: Path, dest: Path) -> None:
         raise
 
 
+_MIN_INTERVAL_ENV = "ATLAS_VERSION_MIN_INTERVAL_SECONDS"
+
+
+def _recent_copy(target: Path, base: Path) -> Path | None:
+    """The newest history copy of ``target`` when it is younger than the coalescing window
+    (default 0 = a copy on every write, the documented promise; set it for burst notes). 1,000 appends to one 1.2 MB note made 1.13 GB of
+    copies (AG32, sweep 14); within the window the previous copy already holds the pre-burst
+    state, so a new one is skipped."""
+    import os as _os
+    import time as _time
+    try:
+        window = float(_os.environ.get(_MIN_INTERVAL_ENV, "0") or 0)
+    except ValueError:
+        window = 0.0
+    if window <= 0:
+        return None
+    try:
+        rel_dir = target.resolve().parent.relative_to(base.resolve())
+    except (ValueError, OSError):
+        return None
+    versions_dir = base / "versions" / rel_dir
+    if not versions_dir.is_dir():
+        return None
+    newest: Path | None = None
+    newest_m = 0.0
+    prefix = target.stem + "_"
+    try:
+        for p in versions_dir.iterdir():
+            if p.name.startswith(prefix) and p.suffix == target.suffix:
+                m = p.stat().st_mtime
+                if m > newest_m:
+                    newest, newest_m = p, m
+    except OSError:
+        return None
+    if newest is not None and _time.time() - newest_m < window:
+        return newest
+    return None
+
+
 def version_before_write(target: Path, root: Path | None = None) -> Path | None:
+    """Version copy before a write, coalesced within ``ATLAS_VERSION_MIN_INTERVAL_SECONDS``."""
+    base = root if root is not None else MEMORY_ROOT
+    if target.exists():
+        recent = _recent_copy(target, base)
+        if recent is not None:
+            return recent
+    return _version_before_write(target, root)
+
+
+def _version_before_write(target: Path, root: Path | None = None) -> Path | None:
     """Copy target into its versions/ sibling dir. Returns the version path, or None if target didn't exist.
 
     root defaults to the MCP server's MEMORY_ROOT; callers operating on a

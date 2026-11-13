@@ -315,7 +315,7 @@ def now(
         if n_files is not None and n_files < _min_files:
             var = "ATLAS_STATE_DIR" if "state" in name else "ATLAS_MEMORY_ROOT"
             msg = (f"SYNC REFUSED {name}: source {src} has only {n_files} file(s) "
-                   f"(< {_MIN_SYNC_SOURCE_FILES}); check {var}")
+                   f"(< {_min_files}); check {var}")
             _log(msg)
             errors.append(msg)
             continue

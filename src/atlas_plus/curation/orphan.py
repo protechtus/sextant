@@ -65,7 +65,9 @@ def _build_inbound_refs(memory_root: Path) -> dict[str, int]:
             fast_stems.setdefault(stem.lower(), []).append(stem)
             continue
         grams = tuple(t.lower() for t in token_re.findall(stem))
-        if 1 <= len(grams) <= 12:
+        # only a stem made of tokens and spaces is its token n-gram; `会議 notes` or `Café notes`
+        # matched every "notes" (MN25), so anything else keeps the exact regex
+        if 1 <= len(grams) <= 12 and re.fullmatch(r"[A-Za-z0-9_\- ]+", stem):
             # `Meeting Notes` is the token pair (meeting, notes): matched as an adjacent n-gram of the
             # file's tokens, one pass per file. The per-stem regex made doctor take 8 minutes on a
             # 3,000-note Obsidian vault, every stem having a space (AG35, sweep 14).

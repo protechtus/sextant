@@ -40,7 +40,7 @@ class TestCreateTicket:
         t1 = create_ticket("Alpha", "proj-a", tickets_root=tickets_root)
         t2 = create_ticket("Beta", "proj-b", tickets_root=tickets_root)
         assert t1.id == "PRO-001"
-        assert t2.id == "PRO-001"
+        assert t2.id == "PROJ-001"  # the second project's prefix is unique (MN29: both minted PRO-001)
 
     def test_markdown_written_correctly(self, tickets_root):
         t = create_ticket("Do something", "myproject", assignee="claude-code", effort="L", tickets_root=tickets_root)

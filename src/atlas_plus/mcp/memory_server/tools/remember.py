@@ -24,6 +24,14 @@ from ..versioning import version_before_write
 log = logging.getLogger("atlas.mcp.remember")
 
 
+def _has_conflict_markers(path: Path) -> bool:
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return head.startswith("<<<<<<< ") or "\n<<<<<<< " in head
+
+
 def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT) -> None:
     """Stage and commit a single .memory/ file if ATLAS_MEMORY_AUTOCOMMIT=on.
 
@@ -32,6 +40,10 @@ def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT
     Uses a 5-second timeout per subprocess call to avoid blocking the MCP server.
     """
     if os.environ.get("ATLAS_MEMORY_AUTOCOMMIT", "off").lower() not in ("on", "1", "true"):
+        return
+    git_meta = memory_root / ".git"
+    if any((git_meta / m).exists() for m in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")):
+        log.debug("Memory autocommit skipped: a merge is open in %s (resolve it first)", memory_root)  # MN27
         return
     try:
         rel = str(file_path.relative_to(memory_root)).replace("\\", "/")
@@ -173,6 +185,11 @@ def memory_remember(
         target, fm_template = resolve_target(scope)
     except ValueError as e:
         return {"ok": False, "file": None, "version_copy": None, "error": str(e)}
+    if target.exists() and _has_conflict_markers(target):
+        # a git merge left markers in this note: writing into it grows a half-resolved note
+        # and search would index the markers (MN27, sweep 14)
+        return {"ok": False, "file": None, "version_copy": None,
+                "error": f"{target.name} holds git conflict markers (<<<<<<< / >>>>>>>): resolve the merge first; sextant doctor names such notes"}
 
     # A corpus that was never initialised is not written into: the write used to succeed by
     # creating a stray `.memory` under the home default whenever the client's env never

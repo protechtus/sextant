@@ -693,6 +693,11 @@ def search(query: str, scope: str = "", limit: int = 10,
            _healed: bool = False, _fallback_stage: int = 0, _raw: str | None = None) -> list[dict]:
     """FTS search. Returns list of {path, snippet, score}."""
     if _raw is None:
+        # `fox fox fox ...` x1000 took 44 s: a repeated word adds nothing, so each word once, and
+        # at most 64 of them (MN29)
+        _words = list(dict.fromkeys(query.split()))
+        if len(_words) < len(query.split()) or len(_words) > 64:
+            query = " ".join(_words[:64])
         _raw = query
         query = _prepare_query(query)
     # Freshness on search: incremental -- only changed files are
@@ -792,7 +797,12 @@ def search(query: str, scope: str = "", limit: int = 10,
             if _fallback_stage == 0 and _raw is not None:
                 loose = _bigram_fallback(_raw)
                 if loose:
-                    return search(loose, scope=scope, limit=limit, _fallback_stage=3, _raw=_raw)
+                    loose_results = search(loose, scope=scope, limit=limit, _fallback_stage=3, _raw=_raw)
+                    for r in loose_results:
+                        # OR-ed bigrams match on a shared particle alone; the band is 'low' at most (MN25)
+                        r["score"] = min(float(r.get("score", 0) or 0), 0.35)
+                        r["loose_match"] = True
+                    return loose_results
             return results
         # NOTE: a single result MUST still go through the blend below.
         # The old `<= 1` early-return left a lone hit carrying its raw

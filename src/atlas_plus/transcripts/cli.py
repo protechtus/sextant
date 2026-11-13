@@ -59,10 +59,11 @@ def cmd_search(
     if not hits:
         console.print("[dim]no matches[/dim]")
         return
+    from rich.markup import escape as _esc  # a hit holding `[/` crashed the command (MN25)
     for h in hits:
-        console.print(f"[bold]{h.get('conv_id', '?')}[/bold] {h.get('ts', '')} [dim]{h.get('role', '')}[/dim]")
+        console.print(f"[bold]{_esc(str(h.get('conv_id', '?')))}[/bold] {_esc(str(h.get('ts', '')))} [dim]{_esc(str(h.get('role', '')))}[/dim]")
         preview = str(h.get("preview") or h.get("content_preview") or h.get("snippet") or "")[:200]
-        console.print(f"  {preview}")
+        console.print("  " + _esc(preview))
 
 
 @app.command("recover")

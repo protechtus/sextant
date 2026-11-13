@@ -23,6 +23,9 @@ _CONFIRMED_STALE_DAYS = 90
 _SKIP_DIRS = {"archive", "_sync", "versions", "_atlas", "anti"}
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 def compute_file_health(path: Path, today: Optional[date] = None) -> dict:
     """Compute a health dict for a single .memory/ markdown file.
 
@@ -52,7 +55,7 @@ def compute_file_health(path: Path, today: Optional[date] = None) -> dict:
     if end == -1:
         return {**zero, "issues": ["no_frontmatter"]}
     try:
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        fm = _fast_yaml_load(raw[3:end]) or {}
     except Exception:
         return {**zero, "issues": ["parse_error"]}
 

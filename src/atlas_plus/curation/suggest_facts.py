@@ -48,10 +48,10 @@ _SCOPE_ALIASES = {
 # Transcript loading helpers
 # ---------------------------------------------------------------------------
 
-def _load_transcript_text(since: str = "today", source: str = "claude-code") -> str:
+def _load_transcript_text(since: str = "today", source: str = "claude-code", conversation_id: str | None = None) -> str:
     """Load turns and return a condensed plain-text transcript."""
     from atlas_plus.summarizer.loader import load_turns
-    turns = load_turns(source=source, since=since)
+    turns = load_turns(source=source, since=since, conversation_id=conversation_id)
 
     lines: list[str] = []
     for t in turns:
@@ -149,6 +149,11 @@ def _extract_candidates(
 
     # Trim transcript to fit reasonable context (~6000 chars)
     trimmed = transcript_text[-6000:] if len(transcript_text) > 6000 else transcript_text
+    try:
+        from atlas_plus.redaction import redact as _redact
+        trimmed = _redact(trimmed) or ""  # a pasted key must not reach the model or a fact (MN28)
+    except Exception:  # noqa: BLE001
+        pass
     prompt = _EXTRACT_PROMPT.format(transcript=trimmed)
 
     from atlas_plus.summarizer.providers import complete, ProviderError
@@ -267,6 +272,11 @@ def _find_similar(fact_text: str, corpus: list[tuple[str, set[str]]]) -> list[tu
 def _write_fact(scope: str, fact: str, confidence: float = None) -> dict:
     """Write a fact to .memory/ via the routing + append_fact machinery."""
     from atlas_plus.mcp.memory_server.routing import resolve_target, append_fact
+    try:
+        from atlas_plus.redaction import redact as _redact
+        fact = _redact(fact) or fact
+    except Exception:  # noqa: BLE001
+        pass
     from atlas_plus.mcp.memory_server.versioning import version_before_write
 
     target, fm_template = resolve_target(scope)
@@ -451,6 +461,7 @@ def main() -> None:
     def _cmd(
         since: str = typer.Option("today", "--since", "-s", help="Time window: 'today', 'Nh', 'Nm', or ISO timestamp"),
         source: str = typer.Option("claude-code", "--source", help="Transcript source: claude-code | atlas | auto"),
+        conversation_id: str = typer.Option("", "--conversation-id", "-c", help="Only this session's transcript (the Stop hook passes the finished session)"),
         dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print candidates without writing"),
         auto: bool = typer.Option(False, "--auto", "-a", help="Auto-approve facts with confidence >= 0.95"),
         skip_similar: float = typer.Option(0.0, "--skip-similar", help="Auto-skip candidates with Jaccard similarity >= threshold (0.0 = off, e.g. 0.6)"),
@@ -460,6 +471,7 @@ def main() -> None:
             suggest_facts(
                 since=since,
                 source=source,
+                conversation_id=conversation_id or None,
                 dry_run=dry_run,
                 auto=auto,
                 skip_similar_threshold=skip_similar,
@@ -474,6 +486,7 @@ def main() -> None:
 
 def suggest_facts(
     since: str = "today",
+    conversation_id: str | None = None,
     source: str = "claude-code",
     dry_run: bool = False,
     auto: bool = False,
@@ -493,7 +506,7 @@ def suggest_facts(
     root = memory_root or MEMORY_ROOT
 
     print(f"Loading transcript since '{since}'...", flush=True)
-    transcript_text = _load_transcript_text(since=since, source=source)
+    transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
     if not transcript_text.strip():
         print("No transcript content found for the given window.")
         return {"candidates": 0, "approved": 0, "skipped": 0, "written": 0}

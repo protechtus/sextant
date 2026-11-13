@@ -19,7 +19,7 @@ to be "which OS, which version?".
 
 ## What to expect
 
-- Bug reports get an acknowledgement within two business days. That is an
+- Bug reports get an acknowledgement, usually within a few days. That is an
   acknowledgement, not a fix.
 - Everything else is read on one weekly triage pass. File on a Tuesday and the
   first response usually lands the following week.

@@ -402,7 +402,8 @@ def render(info: dict, client: str = "all") -> str:
             lines.append("   Claude Code runs hook commands through bash (Git Bash on Windows), "
                          "which these are written for.")
             lines.append("   The session-start hook prints the corpus it read; the Stop hook writes "
-                         "nothing until ATLAS_AUTONOMOUS=on.")
+                         "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
+                         "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command.")
         if info.get("settings_json"):
             lines += [json.dumps(info["settings_json"], indent=2), ""]
         if info.get("hooks_from_windows"):

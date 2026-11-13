@@ -670,6 +670,19 @@ def main() -> None:
     """Console entry: a closed pipe (`sextant search ... | head`) ends quietly instead of a Rich
     traceback and exit 120 (MN15, sweep 11)."""
     import sys as _sys
+    # A C/POSIX locale hands argv over as surrogate escapes: `--scope reference:東京` was refused as
+    # control characters and a search crashed inside sqlite (MN25). Re-decode them as UTF-8.
+    for _i, _a in enumerate(_sys.argv):
+        try:
+            _a.encode("utf-8")
+        except UnicodeEncodeError:
+            try:
+                _sys.argv[_i] = _a.encode("utf-8", "surrogateescape").decode("utf-8")
+            except UnicodeDecodeError:
+                pass
+    if _sys.getfilesystemencoding().lower().replace("-", "") != "utf8" and not _sys.flags.utf8_mode:
+        _sys.stderr.write("Note: this locale is not UTF-8, so notes with non-ASCII names may be invisible; "
+                          "set PYTHONUTF8=1 (or LANG=C.UTF-8).\n")
     # `sextant remember "---bad"` reached Click's option parser ("No such option: ---bad",
     # exit 2) instead of the documented refusal (FN2, final pass): say what to do.
     if len(_sys.argv) > 2 and _sys.argv[1] in ("remember", "search") and any(

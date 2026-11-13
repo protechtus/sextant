@@ -31,6 +31,24 @@ console = Console()
 log = logging.getLogger("atlas.summarizer")
 
 
+def _redact(text: str) -> str:
+    try:
+        from atlas_plus.redaction import redact
+        return redact(text) or ""
+    except Exception:  # noqa: BLE001
+        return text
+
+
+def _event(kind: str, **fields) -> None:
+    """One activity-log line; the Stop hook runs this detached with its output discarded, so the
+    log is the only place a failure can be seen (MN28: empty, 500 and 404 replies were silent)."""
+    try:
+        from atlas_plus import activity
+        activity.record("hook", kind, **fields)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _parse_json_response(text: str) -> dict:
     """Extract JSON object from LLM response, tolerating markdown fences."""
     text = text.strip()
@@ -79,7 +97,7 @@ def main(
         import os
         os.environ["ATLAS_SUMMARIZER_MODEL"] = model
 
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date = datetime.now().astimezone().strftime("%Y-%m-%d")  # the user's day (MN28)
 
     # --- 1. Load ---
     console.print(f"Loading turns (source={source}, since={since})...")
@@ -90,6 +108,7 @@ def main(
         raise typer.Exit(2)
     if not turns:
         console.print("[yellow]No turns found for the given filters. Check --since or --source.[/yellow]")
+        _event("summarizer_failed", reason="no turns found", conversation_id=conversation_id or "")
         raise typer.Exit(1)
     console.print(f"Loaded [bold]{len(turns)}[/bold] turns.")
 
@@ -101,12 +120,13 @@ def main(
     chunk_summaries: list[str] = []
     for chunk in chunks:
         console.print(f"Summarizing chunk {chunk.index + 1}/{len(chunks)}...")
-        prompt = map_prompt(chunk.text, chunk.index, len(chunks))
+        prompt = map_prompt(_redact(chunk.text), chunk.index, len(chunks))  # keys never reach the model (MN28)
         try:
             text, provider = complete(prompt)
             console.print(f"  [dim]via {provider}[/dim]")
         except ProviderError as e:
             console.print(f"[red]LLM call failed:[/red] {e}")
+            _event("summarizer_failed", reason=str(e)[:200], conversation_id=conversation_id or "")
             raise typer.Exit(1)
         chunk_summaries.append(text)
 
@@ -119,14 +139,22 @@ def main(
             console.print(f"  [dim]via {provider}[/dim]")
         except ProviderError as e:
             console.print(f"[red]Reduce call failed:[/red] {e}")
+            _event("summarizer_failed", reason=str(e)[:200], conversation_id=conversation_id or "")
             raise typer.Exit(1)
         summary = _parse_json_response(final_text)
     else:
         summary = _parse_json_response(chunk_summaries[0])
 
     # --- 5. Render ---
-    session_log_text = render_session_log(summary, date)
-    updates_text = render_updates_entry(summary, date)
+    session_log_text = _redact(render_session_log(summary, date))
+    updates_text = _redact(render_updates_entry(summary, date))
+    marker = ""
+    if conversation_id:
+        # the entry names its session, so a re-fired Stop writes nothing twice (MN28: four
+        # identical entries after four Stops)
+        marker = f"<!-- session:{''.join(ch for ch in conversation_id if ch.isalnum() or ch in '-_.')[:80]} -->"
+        head, _, rest = session_log_text.partition("\n")
+        session_log_text = head + "\n" + marker + "\n" + rest
 
     # --- 6. Review ---
     if auto_commit or dry_run:
@@ -138,7 +166,12 @@ def main(
         raise typer.Exit(0)
 
     # --- 7. Write ---
-    result = write_outputs(session_log_text, updates_text, date, dry_run=dry_run)
+    result = write_outputs(session_log_text, updates_text, date, dry_run=dry_run, session_marker=marker)
+    if result.get("skipped"):
+        console.print(f"[yellow]{result['skipped']}[/yellow]")
+        raise typer.Exit(0)
+    if not dry_run:
+        _event("summary_written", path=result.get("session_log", ""), conversation_id=conversation_id or "")
     dry_tag = " (dry-run)" if dry_run else ""
     for label, path in result.items():
         console.print(f"[green]Written{dry_tag}:[/green] {label} -> {path}")

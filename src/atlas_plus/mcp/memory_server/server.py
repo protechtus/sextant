@@ -318,6 +318,15 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10) -> dict:
     temporal_context: list[dict] = _temporal_context_for_query(query)
 
     response: dict = {"confidence": confidence, "results": results, "retrieval": retrieval}
+    if not results:
+        try:
+            from .fts import last_connect_error as _lce
+            _err = _lce()
+        except Exception:  # noqa: BLE001
+            _err = ""
+        if _err:
+            # the agent saw 'starved' with no reason while the index could not be opened (MN25)
+            response["index_error"] = f"Search index unavailable: {_err}. Run `sextant fts-rebuild`; check that the state dir is writable."
     if temporal_context:
         response["temporal_context"] = temporal_context
     return response

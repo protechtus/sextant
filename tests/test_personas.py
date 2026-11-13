@@ -1387,7 +1387,10 @@ def test_dashboard_hides_the_api_map_and_sends_security_headers(tmp_path, monkey
     import inspect
     src = inspect.getsource(web)
     assert 'htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-' in src
-    assert 'cdn.tailwindcss.com/3.4.17" integrity="sha384-' in src and 'crossorigin="anonymous"' in src
+    # no SRI/CORS mode on Tailwind: cdn.tailwindcss.com sends no Access-Control-Allow-Origin, so the
+    # pinned tag was blocked in every browser and the page rendered unstyled (MN29, sweep 14)
+    assert 'cdn.tailwindcss.com/3.4.17"></script>' in src
+    assert 'crossorigin="anonymous"' not in src.split('cdn.tailwindcss.com/3.4.17')[1][:200]
     assert "history.replaceState" in src
 
 

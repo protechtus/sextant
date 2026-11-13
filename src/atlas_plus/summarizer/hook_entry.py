@@ -120,10 +120,24 @@ def _summarizer_unavailable_reason() -> str:
         import urllib.request
         url = (os.environ.get("ATLAS_OLLAMA_URL") or "").strip().rstrip("/") or default_ollama_url()  # the summarizer's own variable first (AG34)
         try:
-            with urllib.request.urlopen(f"{url}/api/tags", timeout=1.5):
-                return ""
+            with urllib.request.urlopen(f"{url}/api/tags", timeout=1.5) as resp:
+                body = resp.read(200_000)
         except Exception:  # noqa: BLE001
-            pass
+            body = None
+        if body is not None:
+            # the server answered; a model that is not pulled fails the summarizer silently in a
+            # detached child (MN28: the docs say `ollama pull qwen3:8b`, the summarizer asked for another)
+            try:
+                import json as _json
+                names = [str(m.get("name") or m.get("model") or "") for m in (_json.loads(body.decode("utf-8", "replace")) or {}).get("models", [])]
+            except Exception:  # noqa: BLE001
+                return ""
+            from atlas_plus.summarizer.providers import OLLAMA_MODEL as _want
+            have = {n for n in names} | {n.split(":")[0] for n in names}
+            if names and _want not in have and _want.split(":")[0] not in have:
+                return (f"model {_want} is not pulled at {url} (`ollama pull {_want}`, or set ATLAS_SUMMARIZER_MODEL "
+                        f"to one you have: {', '.join(names[:6])})")
+            return ""
         local_only = os.environ.get("ATLAS_LOCAL_ONLY", "on").strip().lower() not in ("off", "0", "false")
         if local_only:
             return (f"no local model at {url} (start Ollama or set ATLAS_BRAIN_OLLAMA_URL; "
@@ -176,10 +190,9 @@ def main() -> int:
     # scratch workspace must not mine the operator's real transcripts (power-user pass
     # 2026-11-10).
     _child_env = dict(os.environ)
-    if not _child_env.get("ATLAS_CLAUDE_CODE_ROOT"):
-        root = _transcript_root_from_payload()
-        if root:
-            _child_env["ATLAS_CLAUDE_CODE_ROOT"] = root
+    root = _transcript_root_from_payload()  # always read: it carries the session id (MN25/MN28: with the
+    if root and not _child_env.get("ATLAS_CLAUDE_CODE_ROOT"):  # root set, every session of the day was summarised)
+        _child_env["ATLAS_CLAUDE_CODE_ROOT"] = root
 
     # --- 1. Summarizer ---
     # Say so when it cannot run: the docs promise a summary, and a silent exit 0 let a user
@@ -215,7 +228,8 @@ def main() -> int:
         exe = _find_script("atlas-suggest-facts")
         if exe:
             subprocess.Popen(
-                [str(exe), "--auto", "--since", "2h"],
+                [str(exe), "--auto", "--since", "2h", "--skip-similar", "0.8",
+                 *(["--conversation-id", _SESSION["id"]] if _SESSION.get("id") else [])],  # this session only (MN28)
                 cwd=project_dir,
                 start_new_session=True,
                 env=_child_env,

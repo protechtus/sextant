@@ -141,6 +141,54 @@ def _next_id(project: str, tickets_root: Path) -> str:
     return f"{project[:3].upper()}-{_next_num(project, tickets_root):03d}"
 
 
+def _prefix_for(project: str, tickets_root: Path) -> str:
+    """The id prefix of a project: its first three letters unless another project already owns
+    them, then as many letters as make it unique (`PROJ1`), remembered in `<project>/.prefix`.
+    A project with tickets and no marker keeps its three letters, so old ids stay valid."""
+    pdir = tickets_root / project
+    marker = pdir / ".prefix"
+    try:
+        if marker.is_file():
+            v = re.sub(r"[^A-Za-z0-9]", "", marker.read_text(encoding="utf-8")).upper()
+            if v:
+                return v
+    except OSError:
+        pass
+    base = re.sub(r"[^A-Za-z0-9]", "", project).upper() or "TKT"
+    default = base[:3]
+    if pdir.is_dir() and any(f.suffix == ".md" and not f.name.startswith("_") for f in pdir.iterdir()):
+        return default  # legacy project: its ids are already minted with these letters
+    taken: set[str] = set()
+    try:
+        for d in tickets_root.iterdir():
+            if not d.is_dir() or d.name == project or d.name.startswith(("_", ".")):
+                continue
+            v = ""
+            try:
+                if (d / ".prefix").is_file():
+                    v = re.sub(r"[^A-Za-z0-9]", "", (d / ".prefix").read_text(encoding="utf-8")).upper()
+            except OSError:
+                v = ""
+            taken.add(v or (re.sub(r"[^A-Za-z0-9]", "", d.name).upper() or "TKT")[:3])
+    except OSError:
+        pass
+    cand, k = default, 3
+    while cand in taken and k < len(base):
+        k += 1
+        cand = base[:k]
+    n = 2
+    while cand in taken:
+        cand = f"{default}{n}"
+        n += 1
+    if cand != default:
+        try:
+            pdir.mkdir(parents=True, exist_ok=True)
+            marker.write_text(cand + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    return cand
+
+
 def _next_num(project: str, tickets_root: Path) -> int:
     project_dir = tickets_root / project
     existing = []
@@ -319,6 +367,12 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
     to the caller.
     """
     root = tickets_root or TICKETS_ROOT
+    if "/" in ticket_id:
+        # `project/ID` names one ticket when two projects minted the same id (MN29)
+        proj, _, ticket_id = ticket_id.partition("/")
+        if not proj or proj.startswith((".", "_")) or ".." in proj or "\\" in proj or "/" in proj:
+            return None
+        root = root / proj
     if not root.exists():
         return None
     for f in _walk_live_ticket_files(root):
@@ -389,7 +443,7 @@ def create_ticket(
     # Claim the id with O_CREAT|O_EXCL (audit 2026-11-09 row 24): two
     # concurrent creators that compute the same next id no longer overwrite
     # each other; the loser advances to the next number.
-    prefix = project[:3].upper()
+    prefix = _prefix_for(project, root)  # unique across projects (MN29: proj1 and proj2 both minted PRO-001)
     n = _next_num(project, root)
     while True:
         ticket_id = f"{prefix}-{n:03d}"

@@ -24,6 +24,9 @@ from atlas_plus.temporal_graph.decay_model import DecayAction, assess
 from .scan import is_excluded_mirror
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 @dataclass
 class DecayCandidate:
     """A memory file whose content has exceeded its type-specific half-life and needs review."""
@@ -61,7 +64,7 @@ def _parse_frontmatter(path: Path) -> dict:
         end = raw.find("\n---", 3)
         if end == -1:
             return {}
-        return yaml.safe_load(raw[3:end]) or {}
+        return _fast_yaml_load(raw[3:end]) or {}
     except Exception:
         return {}
 

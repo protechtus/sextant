@@ -161,7 +161,7 @@ def _parse_file(path: Path) -> tuple[list[TurnRecord], int]:
             else:
                 records.append(rec)
     elif suffix in (".md", ".txt"):
-        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        text = _read_text_any(path).strip()  # UTF-16 and BOM here too (MN25)
         if text:
             import hashlib as _h
             digest = _h.sha256(f"{conv_id}:0:user:{text}".encode("utf-8", "replace")).hexdigest()[:32]

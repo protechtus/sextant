@@ -82,6 +82,22 @@ def _content_preview(content) -> str:
     return str(content)[:280]
 
 
+import re as _re_mod
+
+_CJK_RE = _re_mod.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+_FTS_OPS = {"AND", "OR", "NOT"}
+
+
+def _quoted_tokens(query: str) -> str:
+    """Every token quoted, AND/OR/NOT kept as operators, dangling operators dropped."""
+    out = [tok if tok in _FTS_OPS else '"' + tok.replace('"', '""') + '"' for tok in query.split()]
+    while out and out[-1] in _FTS_OPS:
+        out.pop()
+    while out and out[0] in ("AND", "OR"):
+        out.pop(0)
+    return " ".join(out) or '"' + query.replace('"', '""') + '"'
+
+
 class TranscriptIndex:
     """SQLite + FTS5 index for transcript conversations and turns: supports list, search, and cursor-based tailing."""
 
@@ -210,7 +226,7 @@ class TranscriptIndex:
                 for r in cur.fetchall()
             ]
 
-    def search(self, query: str, limit: int = 50) -> Iterator[dict]:
+    def search(self, query: str, limit: int = 50) -> Iterator[dict]:  # noqa: C901
         """FTS5 search across turn content, yielding dicts with conv_id, turn_id, snippet.
 
         A query that is not valid FTS5 syntax (`app.py`, `state-dir`, an unbalanced quote) is
@@ -228,12 +244,28 @@ class TranscriptIndex:
                 )
                 rows = cur.fetchall()
             except _sqlite3.OperationalError:
-                phrase = '"' + query.replace('"', '""') + '"'
+                # quote the tokens, keep the operators (MN25: `app.py OR router` became one phrase)
+                rows = []
+                for retry in (_quoted_tokens(query), '"' + query.replace('"', '""') + '"'):
+                    try:
+                        cur = conn.execute(
+                            """SELECT t.turn_id, t.conv_id, t.source, t.role, t.ts, t.content_preview
+                               FROM turns_fts JOIN turns t ON t.turn_id = turns_fts.turn_id
+                               WHERE turns_fts MATCH ? LIMIT ?""",
+                            (retry, limit),
+                        )
+                        rows = cur.fetchall()
+                        break
+                    except _sqlite3.OperationalError:
+                        continue
+            if not rows and _CJK_RE.search(query):
+                # the transcript index has no CJK tokenizer: a substring scan finds the turn (MN25)
+                needle = "%" + query.strip().replace("%", "\\%").replace("_", "\\_") + "%"
                 cur = conn.execute(
                     """SELECT t.turn_id, t.conv_id, t.source, t.role, t.ts, t.content_preview
                        FROM turns_fts JOIN turns t ON t.turn_id = turns_fts.turn_id
-                       WHERE turns_fts MATCH ? LIMIT ?""",
-                    (phrase, limit),
+                       WHERE turns_fts.content LIKE ? ESCAPE '\\' LIMIT ?""",
+                    (needle, limit),
                 )
                 rows = cur.fetchall()
             for row in rows:

@@ -20,9 +20,21 @@ from typing import Literal
 
 log = logging.getLogger("atlas.summarizer.providers")
 
-OLLAMA_URL = (os.environ.get("ATLAS_OLLAMA_URL") or os.environ.get("ATLAS_BRAIN_OLLAMA_URL")
-              or os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")  # same order as the hook's probe (AG34)
-OLLAMA_MODEL = os.environ.get("ATLAS_SUMMARIZER_MODEL", "mistral")
+
+def _default_ollama_url() -> str:
+    try:
+        from atlas_plus.llm.ollama_url import default_ollama_url
+        return default_ollama_url()
+    except Exception:  # noqa: BLE001
+        return "http://localhost:11434"
+
+
+# the same order as the hook's probe, OLLAMA_HOST included (MN25 F16: the probe passed on one host
+# and the summarizer talked to another)
+OLLAMA_URL = ((os.environ.get("ATLAS_OLLAMA_URL") or "").strip().rstrip("/") or _default_ollama_url()).rstrip("/")
+# the Brain's model unless told otherwise: the docs say `ollama pull qwen3:8b` and the old default
+# `mistral` failed every Stop hook silently (MN28)
+OLLAMA_MODEL = (os.environ.get("ATLAS_SUMMARIZER_MODEL") or os.environ.get("ATLAS_BRAIN_MODEL") or "qwen3:8b").strip()
 CLAUDE_MODEL = os.environ.get("ATLAS_SUMMARIZER_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 FORCED_PROVIDER = os.environ.get("ATLAS_SUMMARIZER_PROVIDER", "auto").lower()
 TIMEOUT = int(os.environ.get("ATLAS_SUMMARIZER_TIMEOUT", "120"))

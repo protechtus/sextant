@@ -32,8 +32,17 @@ versions/
 _atlas/.locks/
 _atlas/*.sqlite
 _atlas/*.sqlite-*
+_atlas/sync-conflicts/
+_atlas/sync-inbox/
 *.w-tmp
 *.imp-tmp
+*.v-tmp
+"""
+
+_GITATTRIBUTES = """\
+# Written by sextant-init. Notes are LF on every OS; without this a Windows checkout
+# rewrites them to CRLF and every synced or pulled file reads as changed.
+* text=auto eol=lf
 """
 
 _IDENTITY_TEMPLATE = """\
@@ -121,6 +130,7 @@ def run_init(dry_run: bool = False) -> dict:
     # A corpus pushed to git carried per-machine history copies and lock files; two people then
     # hit add/add conflicts on `versions/` and a committed lock stalled every write (AG19).
     _ensure_file(memory_root / ".gitignore", _GITIGNORE)
+    _ensure_file(memory_root / ".gitattributes", _GITATTRIBUTES)
     # The marker claims the directory for the destructive commands, so it may only go into a
     # directory that is empty, new, or already Sextant's (round-B re-audit 2026-11-09, row 2:
     # ATLAS_STATE_DIR=~/Documents must stop here, not after the first `reset --state`).

@@ -142,9 +142,13 @@ def _chat_fingerprints(dest_root: Path) -> dict[tuple[str, str], str]:
             fp = _chat_fingerprint(text)
             if fp[0]:
                 try:
-                    out.setdefault(fp, p.relative_to(root).as_posix())
+                    rel_p = p.relative_to(root).as_posix()
                 except ValueError:
-                    out.setdefault(fp, str(p))
+                    rel_p = str(p)
+                out.setdefault(fp, rel_p)
+                cm = re.search(r"^conversation_id:\s*'?([^'\n]+?)'?\s*$", text[:2048], re.M)
+                if cm:
+                    out.setdefault(("conv:" + cm.group(1).strip(), ""), rel_p)
     return out
 
 
@@ -501,6 +505,33 @@ def _existing_bodies(dest_root: Path) -> dict[str, tuple[str, str | None]]:
     return out
 
 
+def _claim_note(path: Path) -> bool:
+    """Stamp `import_vault` with the current vault on a note that lacks it or carries another id.
+    Frontmatter only; the body is untouched. False when the note has no frontmatter mapping."""
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    m = re.match(r"---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
+    if not m or not _CURRENT_VAULT["id"]:
+        return False
+    fm = m.group(1)
+    line = f"import_vault: '{_CURRENT_VAULT['id']}'"
+    if re.search(r"^import_vault:", fm, re.M):
+        fm2 = re.sub(r"^import_vault:.*$", line, fm, count=1, flags=re.M)
+    else:
+        fm2 = fm + "\n" + line
+    if fm2 == fm:
+        return False
+    try:
+        from atlas_plus.mcp.memory_server.versioning import version_before_write
+        version_before_write(path)
+    except Exception:  # noqa: BLE001
+        pass
+    _write_lf(path, text[:m.start(1)] + fm2 + text[m.end(1):])
+    return True
+
+
 def _vault_still_has(vault: Path, origin: str) -> bool:
     try:
         p = Path(origin) if os.path.isabs(origin) else vault / origin
@@ -613,6 +644,8 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
     decoded: list[str] = []
     stale: list[str] = []
     stale_paths: list[str] = []
+    claimed = 0
+    unclaimed: list[str] = []
     renamed_lines: list[str] = []
     writes: list[str] = []
     seen_stale: set[str] = set()
@@ -644,6 +677,11 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
             # (AG19, sweep 12).
             if any(e["hash"] == body_hash or e.get("imported_hash") == body_hash for e in entries):
                 unchanged += 1
+                if execute and latest.get("vault") != _CURRENT_VAULT["id"]:
+                    # a note imported before the stamp existed, or from this vault at its old path, is
+                    # claimed now: without the stamp --archive-stale could not tell whose it was (MN25)
+                    if _claim_note(root / latest["rel"]):
+                        claimed += 1
                 continue
             edited += 1
             target = _collision_free(dest)
@@ -682,8 +720,12 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
                         mark_stale(e["rel"], f"older copy; the current copy is {latest['rel']}")
         elif not _vault_still_has(vault, origin):
             for e in entries:
-                if e.get("vault") and e["vault"] != _CURRENT_VAULT["id"]:
-                    continue  # another vault's note in the same scope: not ours to call stale (AG35)
+                if e.get("vault") != _CURRENT_VAULT["id"]:
+                    # another vault's note, or one this vault has not claimed yet (an import claims its
+                    # unchanged notes; MN25): not ours to call stale (AG35)
+                    if not e.get("vault"):
+                        unclaimed.append(e["rel"])
+                    continue
                 mark_stale(e["rel"], "no longer in the vault (deleted, or renamed and edited)")
 
     archived: list[str] = []
@@ -695,7 +737,8 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
                 archived.append(f"{rel}: could not archive ({exc})")
 
     return {"source": "obsidian", "planned": len(plan), "imported": imported, "would_import": would,
-            "unchanged": unchanged, "edited": edited, "renamed": renamed, "new": new,
+            "unchanged": unchanged, "edited": edited, "renamed": renamed, "new": new, "claimed": claimed,
+            "unclaimed_not_judged": unclaimed,
             "skipped_already_imported": unchanged, "destination": scope,
             "skipped_links": skipped_links, "skipped_binary": skipped_binary,
             "skipped_reserved_names": list(_PLAN_EXTRAS.get("reserved", [])), "truncated": list(_TRUNCATED),
@@ -800,6 +843,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
     imported = skipped = already = would = updated = 0
     skipped_reasons: list[str] = []
     older_build: list[str] = []
+    updated_notes: list[str] = []
     listing: dict[Path, list[str]] = {}
     known = _chat_fingerprints(dest_root)
     for index, conv in enumerate(conversations):
@@ -810,6 +854,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
             skipped_reasons.append(f"entry {index}: not a conversation object")
             continue
         title = (str(conv.get("title") or "untitled")).strip() or "untitled"
+        conv_uid = str(conv.get("id") or conv.get("conversation_id") or "").strip()[:80]
         created = conv.get("create_time")
         try:
             stamp = datetime.fromtimestamp(float(created), tz=timezone.utc)
@@ -826,6 +871,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
         text = (
             _fm_block({
                 "id": f"chatgpt-{_slug(title)}",
+                **({"conversation_id": conv_uid} if conv_uid else {}),  # a retitled export is the same conversation (MN25)
                 "title": title,
                 "type": "imported",
                 "imported_from": "chatgpt",
@@ -838,7 +884,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
         if _chat_already_imported(dest, text, listing):
             already += 1
             continue
-        prior = known.get(_chat_fingerprint(text))
+        prior = known.get(_chat_fingerprint(text)) or (known.get(("conv:" + conv_uid, "")) if conv_uid else None)
         if prior is not None:
             # The same conversation already filed (an older build's name, or an export that
             # gained turns since). When it grew, the note is updated in place behind a version
@@ -853,12 +899,13 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
                         pass
                     _write_lf(prior_path, text)
                 updated += 1
-                older_build.append(f"{title!r} gained turns since the last import: {prior} "
-                                   + ("updated in place (version copy kept)" if execute else "would be updated in place"))
+                updated_notes.append(f"{title!r} gained turns since the last import: {prior} "
+                                     + ("updated in place (version copy kept)" if execute else "would be updated in place"))
                 continue
             already += 1
-            older_build.append(f"{title!r} is already imported as {prior} (same conversation; the stored text "
-                               "differs from today's rendering, an older build's or a truncated one)")
+            older_build.append(f"{title!r} is already imported as {prior} (same conversation; the stored note is "
+                               "kept: it differs from today's rendering, which happens when a build added a field or "
+                               "the export was truncated)")
             continue
         if not execute:
             would += 1
@@ -871,7 +918,8 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
     return {"source": "chatgpt", "planned": len(conversations),
             "imported": imported, "would_import": would, "skipped_already_imported": already,
             "skipped_empty": skipped, "skipped_reasons": skipped_reasons,
-            "already_imported_by_an_older_build": older_build, "updated": updated, "truncated": list(_TRUNCATED),
+            "already_imported_by_an_older_build": older_build, "updated": updated, "updated_notes": updated_notes,
+            "truncated": list(_TRUNCATED),
             "destination": "reference/imports/chatgpt"}
 
 
@@ -902,6 +950,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
     imported = skipped = already = would = updated = 0
     skipped_reasons: list[str] = []
     older_build: list[str] = []
+    updated_notes: list[str] = []
     listing: dict[Path, list[str]] = {}
     known = _chat_fingerprints(dest_root)
     for index, conv in enumerate(conversations):

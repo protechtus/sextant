@@ -118,7 +118,7 @@ def run_suggest_facts_with_turns(
     import builtins
     from atlas_plus.curation.suggest_facts import suggest_facts
 
-    def fake_load_transcript(since: str = "today", source: str = "claude-code") -> str:
+    def fake_load_transcript(since: str = "today", source: str = "claude-code", conversation_id: str | None = None) -> str:
         """Return the injected turns as a flat ROLE: content string for use in suggest_facts tests."""
         parts = []
         for t in turns:

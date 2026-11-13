@@ -320,7 +320,9 @@ compare with the registration (unchanged unless the venv moved; to replace it,
 `<venv-python> -m atlas_plus verify --project upgrade-check`. The update itself never touches
 the corpus; that verify adds one note, `projects/upgrade-check.md` (use `--skip-remember` to
 add nothing). To prove it to the human, hash the corpus before the update and after it, before
-the verify. A package install updates with `pip install -U sextant-ai` (or the `git+` form) and
+the verify. A PyPI install updates with `pip install -U sextant-ai`. A `git+` install does NOT
+(every build is version 0.1.0, so pip answers "already satisfied" and stays on the old one):
+use `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`, then
 the same three commands. Details: docs/GETTING-STARTED.md, "Updating Sextant".
 
 ## Uninstall

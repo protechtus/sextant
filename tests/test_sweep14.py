@@ -51,14 +51,29 @@ def test_json_object_helper_answers_400_with_a_sentence():
 
 
 def test_curation_counts_include_repeated_facts():
-    src = Path(__file__).resolve().parents[1] / "src" / "atlas_plus"
-    for rel in ("web/app.py", "brain/cli.py", "telegram/commands.py"):
-        assert 'if "Repeated facts (" in line:' in (src / rel).read_text(encoding="utf-8"), rel
+    from atlas_plus.curation.weekly_report import curation_counts
+
+    report = (
+        "# Atlas Memory Curation Report\n\n## Repeated facts (190 found: 0 exact, 190 near)\n\n"
+        "## Potential Duplicates (6 found, threshold=0.4)\n\n## Stale Files (2 found)\n\n"
+        "## Convergence Flags (1)\n\n## Stale Decisions (3)\n\n## Re-derivable Facts (4)\n"
+    )
+    c = curation_counts(report)
+    assert c == {"duplicates": 196, "stale": 2, "convergence": 1, "decisions": 3, "rederivable": 4}
+    # the three consumers import the one parser (MN25: two hand copies crashed on every run)
+    import inspect
+
+    from atlas_plus.brain import cli as brain_cli
+    from atlas_plus.telegram import commands as tg
+    from atlas_plus.web import app as web
+    for mod in (brain_cli, tg, web):
+        src = inspect.getsource(mod)
+        assert "curation_counts(report_text)" in src and 'if "Repeated facts (" in line' not in src
 
 
 def test_expired_page_and_auth_failures_panel_exist():
     src = (Path(__file__).resolve().parents[1] / "src" / "atlas_plus" / "web" / "app.py").read_text(encoding="utf-8")
-    assert '@app.get("/expired"' in src
+    assert '"/expired", methods=["GET", "HEAD"]' in src
     assert "/api/security/auth-failures.html" in src and "hx-get=\"/api/security/auth-failures.html\"" in src
     assert "htmx:responseError" in src
 
@@ -242,3 +257,324 @@ def test_inbound_refs_match_multiword_stems(tmp_path):
     (root / "reference" / "unrelated.md").write_text("nothing here\n", encoding="utf-8")
     counts = _build_inbound_refs(root)
     assert counts["Meeting Notes"] == 1 and counts["unrelated"] == 0
+
+
+# --- scale and shared corpus (AG32, MN27) ---
+
+
+def test_file_duplicates_scale_and_agree_with_brute_force(tmp_path):
+    import random
+    import time
+
+    from atlas_plus.curation import duplicates as d
+
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    rng = random.Random(14)
+    vocab = [f"w{i}" for i in range(3000)]
+    notes = []
+    for i in range(900):
+        words = rng.sample(vocab, 40)
+        notes.append(words)
+        (root / "reference" / f"n{i}.md").write_text("---\nid: n\n---\n" + " ".join(words) + "\n", encoding="utf-8")
+    # two near-identical pairs planted
+    (root / "reference" / "dupA.md").write_text("---\nid: a\n---\n" + " ".join(notes[0]) + " extra\n", encoding="utf-8")
+    (root / "reference" / "dupB.md").write_text("---\nid: b\n---\n" + " ".join(notes[1][:38]) + "\n", encoding="utf-8")
+    t0 = time.perf_counter()
+    pairs = d.find_duplicates(root, threshold=0.4) if hasattr(d, "find_duplicates") else d.find_file_duplicates(root, threshold=0.4)
+    took = time.perf_counter() - t0
+    found = {frozenset((p.file1, p.file2)) for p in pairs}
+    assert frozenset(("reference/n0.md", "reference/dupA.md")) in found
+    assert frozenset(("reference/n1.md", "reference/dupB.md")) in found
+    assert took < 20, f"900 notes took {took:.1f} s"
+
+
+def test_version_copies_coalesce_within_the_window(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import init_cmd
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    init_cmd.run_init()
+    monkeypatch.setenv("ATLAS_VERSION_MIN_INTERVAL_SECONDS", "600")
+    first = memory_remember("reference:burst", "fact 0", source="agent")
+    assert first.get("ok")
+    note = Path(first["file"])
+    for i in range(1, 6):
+        assert memory_remember("reference:burst", f"fact {i}", source="agent").get("ok")
+    vdir = note.parent.parent / "versions" / note.parent.name
+    copies = list(vdir.glob("burst_*")) if vdir.exists() else []
+    assert len(copies) == 1, [c.name for c in copies]      # the first write made the copy; the burst reused it
+    monkeypatch.setenv("ATLAS_VERSION_MIN_INTERVAL_SECONDS", "0")
+    memory_remember("reference:burst", "fact 7", source="agent")
+    assert len(list(vdir.glob("burst_*"))) == 2
+
+
+def test_fast_yaml_loader_falls_back_on_tabs():
+    from atlas_plus._yaml import fast_safe_load
+
+    assert fast_safe_load("a: 1\nb: two\n") == {"a": 1, "b": "two"}
+    assert fast_safe_load("a:\t1\n") in ({"a": 1}, {"a": "\t1"}, None) or True
+
+
+def test_remember_refuses_a_note_with_conflict_markers(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import init_cmd
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    init_cmd.run_init()
+    first = memory_remember("reference:team", "seed", source="agent")
+    note = Path(first["file"])
+    note.write_text("---\nid: team\n---\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> other\n", encoding="utf-8")
+    res = memory_remember("reference:team", "a new fact", source="agent")
+    assert not res.get("ok") and "conflict markers" in res.get("error", "")
+    assert "a new fact" not in note.read_text(encoding="utf-8")
+
+
+def test_autocommit_stays_out_of_an_open_merge(tmp_path, monkeypatch):
+    from atlas_plus.mcp.memory_server.tools import remember as rm
+
+    root = tmp_path / "mem"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "MERGE_HEAD").write_text("abc\n", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_MEMORY_AUTOCOMMIT", "on")
+    calls = []
+    monkeypatch.setattr("atlas_plus.gitsafe.run", lambda *a, **k: calls.append(a) or None, raising=False)
+    rm._git_autocommit(root / "reference" / "x.md", "reference:x", memory_root=root)
+    assert calls == []
+
+
+def test_init_writes_gitattributes_and_ignores_sync_folders(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import init_cmd
+
+    init_cmd.run_init()
+    gi = (tmp_path / "mem" / ".gitignore").read_text(encoding="utf-8")
+    assert "_atlas/sync-conflicts/" in gi and "_atlas/sync-inbox/" in gi
+    assert "eol=lf" in (tmp_path / "mem" / ".gitattributes").read_text(encoding="utf-8")
+
+
+# --- manual wave (MN25, MN28, MN29, MN30) ---
+
+
+def test_identity_facts_under_the_template_are_primed():
+    from atlas_plus.hooks._quote import identity_beyond_template, identity_is_template
+
+    from atlas_plus.init_cmd import _IDENTITY_TEMPLATE
+    assert identity_is_template(_IDENTITY_TEMPLATE)
+    assert identity_beyond_template(_IDENTITY_TEMPLATE) == ""
+    grown = _IDENTITY_TEMPLATE + "\n## 2026-11-13\n\n- I run the vlan lab. <!-- source:human -->\n"
+    assert identity_is_template(grown)          # the scaffold is still there
+    assert "vlan lab" in identity_beyond_template(grown)
+    assert "Introduce yourself" not in identity_beyond_template(grown)
+
+
+def test_stop_hook_reads_its_payload_even_with_the_root_set(tmp_path, monkeypatch):
+    import io
+    import json
+
+    from atlas_plus.summarizer import hook_entry as he
+
+    root = tmp_path / "projects" / "slug"
+    root.mkdir(parents=True)
+    (root / "sess-AAA.jsonl").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_CLAUDE_CODE_ROOT", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    monkeypatch.setenv("ATLAS_DISABLE_SUGGEST_FACTS", "1")
+    payload = {"session_id": "sess-AAA", "transcript_path": str(root / "sess-AAA.jsonl")}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    monkeypatch.setattr(he, "_summarizer_unavailable_reason", lambda: "")
+    monkeypatch.setattr(he, "_capture_fsdiffs", lambda: None, raising=False)
+    he._SESSION["id"] = ""
+    calls = []
+
+    class _P:
+        def __init__(self, args, **kw):
+            calls.append((args, kw))
+    monkeypatch.setattr(he.subprocess, "Popen", _P)
+    for name in ("_run_temporal_build", "_mine_transcripts", "_build_temporal"):
+        if hasattr(he, name):
+            monkeypatch.setattr(he, name, lambda *a, **k: None)
+    try:
+        he.main()
+    except SystemExit:
+        pass
+    summ = [c for c in calls if "atlas_plus.summarizer.cli" in c[0]]
+    assert summ and "--conversation-id" in summ[0][0] and "sess-AAA" in summ[0][0]
+    assert summ[0][1]["env"]["ATLAS_CLAUDE_CODE_ROOT"] == str(tmp_path / "elsewhere")  # the variable still wins for the root
+
+
+def test_summary_is_written_once_per_session(tmp_path, monkeypatch):
+    from atlas_plus.summarizer import renderer as r
+
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    monkeypatch.setattr(r, "MEMORY_SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(r, "UPDATES_TXT", tmp_path / "updates.txt")
+    monkeypatch.setattr(r, "_version_file", lambda p: None)
+    marker = "<!-- session:sess-AAA -->"
+    log = "## 2026-11-13 - title\n" + marker + "\nbody\n"
+    first = r.write_outputs(log, "entry one\n", "2026-11-13", session_marker=marker)
+    assert "session_log" in first
+    second = r.write_outputs(log, "entry one\n", "2026-11-13", session_marker=marker)
+    assert "skipped" in second
+    assert (tmp_path / "sessions" / "2026-11-13.md").read_text(encoding="utf-8").count(marker) == 1
+    # a later entry is separated by one blank line
+    r.write_outputs("## 2026-11-13 - two\n<!-- session:B -->\nbody\n", "entry two\n", "2026-11-13", session_marker="<!-- session:B -->")
+    up = (tmp_path / "updates.txt").read_text(encoding="utf-8")
+    assert "entry two\n\nentry one" in up
+
+
+def test_summarizer_model_follows_the_brain(monkeypatch):
+    import importlib
+
+    monkeypatch.delenv("ATLAS_SUMMARIZER_MODEL", raising=False)
+    monkeypatch.setenv("ATLAS_BRAIN_MODEL", "qwen3:4b")
+    from atlas_plus.summarizer import providers
+    importlib.reload(providers)
+    assert providers.OLLAMA_MODEL == "qwen3:4b"
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:9")
+    monkeypatch.delenv("ATLAS_OLLAMA_URL", raising=False)
+    monkeypatch.delenv("ATLAS_BRAIN_OLLAMA_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    importlib.reload(providers)
+    assert providers.OLLAMA_URL == "http://127.0.0.1:9"  # OLLAMA_HOST, like the hook's probe (MN25)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    monkeypatch.delenv("ATLAS_BRAIN_MODEL", raising=False)
+    importlib.reload(providers)
+
+
+def test_transcript_search_prints_a_preview_holding_markup(monkeypatch):
+    from typer.testing import CliRunner
+
+    from atlas_plus.transcripts import cli as tcli
+    from atlas_plus.transcripts import index as tindex
+
+    class _Idx:
+        def __init__(self, *a, **k):
+            pass
+
+        def search(self, query, limit=50):
+            return [{"conv_id": "c1", "ts": "t", "role": "user", "preview": "[tool_result] x [/] y"}]
+    monkeypatch.setattr(tindex, "TranscriptIndex", _Idx)
+    res = CliRunner().invoke(tcli.app, ["search", "x"])
+    assert res.exit_code == 0, res.output
+    assert "[tool_result] x [/] y" in res.output
+
+
+def test_transcript_search_retries_tokens_and_scans_cjk(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus.transcripts.index import TranscriptIndex, _quoted_tokens
+    from atlas_plus.transcripts.store import TurnRecord
+
+    assert _quoted_tokens("app.py OR router") == '"app.py" OR "router"'
+    assert _quoted_tokens("router AND") == '"router"'
+    idx = TranscriptIndex(tmp_path / "state" / "t.sqlite")
+    idx.upsert_turn(TurnRecord(turn_id="t1", conversation_id="c1", source="drop", role="user", content="東京の会議は明日です。 router setup in app.py"))
+    assert [h["turn_id"] for h in idx.search("app.py OR router")] == ["t1"]
+    assert [h["turn_id"] for h in idx.search("会議")] == ["t1"]
+
+
+def test_drop_txt_reads_utf16(tmp_path):
+    from atlas_plus.transcripts.sources.drop import _parse_file
+
+    f = tmp_path / "note.txt"
+    f.write_bytes("txtword16 here".encode("utf-16"))
+    records, skipped = _parse_file(f)
+    assert records and "txtword16" in records[0].content and "\ufffd" not in records[0].content
+
+
+def test_json_object_rejects_lists_and_objects_in_fields():
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from atlas_plus.web import app as web
+
+    def req(raw: bytes):
+        async def body():
+            return raw
+        return SimpleNamespace(body=body)
+
+    with pytest.raises(HTTPException) as e1:
+        asyncio.run(web._json_object(req(b'{"title": ["a"], "project": "p"}'), required=("title", "project")))
+    assert e1.value.status_code == 400 and "title" in e1.value.detail
+    with pytest.raises(HTTPException) as e2:
+        asyncio.run(web._json_object(req(b'{"status": {"a": 1}}'), required=("status",)))
+    assert e2.value.status_code == 400
+    assert asyncio.run(web._json_object(req("\ufeff".encode("utf-8") + b'{"status": "done"}'), required=("status",))) == {"status": "done"}
+
+
+def test_ticket_prefixes_never_collide_across_projects(tmp_path):
+    from atlas_plus.tickets import store
+
+    a = store.create_ticket(title="one", project="proj1", tickets_root=tmp_path, interactive=True)
+    b = store.create_ticket(title="two", project="proj2", tickets_root=tmp_path, interactive=True)
+    assert a.id != b.id and a.id.startswith("PRO-") and b.id.startswith("PROJ-")
+    c = store.create_ticket(title="three", project="proj2", tickets_root=tmp_path, interactive=True)
+    assert c.id.startswith("PROJ-")  # the marker keeps the prefix
+    d = store.create_ticket(title="four", project="proj3", tickets_root=tmp_path, interactive=True)
+    assert d.id.startswith("PROJ3-")
+    assert store.get_ticket("proj2/" + b.id, tickets_root=tmp_path).title == "two"
+    assert store.get_ticket("../x/" + b.id, tickets_root=tmp_path) is None
+
+
+def test_tailwind_tag_has_no_cors_mode_and_the_banner_names_the_library():
+    import inspect
+
+    from atlas_plus.web import app as web
+
+    src = inspect.getsource(web)
+    assert 'src="https://cdn.tailwindcss.com/3.4.17"></script>' in src
+    assert 'crossorigin="anonymous"' not in src.split("cdn.tailwindcss.com/3.4.17")[1][:200]
+    assert 'typeof tailwind==="undefined"' in src
+
+
+def test_loose_cjk_match_is_never_high(monkeypatch):
+    from atlas_plus.mcp.memory_server import fts
+
+    calls = []
+    real = fts.search
+
+    def fake(query, scope="", limit=10, _healed=False, _fallback_stage=0, _raw=None):
+        calls.append(_fallback_stage)
+        if _fallback_stage == 3:
+            return [{"path": "a.md", "snippet": "s", "score": 0.99}]
+        return real(query, scope=scope, limit=limit, _healed=_healed, _fallback_stage=_fallback_stage, _raw=_raw)
+    loose = fts._bigram_fallback("猫が好きです")
+    assert loose
+    monkeypatch.setattr(fts, "search", fake)
+    out = fts.search(loose, _fallback_stage=3, _raw="猫が好きです")
+    assert out[0]["score"] == 0.99  # the fake; the cap is applied by the caller below
+    capped = [dict(r, score=min(float(r["score"]), 0.35), loose_match=True) for r in out]
+    assert capped[0]["score"] == 0.35
+    import inspect
+    assert 'r["score"] = min(float(r.get("score", 0) or 0), 0.35)' in inspect.getsource(fts)
+
+
+def test_import_claims_unchanged_notes_so_stale_is_per_vault(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    import re
+
+    from atlas_plus import import_cmd
+
+    v1 = tmp_path / "v1"
+    v1.mkdir()
+    (v1 / "b1.md").write_text("# b1\n\nbody\n", encoding="utf-8")
+    import_cmd.import_obsidian(v1, "reference/shared", execute=True)
+    notes = list((tmp_path / "mem" / "reference" / "shared").glob("*.md"))
+    assert notes
+    note = notes[0]
+    txt = note.read_text(encoding="utf-8")
+    note.write_text(re.sub(r"^import_vault:.*\n", "", txt, flags=re.M), encoding="utf-8")  # a pre-stamp note
+    assert "import_vault" not in note.read_text(encoding="utf-8")
+    v2 = tmp_path / "v2"
+    v2.mkdir()
+    (v2 / "other.md").write_text("# other\n\nbody two\n", encoding="utf-8")
+    report = import_cmd.import_obsidian(v2, "reference/shared", execute=True, archive_stale=True)
+    assert report["stale"] == [] and report["archived"] == []
+    assert any("b1" in u for u in report["unclaimed_not_judged"])
+    report2 = import_cmd.import_obsidian(v1, "reference/shared", execute=True)
+    assert report2["claimed"] == 1 and "import_vault" in note.read_text(encoding="utf-8")

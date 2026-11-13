@@ -170,8 +170,9 @@ def render_panel(summary: dict) -> str:
     status = summary["status"]
     cls = _STATUS_CLASS.get(status, "text-gray-500")
     if status == "unknown":
-        return ('<div class="text-xs text-slate-500">no audit runs found '
-                '<span class="text-slate-600">(.atlas/security/index.json)</span></div>')
+        return ('<div class="text-xs text-slate-500">no audit runs: this card fills when a scheduled host audit '
+                'writes <span class="text-slate-600">.atlas/security/index.json</span>; the public install ships no such job, '
+                'so it stays empty (MN29)</div>')
     verdict = _html.escape(summary.get("verdict") or "?")
     stale_note = ' <span class="text-yellow-400">(stale)</span>' if summary["stale"] else ""
     report = _html.escape(str(summary.get("report") or ""))

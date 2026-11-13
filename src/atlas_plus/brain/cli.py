@@ -1895,28 +1895,9 @@ def _run_curation_report(arg: str = "") -> None:
     stale_count = 0
     convergence_count = 0
     decisions_count = 0
-    for line in report_text.splitlines():
-        if "Repeated facts (" in line:
-            m = re.search(r"\((\d+) found", line)
-            if m:
-                counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
-        if "Potential Duplicates (" in line:
-            import re
-            m = re.search(r"\((\d+) found", line)
-            if m:
-                dup_count = int(m.group(1))
-        elif "Stale Files (" in line:
-            m = re.search(r"\((\d+) found", line)
-            if m:
-                stale_count = int(m.group(1))
-        elif "Convergence Flags (" in line:
-            m = re.search(r"\((\d+)", line)
-            if m:
-                convergence_count = int(m.group(1))
-        elif "Stale Decisions (" in line:
-            m = re.search(r"\((\d+)", line)
-            if m:
-                decisions_count = int(m.group(1))
+    from atlas_plus.curation.weekly_report import curation_counts
+    _c = curation_counts(report_text)
+    dup_count, stale_count, convergence_count, decisions_count = _c["duplicates"], _c["stale"], _c["convergence"], _c["decisions"]
 
     status = "written to " + str(output_path) if write else "dry-run (add --write to save)"
     console.print(f"\n[bold]Curation Report[/bold] ({status})")

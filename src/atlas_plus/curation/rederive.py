@@ -55,6 +55,9 @@ _EXCLUDED_DOC_DIRS = {
 }
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 @dataclass
 class RederiveCandidate:
     """A memory file that overlaps heavily with a project doc and may be rederivable from source."""
@@ -96,7 +99,7 @@ def _parse_frontmatter_body(path: Path) -> tuple[dict, str]:
         return {}, raw
     import yaml
     try:
-        fm = yaml.safe_load(raw[3:end]) or {}
+        fm = _fast_yaml_load(raw[3:end]) or {}
     except yaml.YAMLError:
         # One malformed-frontmatter file must not crash the whole curation scan.
         return {}, raw[end + 4:]

@@ -2506,28 +2506,9 @@ async def cmd_curation_report(update: Update, context: ContextTypes.DEFAULT_TYPE
         from atlas_plus.curation.weekly_report import generate_report
         import re
         report_text, _ = generate_report(dry_run=True)
-        dup = stale = convergence = decisions = 0
-        for line in report_text.splitlines():
-            if "Repeated facts (" in line:
-                m = re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
-            if "Potential Duplicates (" in line:
-                m = re.search(r"\((\d+) found", line)
-                if m:
-                    dup = int(m.group(1))
-            elif "Stale Files (" in line:
-                m = re.search(r"\((\d+) found", line)
-                if m:
-                    stale = int(m.group(1))
-            elif "Convergence Flags (" in line:
-                m = re.search(r"\((\d+)", line)
-                if m:
-                    convergence = int(m.group(1))
-            elif "Stale Decisions (" in line:
-                m = re.search(r"\((\d+)", line)
-                if m:
-                    decisions = int(m.group(1))
+        from atlas_plus.curation.weekly_report import curation_counts
+        _c = curation_counts(report_text)
+        dup, stale, convergence, decisions = _c["duplicates"], _c["stale"], _c["convergence"], _c["decisions"]
         return dup, stale, convergence, decisions
 
     try:

@@ -33,6 +33,9 @@ except ImportError:  # pragma: no cover - public build
     watchtower = None  # type: ignore[assignment]
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 def _js_arg(value: str) -> str:
     """Embed a string as a JS literal inside an HTML event attribute.
 
@@ -192,6 +195,10 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
     # A source that has already failed too many times this window is blocked
     # regardless of whether this attempt carries a valid key.
     if not _is_loopback and AUTH_FAILURES.is_rate_limited(throttle_ip):
+        try:
+            AUTH_FAILURES.record(path=request.url.path, client_ip=client_ip, cf_ip=cf_ip, reason="locked_out")  # visible in the panel, not counted (MN29)
+        except Exception:  # noqa: BLE001
+            pass
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed authentication attempts; slow down.",
@@ -287,7 +294,7 @@ async def _task_poll_loop() -> None:
     while True:
         changed = False
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
                 r = await client.get(
                     f"{BRAIN_URL}/tasks", params={"limit": "20"}, headers=_brain_headers
                 )
@@ -340,7 +347,7 @@ async def _json_object(request: Request, required: tuple[str, ...] = ()) -> dict
     if _too_deep(raw):
         raise HTTPException(status_code=400, detail="Body too deeply nested")
     try:
-        body = json.loads(raw.decode("utf-8") if raw else "")
+        body = json.loads(raw.decode("utf-8-sig") if raw else "")  # a BOM is not an error (MN25)
     except (UnicodeDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
     if not isinstance(body, dict):
@@ -348,6 +355,14 @@ async def _json_object(request: Request, required: tuple[str, ...] = ()) -> dict
     missing = [k for k in required if not body.get(k)]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing field(s): {', '.join(missing)}")
+    for k, v in body.items():
+        # these routes take flat strings and numbers; a list or object reached the store as a 500
+        # or a title of "['a']" (MN25)
+        if isinstance(v, (dict, list)):
+            raise HTTPException(status_code=400, detail=f"Field {k} must be a string or a number, not a list or object")
+    for k in required:
+        if not isinstance(body[k], str):
+            raise HTTPException(status_code=400, detail=f"Field {k} must be a string")
     return body
 
 
@@ -530,7 +545,8 @@ async def status_partial(request: Request):
     _check_auth(request)
     mcp_port = os.environ.get("ATLAS_MCP_PORT", "8765")
     mcp_base = (os.environ.get("ATLAS_MCP_URL") or f"http://127.0.0.1:{mcp_port}").rstrip("/")
-    ollama_base = (os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")
+    from atlas_plus.llm.ollama_url import default_ollama_url as _ollama_url
+    ollama_base = _ollama_url().rstrip("/")  # the same endpoint the Brain uses (MN25: it showed the owner's 11434 as up)
     # Fire all three checks concurrently; worst-case latency = slowest, not sum.
     async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
         brain_req  = client.get(f"{BRAIN_URL}/health")
@@ -904,7 +920,7 @@ async def submit_task(req: TaskSubmit, request: Request):
     if req.agent:
         body["agent"] = req.agent
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/task", json=body, headers=_brain_headers)
         r.raise_for_status()
         task = r.json()
@@ -931,7 +947,7 @@ async def submit_claude_task(req: TaskSubmit, request: Request):
         "session_id": req.session_id or "webui-claude-direct",
     }
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/task", json=body, headers=_brain_headers)
         r.raise_for_status()
         task = r.json()
@@ -972,7 +988,7 @@ async def get_task_json(task_id: str, request: Request):
     """
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/task/{task_id}", headers=_brain_headers)
         if r.status_code == 404:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -1108,9 +1124,9 @@ async def task_detail(task_id: str, request: Request):
 async def bump_task_priority(task_id: str, request: Request):
     """Proxy to Brain PATCH /task/{id}/priority."""
     _check_auth(request)
-    body = await request.json()
+    body = await _json_object(request)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.patch(
                 f"{BRAIN_URL}/task/{task_id}/priority",
                 json=body,
@@ -1130,7 +1146,7 @@ async def retry_all_failed(request: Request):
     from atlas_plus.brain import tasks as ts
     failed = ts.list_tasks(status="failed", limit=50)
     submitted = 0
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
         for task in failed:
             body: dict = {"instruction": task.instruction, "session_id": task.session_id}
             if task.agent:
@@ -1160,7 +1176,7 @@ async def retry_task(task_id: str, request: Request):
     if task.agent:
         body["agent"] = task.agent
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/task", json=body, headers=_brain_headers)
         r.raise_for_status()
         new_task = r.json()
@@ -1218,7 +1234,7 @@ async def scheduler_trigger_proxy(job_id: str, request: Request):
     """Proxy to Brain POST /scheduler/trigger/{job_id}."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/scheduler/trigger/{job_id}", headers=_brain_headers
             )
@@ -1236,7 +1252,7 @@ async def scheduler_jobs_proxy(request: Request):
     """Proxy to Brain GET /scheduler/jobs."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/scheduler/jobs", headers=_brain_headers)
         r.raise_for_status()
         return r.json()
@@ -1249,7 +1265,7 @@ async def credit_reset_proxy(request: Request):
     """Proxy to Brain POST /credit/reset -- clear credit exhaustion state."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/credit/reset", headers=_brain_headers)
         r.raise_for_status()
         return r.json()
@@ -1338,7 +1354,7 @@ async def memory_capture(request: Request):
 async def memory_files(request: Request):
     """Collapsible directory tree of .memory/ as HTML."""
     _check_auth(request)
-    _SKIP_DIRS = {"_inbox", "__pycache__", ".git"}
+    _SKIP_DIRS = {"_inbox", "__pycache__", ".git", "versions", "_atlas", ".locks", "_sync"}  # copies and state are not notes (MN29: 86% of the tree was versions/)
 
     _FILE_SUFFIXES = (".md", ".txt", ".json", ".yaml", ".yml")
 
@@ -1381,7 +1397,7 @@ async def memory_files(request: Request):
     return HTMLResponse(f'<div class="space-y-0.5">{html}</div>')
 
 
-@app.get("/expired", response_class=HTMLResponse)
+@app.api_route("/expired", methods=["GET", "HEAD"], response_class=HTMLResponse)  # link checkers probe with HEAD (MN25)
 async def session_expired_page():
     """Where a stale tab lands after a 401: sessions live in memory, so a restart, a key rotation
     or the 12-hour limit ends them (AG31, sweep 14)."""
@@ -1400,7 +1416,10 @@ async def memory_file_read(request: Request, path: str = "", raw: str = ""):
     """Read a single memory file. ?path=identity/user.md ; &raw=1 returns the whole file as text
     (the editor loads that, so a save never truncates a long note: AG31, sweep 14)."""
     _check_auth(request)
+    from starlette.responses import PlainTextResponse
     if not path or ".." in path:
+        if raw:
+            return PlainTextResponse("Invalid path.", status_code=400)
         return HTMLResponse('<div class="text-red-400 text-xs">Invalid path.</div>')
     # Normalise separators and resolve inside MEMORY_ROOT
     safe_path = path.replace("\\", "/").lstrip("/")
@@ -1408,13 +1427,23 @@ async def memory_file_read(request: Request, path: str = "", raw: str = ""):
     try:
         target.relative_to(MEMORY_ROOT.resolve())
     except ValueError:
+        if raw:
+            return PlainTextResponse("Path traversal rejected.", status_code=400)
         return HTMLResponse('<div class="text-red-400 text-xs">Path traversal rejected.</div>')
     if not target.exists():
+        if raw:
+            return PlainTextResponse(f"File not found: {safe_path}", status_code=404)  # never 200 HTML the editor could save (MN25)
         return HTMLResponse(f'<div class="text-red-400 text-xs">File not found: {_html_mod.escape(safe_path)}</div>')
-    full = target.read_text(encoding="utf-8", errors="replace")
     if raw:
-        from starlette.responses import PlainTextResponse
-        return PlainTextResponse(full)
+        # bytes as they are: read_text turned CRLF into LF and a save rewrote every line (MN25)
+        data = target.read_bytes()
+        try:
+            text_out = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return PlainTextResponse("This note is not UTF-8; the editor would replace its bytes. Edit it in your editor.", status_code=415)  # MN29
+        import hashlib as _hl
+        return PlainTextResponse(text_out, headers={"X-Sextant-Etag": _hl.sha256(data).hexdigest()})
+    full = target.read_text(encoding="utf-8", errors="replace")
     content = full[:8000]
     cut = (f'<div class="text-amber-400 text-xs mb-1">showing the first 8,000 of {len(full):,} characters; '
            f'Edit loads the whole file</div>') if len(full) > 8000 else ''
@@ -1452,8 +1481,20 @@ async def memory_file_write(request: Request):
         raise HTTPException(status_code=413, detail="Content exceeds 1 MB limit for memory files.")
     from atlas_plus.mcp.memory_server.routing import _atomic_write_text, _write_lock
     from atlas_plus.mcp.memory_server.versioning import version_before_write
+    import hashlib as _hl
+    base_etag = str(body.get("base_etag") or "").strip().lower()
     try:
         with _write_lock(target):
+            try:
+                current = target.read_bytes()
+            except OSError:
+                current = b""
+            if base_etag and _hl.sha256(current).hexdigest() != base_etag:
+                # another writer (a CLI remember, a sync) changed the note since the editor loaded
+                # it; a save would silently drop that write (MN29)
+                raise HTTPException(status_code=409, detail="The note changed since you opened it (another writer). Reload it and re-apply your edit.")
+            if content.encode("utf-8") == current:
+                return {"ok": True, "unchanged": True, "path": safe_path}
             # A failed version copy aborts the write: never overwrite without
             # a way back.
             try:
@@ -1590,7 +1631,7 @@ async def chat_history(request: Request, session_id: str = ""):
     if not session_id:
         return HTMLResponse('<div class="text-slate-500 text-xs">No session_id provided.</div>')
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.get(
                 f"{BRAIN_URL}/session/{session_id}/history",
                 params={"limit": "40"},
@@ -1701,7 +1742,7 @@ async def routing_stats_panel(request: Request):
     """Routing configuration and classification cache panel for the Agents tab."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/routing/stats", headers=_brain_headers)
         r.raise_for_status()
         data = r.json()
@@ -1749,7 +1790,7 @@ def _get_mem_file_count() -> int:
         return count
     _skip = {"versions", "_atlas", "archive", "_sync"}
     count = (sum(1 for p in MEMORY_ROOT.rglob("*.md")
-                 if not (_skip & set(p.relative_to(MEMORY_ROOT).parts))
+                 if p.relative_to(MEMORY_ROOT).parts[0] not in _skip  # top-level only: a user's own projects/archive/ is notes (MN25)
                  and not any(part.startswith(".") for part in p.relative_to(MEMORY_ROOT).parts))
              if MEMORY_ROOT.exists() else 0)  # whole-file version copies are not notes (AG31)
     _mem_file_count_cache = (time.monotonic(), count)
@@ -1892,7 +1933,7 @@ async def pending_facts_panel(request: Request):
     """Render the pending facts review panel for the Memory tab."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/pending-facts?status=pending&limit=20", headers=_brain_headers)
         r.raise_for_status()
         facts = r.json().get("facts", [])
@@ -1945,11 +1986,11 @@ async def approve_fact_proxy(fact_id: str, request: Request):
     _check_auth(request)
     body = {}
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except Exception:
         pass
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/pending-facts/{fact_id}/approve",
                 json=body, headers=_brain_headers,
@@ -1969,7 +2010,7 @@ async def reject_fact_proxy(fact_id: str, request: Request):
     """
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/pending-facts/{fact_id}/reject",
                 headers=_brain_headers,
@@ -2026,7 +2067,7 @@ async def memory_suggest_tags(request: Request):
     _check_auth(request)
     body = {}
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except Exception:
         pass
     write = bool(body.get("write", False))
@@ -2085,7 +2126,7 @@ async def memory_suggest_facts(request: Request):
     _check_auth(request)
     body = {}
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except Exception:
         pass
     since = str(body.get("since", "today"))
@@ -2472,36 +2513,8 @@ async def memory_curation_report(request: Request, dry_run: bool = True):
         from atlas_plus.curation.weekly_report import generate_report
         report_text, output_path = generate_report(dry_run=dry_run)
 
-        counts = {"duplicates": 0, "stale": 0, "convergence": 0, "decisions": 0, "rederivable": 0}
-        for line in report_text.splitlines():
-            if "Repeated facts (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
-            if "Repeated facts (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
-            if "Potential Duplicates (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = int(m.group(1))
-            elif "Stale Files (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["stale"] = int(m.group(1))
-            elif "Convergence Flags (" in line:
-                m = _re.search(r"\((\d+)", line)
-                if m:
-                    counts["convergence"] = int(m.group(1))
-            elif "Stale Decisions (" in line:
-                m = _re.search(r"\((\d+)", line)
-                if m:
-                    counts["decisions"] = int(m.group(1))
-            elif "Re-derivable Facts (" in line:
-                m = _re.search(r"\((\d+)", line)
-                if m:
-                    counts["rederivable"] = int(m.group(1))
+        from atlas_plus.curation.weekly_report import curation_counts
+        counts = curation_counts(report_text)
 
         return {
             **counts,
@@ -2530,38 +2543,8 @@ async def memory_curation_report_panel(request: Request):
         from atlas_plus.curation.weekly_report import generate_report
         report_text, _ = generate_report(dry_run=True)
 
-        counts: dict[str, int] = {
-            "duplicates": 0, "stale": 0, "convergence": 0, "decisions": 0, "rederivable": 0,
-        }
-        for line in report_text.splitlines():
-            if "Repeated facts (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
-            if "Repeated facts (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = counts.get("duplicates", 0) + int(m.group(1))
-            if "Potential Duplicates (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["duplicates"] = int(m.group(1))
-            elif "Stale Files (" in line:
-                m = _re.search(r"\((\d+) found", line)
-                if m:
-                    counts["stale"] = int(m.group(1))
-            elif "Convergence Flags (" in line:
-                m = _re.search(r"\((\d+)", line)
-                if m:
-                    counts["convergence"] = int(m.group(1))
-            elif "Stale Decisions (" in line:
-                m = _re.search(r"\((\d+)", line)
-                if m:
-                    counts["decisions"] = int(m.group(1))
-            elif "Re-derivable Facts (" in line:
-                m = _re.search(r"\((\d+)", line)
-                if m:
-                    counts["rederivable"] = int(m.group(1))
+        from atlas_plus.curation.weekly_report import curation_counts
+        counts = curation_counts(report_text)
         return counts
 
     try:
@@ -2624,7 +2607,7 @@ def _build_topic_index(memory_root) -> dict[str, list[str]]:
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _fast_yaml_load(raw[3:end]) or {}
         except Exception:
             continue
         tags = fm.get("tags") or fm.get("tag") or []
@@ -3131,7 +3114,7 @@ async def inbox_promote(item_id: str, request: Request):
     """POST /api/inbox/{id}/promote -- create a ticket from the item and mark it promoted."""
     _check_auth(request)
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except Exception:
         body = {}
     from atlas_plus.inbox.store import promote_to_ticket
@@ -3204,7 +3187,7 @@ def _store_node(node_id: str, label: str, path: Path, detail: str = "") -> dict:
 async def api_topology(request: Request):
     """GET /api/topology -- nodes + edges for the Map tab, probed live."""
     _check_auth(request)
-    async with httpx.AsyncClient(timeout=1.5) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(1.5, connect=0.75)) as client:
         brain_s, mcp_s, ollama_s, sync_s = await asyncio.gather(
             _probe_health(client, f"{BRAIN_URL}/health"),
             _probe_health(client, f"{MCP_URL}/health"),
@@ -3696,7 +3679,7 @@ async def create_ticket_endpoint(request: Request):
 async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
     """Dispatch a ticket to Brain as an async task and mark it in-progress."""
     _check_auth(request)
-    body = await request.json()
+    body = await _json_object(request)
     from atlas_plus.tickets.store import list_tickets, update_ticket_status as _update_status
 
     ticket = next((t for t in list_tickets() if t.id == ticket_id.upper()), None)
@@ -3718,7 +3701,7 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
         task_payload["agent"] = agent_hint
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/task",
                 json=task_payload,
@@ -3761,7 +3744,7 @@ async def tickets_dispatch_stats(request: Request):
     _check_auth(request)
     brain_key = os.environ.get("ATLAS_BRAIN_API_KEY", "")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(
                 f"{BRAIN_URL}/dispatch-stats",
                 headers={"Authorization": f"Bearer {brain_key}"},
@@ -3779,7 +3762,7 @@ async def tickets_dispatch_stats_html(request: Request):
     brain_key = os.environ.get("ATLAS_BRAIN_API_KEY", "")
     stats: dict = {"enabled": False}
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(
                 f"{BRAIN_URL}/dispatch-stats",
                 headers={"Authorization": f"Bearer {brain_key}"},
@@ -3920,6 +3903,15 @@ async def memory_search(request: Request, q: str = ""):
         try:
             from atlas_plus.mcp.memory_server.tools.search import memory_search as fts_search
             fts_results = fts_search(q, scope="", limit=30)
+            if not fts_results:
+                try:
+                    from atlas_plus.mcp.memory_server.fts import last_connect_error as _lce
+                    _err = _lce()
+                except Exception:  # noqa: BLE001
+                    _err = ""
+                if _err:
+                    return (f'<div class="text-red-400 text-xs">Search index unavailable: {_html_mod.escape(_err)}. '
+                            f'Run <code>sextant fts-rebuild</code>; check that the state dir is writable.</div>')
             if fts_results:
                 top_score = float(fts_results[0].get("score", 0))
                 if top_score < 0.2:
@@ -4485,7 +4477,7 @@ def _html_full(key: str) -> str:
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,{_FAVICON_SVG_B64}">
 <link rel="icon" type="image/x-icon" href="data:image/x-icon;base64,{_FAVICON_ICO_B64}">
 <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
-<script src="https://cdn.tailwindcss.com/3.4.17" integrity="sha384-igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K" crossorigin="anonymous"></script>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script><!-- no integrity/crossorigin: cdn.tailwindcss.com answers without Access-Control-Allow-Origin, so a CORS-mode fetch is blocked and the page renders unstyled (MN29) -->
 <script>
 // The bootstrap key must not stay in the address bar, history or any referrer: the cookie
 // carries the session from here on (MN4, pipeline sweep 2026-11-11).
@@ -4559,12 +4551,12 @@ button{{font-family:inherit;cursor:pointer}}
 <body hx-headers='{{"X-Sextant-Request": "1"}}'>
 <div id="cdn-missing" style="display:none;margin:8px;padding:10px 14px;border:1px solid #b45309;background:#431407;color:#fde68a;font:14px system-ui,sans-serif;border-radius:6px">
 This dashboard loads two UI libraries (htmx from unpkg.com, Tailwind from cdn.tailwindcss.com) in your browser.
-They did not load, so every panel stays at "loading..." and nothing is styled: you are offline, or those hosts are blocked.
+<span id="cdn-missing-which"></span> Without htmx every panel stays at "loading..."; without Tailwind nothing is styled. You are offline, or that host is blocked.
 The server itself is fine; its JSON endpoints (for example <code>/api/stats/summary</code>) answer without them.
 </div>
 <script>
 // Offline, the page was a permanent "loading..." shell with no explanation (AG18, sweep 11).
-window.addEventListener("DOMContentLoaded",function(){{if(typeof htmx==="undefined"){{var b=document.getElementById("cdn-missing");if(b)b.style.display="block";}}}});
+window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htmx==="undefined")miss.push("htmx (unpkg.com)");if(typeof tailwind==="undefined")miss.push("Tailwind (cdn.tailwindcss.com)");if(miss.length){{var b=document.getElementById("cdn-missing");if(b){{var w=document.getElementById("cdn-missing-which");if(w)w.textContent="Not loaded: "+miss.join(", ")+".";b.style.display="block";}}}}}});
 </script>
 
 <!-- Top bar -->
@@ -4691,7 +4683,7 @@ window.addEventListener("DOMContentLoaded",function(){{if(typeof htmx==="undefin
       </div>
     </div>
     <div class="card">
-      <h2 class="text-xs font-bold text-slate-400 mb-1">Auth failures <span class="text-slate-600 font-normal">(lockouts, per source)</span></h2>
+      <h2 class="text-xs font-bold text-slate-400 mb-1">Auth failures <span class="text-slate-600 font-normal">(per source; locked_out = refused while locked)</span></h2>
       <div hx-get="/api/security/auth-failures.html" hx-trigger="load, every 60s" hx-swap="innerHTML">
         <div class="text-slate-600 text-xs">loading...</div>
       </div>
@@ -5220,8 +5212,8 @@ function toggleTheme(){{
 // ---- Stop server ----
 async function stopServer(){{
   if(!confirm("Stop the Atlas Web UI server?"))return;
+  try{{const r=await fetch("/stop",{{method:"POST",headers:{{}}}});if(!r.ok){{showToast('Stop refused (HTTP '+r.status+'): sign in again','failed');return;}}}}catch(e){{}}  // a dead socket means it stopped (MN29)
   document.body.innerHTML='<div style="color:#4ade80;font-family:monospace;padding:2rem;font-size:1rem">Server stopped. Close this tab.</div>';
-  fetch("/stop",{{method:"POST",headers:{{}}}}).catch(()=>{{}});
 }}
 
 // ---- System Map: live topology + activity pulses ----
@@ -6043,12 +6035,13 @@ async function browseMemory(){{
 
 // ---- Memory file editor ----
 let _mfEditPath='';
+let _mfBaseEtag='';
 async function editMemoryFile(path){{
   _mfEditPath=path;
   const pre=document.getElementById('mf-content');
   if(!pre)return;
   let current=pre.textContent;
-  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok)current=await rr.text();}}
+  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
   catch(e){{showToast('Could not load the whole file: '+e.message,'failed');return;}}
   const r=document.getElementById('mem-results');
   // Static skeleton via innerHTML; the PATH lands via textContent -- a
@@ -6073,12 +6066,12 @@ async function saveMemoryFile(){{
   try{{
     const r=await fetch('/api/memory/file',{{method:'POST',
       headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify({{path:_mfEditPath,content:ta.value}})}});
-    const d=await r.json();
+      body:JSON.stringify({{path:_mfEditPath,content:ta.value,base_etag:_mfBaseEtag}})}});
+    const d=await r.json().catch(()=>({{}}));
     if(d.ok){{
-      showToast('Saved: '+_mfEditPath.split('/').pop(),'done');
+      showToast((d.unchanged?'No change: ':'Saved: ')+_mfEditPath.split('/').pop(),'done');
       readMemoryFile(_mfEditPath);
-    }}else{{showToast('Save failed','failed');}}
+    }}else{{showToast('Save failed: '+(d.detail||('HTTP '+r.status)),'failed');}}
   }}catch(e){{showToast('Save error: '+e.message,'failed');}}
 }}
 
@@ -6255,7 +6248,7 @@ async def workers_proxy(request: Request):
     """Proxy GET /workers from Brain server. Shows worker health assessment."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/workers", headers=_brain_headers)
         return r.json()
     except Exception as exc:
@@ -6367,7 +6360,7 @@ async def spend_proxy(request: Request, days: int = 7):
     """Proxy GET /spend from Brain: token totals + estimated cost (spend v2)."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/spend", params={"days": days}, headers=_brain_headers)
         return r.json()
     except Exception as exc:
@@ -6388,7 +6381,7 @@ async def public_status():
 
     async def _probe(name: str, url: str, headers: dict | None = None) -> tuple[str, str]:
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.75)) as client:
                 r = await client.get(url, headers=headers or {})
             # 429 is a locked-out source, not a healthy service (claims pass 2026-11-10)
             return name, "degraded" if (r.status_code >= 500 or r.status_code == 429) else "ok"

@@ -15,6 +15,9 @@ from atlas_plus.mcp.memory_server.config import EXCLUDED_DIRS, MEMORY_ROOT
 DEFAULT_STALE_MONTHS = 6
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 @dataclass
 class StaleFile:
     """A memory file that has not been updated within the configured staleness threshold."""
@@ -54,7 +57,7 @@ def _read_frontmatter(path: Path) -> dict:
         end = text.find("---", 3)
         if end == -1:
             return {}
-        return yaml.safe_load(text[3:end].strip()) or {}
+        return _fast_yaml_load(text[3:end].strip()) or {}
     except Exception:
         return {}
 

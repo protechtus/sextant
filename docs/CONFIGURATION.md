@@ -58,6 +58,7 @@ registration reaches only the MCP server process, not the hooks.
 | --- | --- | --- |
 | `ATLAS_MCP_HOST` / `ATLAS_MCP_PORT` | `127.0.0.1` / `8765` | MCP memory server (HTTP mode). In a container set `ATLAS_MCP_HOST=0.0.0.0` and publish the port on the host's loopback only (`-p 127.0.0.1:8765:8765`); the default bind is unreachable through a port publish. |
 | `ATLAS_MCP_ALLOWED_HOSTS` | unset | Comma-separated Host names the HTTP MCP server accepts besides loopback (`sextant.example.com`, `192.168.1.5`, `[2001:db8::5]`). Each entry matches the bare name (what a client on 80/443 sends) and `name:<any port>`; an entry with its own port (`host:8765`) matches that port only; names are case-insensitive. Needed behind a reverse proxy, a tunnel or on a LAN: the server otherwise answers 421 Invalid Host header (DNS-rebinding guard; the body and the log name this setting). With `ATLAS_MCP_HOST` set beyond loopback and no list, the Host check is off and the bearer token is the guard. Cannot be combined with `--no-auth`. |
+| `ATLAS_VERSION_MIN_INTERVAL_SECONDS` | `0` | Coalescing window for history copies: when set, a write within this many seconds of the note's newest copy makes no new copy (the previous one already holds the pre-burst state). `0` keeps a copy on every write. 1,000 appends to one 1.2 MB note made 1.1 GB of copies; `sextant versions --prune` reclaims them. |
 | `ATLAS_MCP_LOG_LEVEL` | `WARNING` | Log level of the MCP server (`DEBUG`, `INFO`, ...). `INFO` shows one line per request on stderr, which some clients display as noise. |
 | `ATLAS_CLAUDE_PROJECT_DIR` | the slug of the workspace root (`D:\Work\notes` -> `D--Work-notes`), matched case-insensitively under the Claude Code projects root | The Claude Code project folder whose transcripts the Stop hook's mining stage indexes. Set it when your corpus lives elsewhere than the project you run Claude Code in. |
 | `ATLAS_WEB_HOST` / `ATLAS_WEB_PORT` | `127.0.0.1` / `8766` | Web dashboard. |
@@ -122,7 +123,7 @@ while the summarizer uses a cloud one:
 | `ATLAS_BRAIN_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for the Brain. |
 | `OLLAMA_HOST` | -- | Read only when `ATLAS_BRAIN_OLLAMA_URL` is unset: the standard Ollama variable (`host:port` or a URL), as the Ollama CLI reads it. |
 | `ATLAS_SUMMARIZER_PROVIDER` | `auto` | Legacy alias for `ATLAS_MODEL_SUMMARIZER_PROVIDER`. |
-| `ATLAS_SUMMARIZER_MODEL` | `mistral` | Session-summarizer model. |
+| `ATLAS_SUMMARIZER_MODEL` | `ATLAS_BRAIN_MODEL`, else `qwen3:8b` | Session-summarizer and suggest-facts model; the Stop hook's probe says so when it is not pulled. |
 | `ATLAS_SUMMARIZER_CLAUDE_MODEL` | code default | Model used when the summarizer runs on Anthropic. |
 | `ATLAS_SUMMARIZER_TIMEOUT` | code default | Summarizer call timeout (seconds). |
 | `ATLAS_OLLAMA_URL` | Ollama default | Summarizer-side Ollama endpoint. |
@@ -166,7 +167,7 @@ Intake never deletes: imported originals move to `<ATLAS_INTAKE_DIR>/_imported/<
 | --- | --- | --- |
 | `ATLAS_TRANSCRIPT_ROOT` / `ATLAS_TRANSCRIPT_INDEX` | state dir | Where captured transcripts and their index live. |
 | `ATLAS_TRANSCRIPT_DROP` | `<state>/transcripts/drop` | Drop directory for `sextant-transcripts ingest` (bring transcripts from any tool). |
-| `ATLAS_CLAUDE_CODE_ROOT` | `~/.claude` | Claude Code projects dir to mine transcripts from. |
+| `ATLAS_CLAUDE_CODE_ROOT` | `~/.claude/projects` | Claude Code projects dir to mine transcripts from (the Stop hook derives it from its payload when unset). |
 | `ATLAS_DISABLE_AUTOSUMMARIZE` / `ATLAS_DISABLE_SUGGEST_FACTS` / `ATLAS_DISABLE_TRANSCRIPT_MINING` | unset | Opt out of individual stop-hook stages. |
 | `OLLAMA_UPSTREAM` / `ATLAS_OLLAMA_PROXY_PORT` | -- | Transcript-capturing Ollama proxy. |
 | `OPENAI_PROXY_TARGET` / `ATLAS_OPENAI_PROXY_PORT` | -- | Transcript-capturing OpenAI-compatible proxy. |

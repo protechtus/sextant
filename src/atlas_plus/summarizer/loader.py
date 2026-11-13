@@ -38,7 +38,7 @@ def _parse_since(s: str | None) -> datetime | None:
         return None
     s = s.strip().lower()
     if s == "today":
-        now = datetime.now(timezone.utc)
+        now = datetime.now().astimezone()  # the user's midnight, not UTC's (MN28: an evening session was dropped)
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     if s.endswith("h") and s[:-1].isdigit():
         return datetime.now(timezone.utc) - timedelta(hours=int(s[:-1]))

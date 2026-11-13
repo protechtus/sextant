@@ -111,6 +111,7 @@ def cmd_create(
     """Create a new ticket."""
     from atlas_plus.tickets.store import create_ticket
     t = create_ticket(
+        interactive=True,  # a person at the keyboard, like the dashboard form (MN29: it printed a traceback)
         title=title,
         project=project,
         assignee=assignee,
@@ -151,3 +152,18 @@ def cmd_open(project: Optional[str] = typer.Argument(None)):
     for t in tickets:
         color = STATUS_COLORS.get(t.status, "white")
         console.print(f"[cyan]{t.id}[/cyan]  [{color}]{t.status}[/{color}]  [{t.assignee}]  {_clean(t.title)}")
+
+
+def main() -> None:
+    """Console entry: a closed pipe (`atlas-tickets ... | head`) ends quietly (MN30: a 147-line traceback)."""
+    import sys as _sys
+    try:
+        app()
+    except OSError as exc:
+        if exc.filename is None and (exc.errno in (22, 32) or exc.__class__.__name__ == "BrokenPipeError"):
+            try:
+                _sys.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise SystemExit(0)
+        raise

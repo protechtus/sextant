@@ -298,9 +298,14 @@ folder. Zip it, sync it with any tool you already trust (rclone, Syncthing,
 a cloud-drive client), or make it a git repo and push it somewhere private.
 `sextant-init` writes a `.gitignore` in the corpus that keeps the per-machine
 parts out of git: `versions/` (history copies, one set per machine), the
-write locks and the search index. Two people on one corpus through git works
-for notes (a note both wrote the same day merges like any text file; keep
-both sides), with three things to know: `identity/user.md` is one file, so a
+write locks and the search index. Two people on one corpus through git is
+workable for two or three trusted people, and it means hand merges: facts go
+in at the top of the day's section, so a note both wrote the same day
+conflicts on every pull (delete the three marker lines and keep both blocks;
+`sextant remember` refuses to write into a note that still holds markers, and
+`sextant doctor` names them). Set `core.autocrlf=false` on Windows (init
+writes a `.gitattributes` that keeps the corpus LF) and leave
+`ATLAS_MEMORY_AUTOCOMMIT` off while a merge is open. Three more things to know: `identity/user.md` is one file, so a
 shared corpus primes everyone with the same identity (set `ATLAS_USER_NAME`
 for the display name); import an export once and pull it, rather than
 importing on both machines (the import stamps carry a timestamp); and after
@@ -421,6 +426,27 @@ sextant-reset --state --yes    # clear derived caches/indexes only; transcripts 
 sextant-reset --all --yes      # factory reset: fresh state + fresh corpus skeleton
 ```
 
+## Switching the Stop hook on, and testing it by hand
+
+The Stop hook writes a session summary only when `ATLAS_SESSION_AUTONOMOUS=on`
+(or `ATLAS_AUTONOMOUS=on`) reaches it, because it calls a model and writes into
+your corpus. Hooks run outside your shell, so put the variable on the command
+itself: in the `stop` command `sextant setup --client hooks` printed, add
+`--env ATLAS_SESSION_AUTONOMOUS=on` before `stop` (and `--env ATLAS_OLLAMA_URL=...`
+when Ollama is not on localhost). The summarizer uses the Brain's model
+(`ATLAS_BRAIN_MODEL`, default `qwen3:8b`); when that model is not pulled, the
+hook says so on stderr and in the activity log. To test the hook without a
+Claude Code session, feed it a payload (Git Bash, exactly as Claude Code runs it):
+
+```bash
+echo '{"session_id":"test-1","transcript_path":"/path/to/.claude/projects/<slug>/<session>.jsonl"}' \
+  | bash -c "<the stop command from sextant setup --client hooks>"
+```
+
+A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
+activity log (`<state>/activity.ndjson`, events `summary_written` or `summarizer_failed`)
+say what happened. A re-fired Stop for the same session writes nothing twice.
+
 ## Updating Sextant
 
 First, the answer to the question that matters: **your memory data is safe
@@ -438,12 +464,15 @@ venv's python by absolute path, and the update below reuses that venv
 and then re-run the registration: `claude mcp add` refuses a name that
 already exists). The pip
 reinstall is what makes any NEW `sextant-*` commands appear, so do not
-skip it. Local edits in the clone? `git stash` before pulling, `git stash pop`
+skip it. A `pip install git+...` install does not update with `-U` while every build is
+version 0.1.0: `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`.
+Local edits in the clone? `git stash` before pulling, `git stash pop`
 after. If the pop reports a conflict (`UU <file>`), the upstream change and
 yours touched the same lines: `git checkout --ours <file>` keeps the new
 release's version (in a stash pop, "ours" is the release and "theirs" is your
-stash; the other way round silently keeps the stale file), `git stash drop`
-discards your copy, and you re-apply your edit by hand. On a detached HEAD
+stash; the other way round silently keeps the stale file), `git add <file>`
+clears the conflict state, `git stash drop` discards your copy, and you
+re-apply your edit by hand. On a detached HEAD
 (you checked out a specific commit) `git pull` says "not currently on a
 branch": `git checkout main` first.
 
@@ -472,7 +501,7 @@ git pull
 .\.venv\Scripts\sextant verify --project upgrade-check
 ```
 
-(The three `sextant` commands are on PATH only inside an activated venv; the
+(The commands above are on PATH only inside an activated venv; the
 `.venv\Scripts\` prefix works from any shell.)
 
 Linux / macOS:
@@ -490,10 +519,10 @@ cd sextant && git pull
 Then restart whatever services you run. Docker users:
 `git pull && docker compose build && docker compose up -d` (on a clone pinned
 to a commit, `git checkout main` first: a detached-HEAD `git pull` prints a
-help page, exits 0, and the build then rebuilds the OLD source). The first
-search after the update rebuilds the keyword index once when the tokenizer
-changed; the log says so, and last week's image still reads the new index
-if you roll back.
+help page, exits 0, and the build then rebuilds the OLD source). A later
+search rebuilds the keyword index only when a build changed the tokenizer
+(most updates do not; the log says so when it happens), and last week's image
+still reads the new index if you roll back.
 
 ## Good to know (from fresh-install testing)
 

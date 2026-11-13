@@ -58,8 +58,10 @@ def write_outputs(
     updates_text: str,
     date: str,
     dry_run: bool = False,
+    session_marker: str = "",
 ) -> dict[str, str]:
-    """Write session log and updates.txt. Returns paths written."""
+    """Write session log and updates.txt. Returns paths written (or `skipped` when the session's
+    marker is already in today's log: a re-fired Stop hook must not write twice, MN28)."""
     if not dry_run and not is_session_autonomous():
         raise RuntimeError(
             "Session log write blocked. Set ATLAS_SESSION_AUTONOMOUS=on or ATLAS_AUTONOMOUS=on."
@@ -67,6 +69,12 @@ def write_outputs(
 
     session_file = MEMORY_SESSIONS_DIR / f"{date}.md"
     result: dict[str, str] = {}
+    if session_marker and session_file.exists():
+        try:
+            if session_marker in session_file.read_text(encoding="utf-8", errors="replace"):
+                return {"skipped": f"already written for this session in {session_file.name}"}
+        except OSError:
+            pass
 
     if dry_run:
         result["session_log"] = str(session_file)
@@ -96,11 +104,12 @@ def write_outputs(
             if line.strip().startswith("===="):
                 insert_at = i + 1
                 break
+        # one blank line between entries, every time (MN28: later entries ran together)
         new_content = (
             "".join(lines[: insert_at])
             + "\n"
-            + updates_text
-            + "".join(lines[insert_at:])
+            + updates_text.rstrip("\n") + "\n\n"
+            + "".join(lines[insert_at:]).lstrip("\n")
         )
         _atomic_write(UPDATES_TXT, new_content)
     else:

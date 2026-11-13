@@ -15,6 +15,9 @@ _DECISIONS_STALE_DAYS = 90
 _REDERIVE_THRESHOLD = 0.40  # conservative threshold for the weekly report
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 def _scan_convergence(root: Path) -> list[dict]:
     """Return files with contradictions: frontmatter from the given memory root."""
     import yaml as _yaml
@@ -40,7 +43,7 @@ def _scan_convergence(root: Path) -> list[dict]:
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(text[3:end]) or {}
+            fm = _fast_yaml_load(text[3:end]) or {}
         except Exception:
             continue
         contras = fm.get("contradictions", [])
@@ -79,7 +82,7 @@ def _scan_decisions(root: Path, stale_days: int = _DECISIONS_STALE_DAYS) -> list
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(text[3:end]) or {}
+            fm = _fast_yaml_load(text[3:end]) or {}
         except Exception:
             continue
 
@@ -127,6 +130,32 @@ def _scan_rederivable(root: Path, threshold: float = _REDERIVE_THRESHOLD) -> lis
         return []
 
 
+_COUNT_RULES = (
+    ("Repeated facts (", "duplicates", True),
+    ("Potential Duplicates (", "duplicates", True),
+    ("Stale Files (", "stale", False),
+    ("Convergence Flags (", "convergence", False),
+    ("Stale Decisions (", "decisions", False),
+    ("Re-derivable Facts (", "rederivable", False),
+)
+
+
+def curation_counts(report_text: str) -> dict[str, int]:
+    """The headline numbers of a report, parsed once for the dashboard, brain chat and Telegram
+    (MN25: three hand-copied parsers, two of which crashed on every run). Repeated facts and
+    near-duplicate notes add up under `duplicates`."""
+    import re as _re
+    counts = {"duplicates": 0, "stale": 0, "convergence": 0, "decisions": 0, "rederivable": 0}
+    for line in report_text.splitlines():
+        for needle, key, add in _COUNT_RULES:
+            if needle in line:
+                m = _re.search(r"\((\d+)", line)
+                if m:
+                    counts[key] = (counts[key] + int(m.group(1))) if add else int(m.group(1))
+                break
+    return counts
+
+
 def generate_report(
     memory_root: Optional[Path] = None,
     stale_months: int = 6,
@@ -148,7 +177,9 @@ def generate_report(
     dups = find_duplicates(memory_root=root, threshold=dup_threshold, scope=scope)
     stale = find_stale(memory_root=root, months=stale_months, scope=scope)
     from atlas_plus.curation.duplicates import find_fact_duplicates
-    fact_dups = find_fact_duplicates(memory_root=root, scope=scope)
+    fact_dups = find_fact_duplicates(memory_root=root, scope=scope, limit=501)
+    _capped = len(fact_dups) > 500  # the count read as a total; it was the cap (MN30)
+    fact_dups = fact_dups[:500]
     from atlas_plus.mcp.memory_server.routing import downgrade_stale_confirmations
     never = [c for c in downgrade_stale_confirmations(memory_root=root, dry_run=True) if c.get("last_confirmed") == "never"]
 
@@ -159,7 +190,7 @@ def generate_report(
         "",
         "---",
         "",
-        f"## Repeated facts ({len(fact_dups)} found: "
+        f"## Repeated facts ({len(fact_dups)}{'+' if _capped else ''} found{' (capped at 500)' if _capped else ''}: "
         f"{sum(1 for d in fact_dups if d['kind'] == 'exact')} exact, "
         f"{sum(1 for d in fact_dups if d['kind'] != 'exact')} near)",
         "",

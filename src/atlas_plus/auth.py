@@ -164,7 +164,7 @@ class AuthFailureLog:
             return sum(
                 1
                 for r in self._records
-                if r.ts >= cutoff and ip in (r.cf_ip, r.client_ip)
+                if r.ts >= cutoff and ip in (r.cf_ip, r.client_ip) and r.reason != "locked_out"  # informational rows never extend a lockout (MN29)
             )
 
     def is_rate_limited(self, ip: str, *, now: float | None = None) -> bool:

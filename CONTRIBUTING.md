@@ -17,19 +17,35 @@ python -m pytest tests -q
 ```
 
 The test suite is the contract: a green run on your machine before and after
-your change is the baseline expectation. CI runs the same suite on every push.
+your change is the baseline expectation. CI runs the same suite on every push,
+plus three more lanes you can reproduce locally before opening a PR:
+
+```bash
+pip install -U pip setuptools pip-audit build twine   # the audit lanes expect current pip/setuptools
+pip-audit                                           # deps-audit (gating; a new upstream CVE can turn it red through no fault of yours: say so in the PR)
+python -m build && twine check --strict dist/*      # public-package
+gitleaks detect --source . --no-git                 # optional; CI runs it on every push with .gitleaks.toml
+```
+
+There is no enforced linter or formatter and no pre-commit hook: match the surrounding
+code, keep lines under about 110 characters, and write a commit message that says what
+changed and why in plain sentences. `git commit -s` is welcome but is not the CLA (see below).
+A docs-only or message-only change does not need a new test: say "n/a: docs" on that
+checklist line.
 
 ## Contributor License Agreement
 
-First-time contributors will be asked to accept the lightweight CLA in
-[CLA.md](CLA.md) on their first PR (via the cla-assistant check once it is
-enabled on this repository; until then, a maintainer will ask in the PR
-thread). You keep your copyright; the CLA licenses your contribution to
-the project so its licensing stays simple and its future flexible.
+First-time contributors accept the lightweight CLA in [CLA.md](CLA.md) on their
+first PR: reply in the PR thread with the sentence "I have read and agree to
+CLA.md" (that comment is the record until an automated check exists). You keep
+your copyright; the CLA licenses your contribution to the project so its
+licensing stays simple and its future flexible. For a corporate agreement,
+email hello@protechtus.com.
 
 ## Ground rules
 
-- One change per PR, with a test that fails before the change and passes after.
+- One change per PR, with a test that fails before the change and passes after
+  (docs-only changes: none needed).
 - Match the surrounding code style; no reformatting-only diffs.
 - The markdown memory corpus format is a compatibility surface -- changes to
   frontmatter fields or file layout need an issue first.

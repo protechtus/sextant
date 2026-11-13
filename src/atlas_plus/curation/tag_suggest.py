@@ -59,6 +59,9 @@ _TYPE_TAGS: dict[str, str] = {
 _TITLE_STRIP_PREFIXES = ["research: ", "atlas: ", '"']
 
 
+from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+
+
 def _title_strip_prefixes() -> list[str]:
     """Static prefixes plus the operator's name (from ATLAS_USER_NAME), if set."""
     prefixes = list(_TITLE_STRIP_PREFIXES)
@@ -120,7 +123,7 @@ def suggest_tags_for_file(
     if end == -1:
         return []
     try:
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        fm = _fast_yaml_load(raw[3:end]) or {}
     except Exception:
         return []
 

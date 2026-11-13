@@ -23,6 +23,9 @@ _NON_CURATABLE_DIRS = EXCLUDED_DIRS | {
 }
 
 
+_MAX_FILE_PAIRS = 500  # the report shows a handful; snippets for more than this are wasted reads (AG32)
+
+
 def _tokenize(text: str) -> set[str]:
     """Lowercase word tokens, stripping punctuation and YAML frontmatter."""
     # Strip frontmatter
@@ -244,26 +247,41 @@ def find_duplicates(
     # (no pair that could qualify is skipped) while avoiding the full O(n^2) walk.
     file_list = sorted(tokens.keys(), key=lambda f: len(tokens[f]))
     sizes = [len(tokens[f]) for f in file_list]
+    # Candidate pairs come from an inverted index (token -> notes): a pair can only reach the
+    # threshold when it shares at least threshold * max(|A|,|B|) tokens, so pairs that share
+    # fewer are never compared. The all-pairs walk made `review report` unusable past about
+    # 800 notes (AG32, sweep 14: killed at 621 s and 1.4 GB on 5,000 notes). Snippets are read
+    # for the pairs kept, not for every candidate.
+    index: dict[str, list[int]] = {}
+    for i, f in enumerate(file_list):
+        for tok in tokens[f]:
+            index.setdefault(tok, []).append(i)
+    found: list[tuple[float, int, int]] = []
     for i in range(len(file_list)):
         si = sizes[i]
         if si == 0:
             continue
-        f1 = file_list[i]
-        toks1 = tokens[f1]
-        for j in range(i + 1, len(file_list)):
+        shared: dict[int, int] = {}
+        for tok in tokens[file_list[i]]:
+            for j in index[tok]:
+                if j > i:
+                    shared[j] = shared.get(j, 0) + 1
+        toks1 = tokens[file_list[i]]
+        for j, common in shared.items():
             sj = sizes[j]
-            if si < threshold * sj:
-                break  # sj only grows from here; none can reach the threshold
-            sim = _jaccard(toks1, tokens[file_list[j]])
+            if common < threshold * max(si, sj):
+                continue
+            sim = common / (si + sj - common)
             if sim >= threshold:
-                f2 = file_list[j]
-                pairs.append(DuplicatePair(
-                    file1=str(f1.relative_to(root)).replace("\\", "/"),
-                    file2=str(f2.relative_to(root)).replace("\\", "/"),
-                    similarity=sim,
-                    snippet1=_snippet(f1),
-                    snippet2=_snippet(f2),
-                ))
-
-    pairs.sort(key=lambda p: p.similarity, reverse=True)
+                found.append((sim, i, j))
+    found.sort(key=lambda t: t[0], reverse=True)
+    for sim, i, j in found[:_MAX_FILE_PAIRS]:
+        f1, f2 = file_list[i], file_list[j]
+        pairs.append(DuplicatePair(
+            file1=str(f1.relative_to(root)).replace("\\", "/"),
+            file2=str(f2.relative_to(root)).replace("\\", "/"),
+            similarity=sim,
+            snippet1=_snippet(f1),
+            snippet2=_snippet(f2),
+        ))
     return pairs
