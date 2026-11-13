@@ -218,7 +218,10 @@ Facts from the shell: a line that starts with `---` is refused (it would
 close the note's frontmatter); dashes mid-sentence are fine. In PowerShell
 5.1 a fact that contains double quotes is easier to pass on standard input:
 `'Ilse said: "The sea waits."' | sextant remember - --scope project:novel`
-(`-` reads the fact from stdin). A topic may name a subfolder note from an
+(`-` reads the fact from stdin). PowerShell 5.1 pipes text as ASCII by default:
+for anything beyond ASCII (Japanese, accents, emoji) run
+`$OutputEncoding = [Text.Encoding]::UTF8` once in that session, or pass the fact
+as an argument; a mangled pipe is refused rather than stored. A topic may name a subfolder note from an
 imported vault: `--scope reference:obsidian/README`.
 
 ## 6. Optional layers, when you want them

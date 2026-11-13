@@ -17,6 +17,7 @@ import hmac
 import inspect
 import logging
 import os
+import re
 from pathlib import Path
 import sys
 import time
@@ -32,6 +33,7 @@ if _LOG_LEVEL not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
     _LOG_LEVEL = "WARNING"
 
 _HUMAN_SOURCES = frozenset({"human-direct", "human", "telegram"})
+_SNIPPET_COMMENT = re.compile(r"<!--\s*source:[^>\n]*-->")
 
 
 def _agent_source(source: str) -> str:
@@ -42,7 +44,11 @@ def _agent_source(source: str) -> str:
     one of them is written as `agent` (sweep 13, AG27: a prompt-injected agent could otherwise
     plant facts that look like the operator's own writes).
     """
-    s = (source or "agent").strip().lower()
+    from atlas_plus.mcp.memory_server.routing import _prov_token
+
+    # Compare the value as it will be WRITTEN (controls, `<`/`>` and `--` already folded):
+    # `human--direct` and `human-direct\x07` reached the file as human-direct (MN20).
+    s = _prov_token(source or "agent", 64).strip().lower()
     return "agent" if s in _HUMAN_SOURCES else (source or "agent")
 
 
@@ -67,11 +73,25 @@ def _transport_security():
         return None
     if not extra:
         return TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    hosts = ["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*", "[::1]", "[::1]:*"]
     origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
     for h in extra:
-        hosts.append(h if ":" in h.rstrip("]") and not h.startswith("[") else f"{h}:*")
-        origins += [f"http://{h}", f"https://{h}", f"http://{h}:*", f"https://{h}:*"]
+        # A client on the default port sends a bare Host (`sextant.example.com`), one on another
+        # port sends `host:port`: both forms are allowed for every entry (MN20/MN21). IPv6 goes
+        # in brackets; an entry with its own port is kept as given; names are case-folded.
+        h = h.lower()
+        if h.startswith("["):
+            base, _, port = h.partition("]")
+            base, port = base + "]", port.lstrip(":")
+        elif h.count(":") >= 2:
+            base, port = f"[{h}]", ""
+        else:
+            base, _, port = h.partition(":")
+        if port and port != "*":
+            hosts.append(f"{base}:{port}")
+        else:
+            hosts += [base, f"{base}:*"]
+        origins += [f"http://{base}", f"https://{base}", f"http://{base}:*", f"https://{base}:*"]
     return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
 
 # Bearer token for HTTP mode. Must be set when --http-auth is used.
@@ -277,6 +297,8 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10) -> dict:
 
     scope = _normalize_search_scope(scope)
     results, retrieval = memory_search_hybrid(query=query, scope=scope, limit=limit)
+    for _r in results:
+        _r["snippet"] = " ".join(_SNIPPET_COMMENT.sub(" ", str(_r.get("snippet") or "")).split())
     top_score: float = max((float(r.get("score", 0)) for r in results), default=0.0)
     if not results or top_score < 0.2:
         confidence = "starved"
@@ -1086,7 +1108,9 @@ def _client_ip(request) -> str:
     or lock out someone else (audit 2026-11-09, row 29)."""
     from atlas_plus.auth import forwarded_ip
     peer = request.client.host if request.client else ""
-    return forwarded_ip(request.headers, peer) or peer or "unknown"
+    # A proxy listed in ATLAS_MCP_TRUSTED_PEERS is trusted to name the real client too (MN21:
+    # a proxy off loopback made one shared counter for everyone).
+    return forwarded_ip(request.headers, peer, trusted=_trusted_peer) or peer or "unknown"
 
 
 # Bound the per-IP tracking tables: internet scanners rotate source IPs, and
@@ -1155,6 +1179,41 @@ def _alert_auth_spike(ip: str, count: int, path: str) -> None:
         pass  # alerting is best-effort and must never affect request handling
 
 
+class _HostHintMiddleware:
+    """Outermost ASGI wrapper: the SDK answers 421 to a Host it does not allow with a bare
+    "Invalid Host header"; this appends the setting that fixes it and logs it (sweep 13, MN21:
+    nothing told a stranger what to set)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+        host = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"host"), "")
+        state = {"status": 0}
+
+        async def send_wrapped(message):
+            if message["type"] == "http.response.start":
+                state["status"] = message.get("status", 0)
+                if state["status"] == 421:
+                    headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"content-length"]
+                    message = {**message, "headers": headers}
+            elif message["type"] == "http.response.body" and state["status"] == 421 and not message.get("more_body"):
+                name = host.rsplit(":", 1)[0] if host and not host.endswith("]") and host.count(":") == 1 else host
+                hint = (
+                    "\nThis server accepts loopback Host headers only. Start it with "
+                    f"ATLAS_MCP_ALLOWED_HOSTS={name or '<public name>'} (comma-separated names or IPs), or with "
+                    "ATLAS_MCP_HOST=0.0.0.0 and no list to turn the Host check off behind the bearer token. "
+                    "See docs/CONFIGURATION.md.\n"
+                ).encode("utf-8")
+                log.warning("Invalid Host header %r: set ATLAS_MCP_ALLOWED_HOSTS (docs/CONFIGURATION.md)", host)
+                message = {**message, "body": (message.get("body") or b"") + hint}
+            await send(message)
+
+        return await self.app(scope, receive, send_wrapped)
+
+
 def _make_auth_middleware(token: str):
     """Return a Starlette middleware class that enforces Bearer token auth."""
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -1177,7 +1236,10 @@ def _make_auth_middleware(token: str):
             # 2026-11-10). Failures from a forwarded or non-loopback source still count.
             from atlas_plus.auth import LOOPBACK_PEERS as _LB, forwarded_ip as _fwd
             _peer = request.client.host if request.client else ""
-            _trusted_local = (_peer in _LB or _trusted_peer(_peer)) and not _fwd(request.headers, _peer)
+            _trusted_local = (
+                ((_peer in _LB or _trusted_peer(_peer)) and not _fwd(request.headers, _peer, trusted=_trusted_peer))
+                or _trusted_peer(ip)  # a listed source is exempt whether it connects directly or through the proxy (MN21)
+            )
             remaining = 0.0 if _trusted_local else _lockout_remaining(ip)
             if remaining > 0:
                 # Brute-force cooldown: this IP tripped the lockout threshold. Block
@@ -1267,7 +1329,7 @@ def _run_http_with_auth(token: str) -> None:
     # access_log=False: uvicorn's access line carries the query string, and a client that
     # puts the token in ?key= (refused, but logged raw) would land it in the service log
     # (claims pass 2026-11-10). The dashboard does the same; the Brain redacts.
-    uvicorn.run(asgi_app, host=host, port=MCP_PORT, log_level="info", access_log=False, proxy_headers=False)
+    uvicorn.run(_HostHintMiddleware(asgi_app), host=host, port=MCP_PORT, log_level="info", access_log=False, proxy_headers=False)
 
 
 def main() -> None:
@@ -1325,6 +1387,9 @@ def main() -> None:
         # startup (wave-2 2026-11-09, SEC-01). Serve the same ASGI app the authenticated path
         # serves, with no middleware, and only ever on loopback.
         host = os.environ.get("ATLAS_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        if os.environ.get("ATLAS_MCP_ALLOWED_HOSTS", "").strip():
+            log.error("--no-auth cannot be combined with ATLAS_MCP_ALLOWED_HOSTS: an unauthenticated server stays loopback-only (unset the list, or set a token).")
+            sys.exit(1)
         if host not in ("127.0.0.1", "localhost", "::1"):
             log.error("--no-auth requires a loopback bind; ATLAS_MCP_HOST=%r refused.", host)
             raise SystemExit(1)

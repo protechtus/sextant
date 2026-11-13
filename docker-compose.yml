@@ -29,6 +29,8 @@ services:
     environment:
       <<: *sextant-env
       ATLAS_MCP_HOST: 0.0.0.0
+      ATLAS_MCP_ALLOWED_HOSTS: ${ATLAS_MCP_ALLOWED_HOSTS:-}     # names a reverse proxy forwards (empty = Host check off behind the token)
+      ATLAS_MCP_LOG_LEVEL: ${ATLAS_MCP_LOG_LEVEL:-WARNING}
       HEALTH_PORT: "8765"
     ports:
       - "127.0.0.1:8765:8765"

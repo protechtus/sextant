@@ -238,6 +238,11 @@ def verify():
     # Quick connectivity test
     result = _rclone("lsd", f"{RCLONE_REMOTE}:", capture=True)
     if result.returncode != 0:
+        if "directory not found" in (result.stderr or "").lower():
+            # a brand-new crypt remote has no folder until the first backup writes it (MN24)
+            console.print("[green]Remote connection OK[/green] (its folder does not exist yet; the first "
+                          "`sextant-backup now` creates it)")
+            return
         console.print(f"[yellow]Remote exists but connectivity test failed:[/yellow] {result.stderr.strip()}")
         raise typer.Exit(1)
 

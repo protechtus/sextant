@@ -140,8 +140,10 @@ def wsl_command_from_windows(python: str, env: dict[str, str], distro: str, tail
 def wsl_hooks_json(python: str, env: dict[str, str], distro: str) -> dict:
     """Hook entries for a WINDOWS settings.json whose Sextant lives in WSL (the Linux-only block
     cannot run there; AG3, pipeline sweep 2026-11-11)."""
-    start = wsl_command_from_windows(python, env, distro, ["-m", "atlas_plus.hooks.session_start"])
-    stop = wsl_command_from_windows(python, env, distro, ["-m", "atlas_plus.summarizer.hook_entry"])
+    # Claude Code runs hook commands through Git Bash, whose MSYS layer rewrites every /home/...
+    # argument into C:/Program Files/Git/home/... (MN24): the prefix switches that off.
+    start = "MSYS_NO_PATHCONV=1 " + wsl_command_from_windows(python, env, distro, ["-m", "atlas_plus.hooks.session_start"])
+    stop = "MSYS_NO_PATHCONV=1 " + wsl_command_from_windows(python, env, distro, ["-m", "atlas_plus.summarizer.hook_entry"])
     return {"hooks": {
         "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": start}]}],
         "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": stop}]}],

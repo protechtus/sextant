@@ -967,7 +967,7 @@ def test_setup_prints_a_windows_verify_and_windows_hooks_for_a_wsl_install():
     assert v.startswith("wsl -d 'Ubuntu' -- env ATLAS_WORKSPACE_ROOT=/home/u/ws ") and v.endswith("-m atlas_plus verify")
     hooks = info["hooks_from_windows"]["hooks"]
     start = hooks["SessionStart"][0]["hooks"][0]["command"]
-    assert start.startswith("wsl -d 'Ubuntu' -- env ") and start.endswith("-m atlas_plus.hooks.session_start")
+    assert start.startswith("MSYS_NO_PATHCONV=1 wsl -d 'Ubuntu' -- env ") and start.endswith("-m atlas_plus.hooks.session_start")  # Git Bash would rewrite /home paths (MN24)
     text = sc.render(info)
     assert "Verify from Windows" in text and "use these hook commands instead" in text
 

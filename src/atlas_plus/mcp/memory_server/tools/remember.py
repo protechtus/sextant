@@ -18,7 +18,7 @@ from typing import Optional
 from atlas_plus.autonomous import require_autonomous_writes
 
 from ..config import MEMORY_ROOT
-from ..routing import append_fact, confirm_fact, resolve_target
+from ..routing import _scrub_controls, append_fact, confirm_fact, resolve_target
 from ..versioning import version_before_write
 
 log = logging.getLogger("atlas.mcp.remember")
@@ -63,14 +63,26 @@ _STOPWORDS = {
 }
 
 
+_CJK_RE = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+
+
+def _hint_tokens(s: str) -> set[str]:
+    """Duplicate-hint tokens: Latin words (4+, no stopwords) and CJK bigrams, so a repeated
+    Japanese fact gets the same hint an English one does (MN23)."""
+    out = {
+        w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*", s)
+        if len(w) >= 4 and w.lower() not in _STOPWORDS
+    }
+    for run in re.findall(_CJK_RE.pattern + "+", s):
+        out.update(run[i:i + 2] for i in range(len(run) - 1))
+    return out
+
+
 def _jaccard(a: str, b: str) -> float:
     """Jaccard similarity between word sets of two strings (stopwords removed)."""
     def tokens(s: str) -> set[str]:
-        """Tokenise a string into a set of lowercase alpha-numeric words (min 4 chars, stopwords removed)."""
-        return {
-            w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*", s)
-            if len(w) >= 4 and w.lower() not in _STOPWORDS
-        }
+        """Lowercase words of four letters or more (stopwords removed) plus every CJK bigram."""
+        return _hint_tokens(s)
     ta, tb = tokens(a), tokens(b)
     if not ta or not tb:
         return 0.0
@@ -90,10 +102,12 @@ def _find_duplicate(fact: str, written_to: Path) -> Optional[dict]:
             w for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*", fact)
             if len(w) >= 4 and w.lower() not in _STOPWORDS
         ][:6]
-        if len(words) < 2:
+        bigrams = [t for t in _hint_tokens(fact) if _CJK_RE.search(t)][:4]
+        if len(words) < 2 and len(bigrams) < 2:
             return None
 
-        query = " ".join(words)
+        # CJK bigrams are OR-ed (a near repeat shares most of them, rarely all); Latin words AND
+        query = " ".join(words) if len(words) >= 2 else "(" + " OR ".join(f'"{b}"' for b in bigrams) + ")"
         results = fts_search(query, limit=5)
 
         written_rel = str(written_to.relative_to(MEMORY_ROOT)).replace("\\", "/")
@@ -120,6 +134,9 @@ def memory_remember(
 ) -> dict:
     """Write a fact to the appropriate .memory/ file.
 
+    An empty fact (nothing left once control and zero-width characters are scrubbed) is
+    refused here, so the MCP tools refuse it the way the CLI does (MN20).
+
     After writing, performs a lightweight duplicate check: if a similar fact
     already exists in another memory file (Jaccard similarity >= 0.45 on
     distinctive words), the response includes `possible_duplicate: true` and
@@ -144,6 +161,8 @@ def memory_remember(
 
     Returns {ok, file, version_copy, error, possible_duplicate, duplicate_hint}.
     """
+    if not _scrub_controls(fact or "").replace("\u200b", "").replace("\ufeff", "").strip():
+        return {"ok": False, "error": "empty fact: nothing to remember (give some words)"}
     # interactive=True = a user-invoked MCP tool call (explicit consent; see
     # atlas_plus.autonomous). Background callers (Brain, telegram, promotion)
     # never set it and stay behind the ATLAS_AUTONOMOUS kill switch.

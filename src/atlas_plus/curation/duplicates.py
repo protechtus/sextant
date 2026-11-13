@@ -31,6 +31,9 @@ def _tokenize(text: str) -> set[str]:
         if end != -1:
             text = text[end + 3:]
     words = re.findall(r"[a-z0-9]+", text.lower())
+    # CJK body text has no spaces: without bigrams every Japanese note looked identical (MN23)
+    for run in re.findall(_CJK_RE.pattern + "+", text):
+        words.extend(run[i:i + 2] for i in range(len(run) - 1))
     # Drop very common stop words and single chars
     stops = {
         "the", "a", "an", "and", "or", "of", "to", "in", "is", "it",
@@ -39,7 +42,7 @@ def _tokenize(text: str) -> set[str]:
         "has", "have", "had", "do", "does", "did", "will", "would",
         "can", "could", "should", "may", "might", "must", "shall",
     }
-    return {w for w in words if len(w) > 2 and w not in stops}
+    return {w for w in words if (len(w) > 2 or _CJK_RE.search(w)) and w not in stops}  # CJK bigrams are two characters (MN23)
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:

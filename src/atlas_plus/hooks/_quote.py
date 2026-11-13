@@ -15,16 +15,27 @@ _TAG_RE = re.compile(r"<(?=/?[A-Za-z!?])")
 # C0/C1 controls except tab (an ESC[2J in a decision cleared the screen under `sextant context`).
 # ... plus the invisible format characters a note can use to reorder or hide what the human
 # reads: zero-width space/joiners, bidi embeddings and overrides, isolates, BOM (sweep 13, AG29).
-_CONTROL_RE = re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+# (ZWNJ/ZWJ and the LRM/RLM marks stay: Persian and Arabic text and emoji sequences need them; MN20)
+_CONTROL_RE = re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f\u200b\u202a-\u202e\u2066-\u2069\ufeff]")
 
 
 def comment_gap(m: "re.Match[str]") -> str:
     """What replaces a stripped provenance comment: nothing at the end of a line, a space inline
     (sweep 13, AG29: `this <!-- source: x --> and` primed as `thisand`)."""
-    s, a, b = m.string, m.start(), m.end()
-    at_line_start = a == 0 or s[a - 1] == "\n"
-    at_line_end = b >= len(s) or s[b - 1] == "\n" or s[b] == "\n"
+    s, b = m.string, m.end()
+    at_line_end = b >= len(s) or s[b - 1] == "\n" or s[b] in "\r\n"
     return "" if at_line_end else " "
+
+
+def identity_is_template(text: str, name: str = "") -> bool:
+    """True while identity/user.md still holds the sextant-init scaffold (one rule for the hook
+    and for `sextant context`; MN20 found the two disagreeing)."""
+    t = (text or "").lstrip()
+    return (
+        "Introduce yourself to your own memory" in t
+        or t.startswith("# Your Name")
+        or (name or "").strip() == "Your Name"
+    )
 
 
 def one_line(text: str) -> str:

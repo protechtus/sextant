@@ -352,6 +352,21 @@ def cmd_serve() -> None:
                   "MCP server: [bold]sextant-mcp[/bold]. Brain: [bold]sextant-brain[/bold]. All: sextant commands.")
 
 
+def _fact_is_blank(fact: str) -> bool:
+    """Blank once control and zero-width characters are gone (a BEL-only fact was stored; MN20)."""
+    from atlas_plus.mcp.memory_server.routing import _scrub_controls
+
+    return not _scrub_controls(fact or "").replace("\u200b", "").replace("\ufeff", "").strip()
+
+
+def _stdin_looks_mangled(text: str) -> bool:
+    if "\ufffd" in text:
+        return True
+    visible = [c for c in text if not c.isspace()]
+    q = sum(1 for c in visible if c == "?")
+    return len(visible) >= 3 and q >= 3 and q / len(visible) >= 0.3
+
+
 @app.command("add", hidden=True)
 def cmd_add(
     fact: str = typer.Argument(..., help="One fact, a sentence or two; `-` reads it from standard input "
@@ -384,7 +399,14 @@ def cmd_remember(
         if not fact:
             console.print("[red]Not stored:[/red] nothing on standard input")
             raise typer.Exit(2)
-    if not fact.strip():
+        if _stdin_looks_mangled(fact):
+            # PowerShell 5.1 pipes in ASCII (or the console code page) by default: Japanese arrived as
+            # `???????` or U+FFFD runs and was stored as such (MN23). Refuse, name the fix.
+            console.print("[red]Not stored:[/red] the text on standard input is not valid UTF-8 (it holds "
+                          "replacement characters or runs of '?'). In PowerShell 5.1 run "
+                          "`$OutputEncoding = [Text.Encoding]::UTF8` first, or pass the fact as an argument.")
+            raise typer.Exit(2)
+    if _fact_is_blank(fact):
         console.print("[red]Not stored:[/red] the fact is empty (give some words, or `-` to read standard input).")
         raise typer.Exit(2)
     try:

@@ -64,6 +64,9 @@ Generate tokens with `python3 -c "import secrets; print(secrets.token_urlsafe(32
 
 ## 1. systemd units
 
+(Inside WSL, user units stop when your last WSL shell closes unless you run
+`loginctl enable-linger $USER`; system units as below do not have that problem.)
+
 One unit per service; enable only what you use. The three most useful on a
 server: the MCP memory server (your corpus, reachable by MCP clients), the
 web dashboard, and the sync hub (device check-ins).
@@ -168,13 +171,19 @@ sextant.example.com {
     # ATLAS_MCP_ALLOWED_HOSTS=sextant.example.com (or ATLAS_MCP_HOST=0.0.0.0 with no
     # list, which turns the Host check off and leaves the bearer token as the guard);
     # with neither, every request through this route answers 421 Invalid Host header.
+    # header_up tells the server who the real client is, so its lockout counts that
+    # client and not Caddy (without it a client could pick the address that is counted).
     handle /mcp* {
-        reverse_proxy 127.0.0.1:8765
+        reverse_proxy 127.0.0.1:8765 {
+            header_up Cf-Connecting-Ip {remote_host}
+        }
     }
 
     # Everything else: the web dashboard (fallback handle)
     handle {
-        reverse_proxy 127.0.0.1:8766
+        reverse_proxy 127.0.0.1:8766 {
+            header_up Cf-Connecting-Ip {remote_host}
+        }
     }
 }
 ```
@@ -199,7 +208,15 @@ Hardening notes for a public deployment:
   failures per source (MCP: ten failures, then HTTP 429 for five minutes, the
   correct token included); watch them in the dashboard's security panel. Every
   client behind one NAT shares a counter; `ATLAS_MCP_TRUSTED_PEERS` exempts a
-  peer you own (never a public range).
+  peer you own (never a public range). Keep the proxy on the same host (loopback)
+  and let it set `Cf-Connecting-Ip` as above: then each remote client has its own
+  counter. A proxy on another host or in another container is one peer for
+  everyone (ten bad tokens from anyone lock the correct one out for five minutes)
+  unless you list that proxy in `ATLAS_MCP_TRUSTED_PEERS`, which makes the server
+  trust the client address it forwards.
+- `HTTP 421 Invalid Host header` on `/mcp` means the server did not recognise the
+  Host your proxy forwarded: set `ATLAS_MCP_ALLOWED_HOSTS` to that name (the
+  response body and the server log say so).
 - Prove the remote path from a client machine, not only `claude mcp list`:
   `sextant verify --url https://sextant.example.com/mcp --token "$ATLAS_MCP_TOKEN"`
   (or `python scripts/mcp_roundtrip.py --url ...` from a clone) writes one

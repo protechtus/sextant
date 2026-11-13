@@ -198,7 +198,7 @@ class AuthFailureLog:
 LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
-def forwarded_ip(headers, peer: str) -> str:
+def forwarded_ip(headers, peer: str, trusted=None) -> str:
     """The real client address a trusted local proxy reports, or '' when none applies.
 
     Trusted ONLY when the socket peer is loopback (the tunnel or reverse proxy runs on this
@@ -211,7 +211,9 @@ def forwarded_ip(headers, peer: str) -> str:
     so its middleware cannot rewrite the peer first (self-hoster passes 2026-11-10).
     """
     import os as _os
-    if peer not in LOOPBACK_PEERS:
+    # ``trusted`` (a callable peer -> bool) extends the trust to proxies the operator listed
+    # (ATLAS_MCP_TRUSTED_PEERS): a proxy that is not on loopback can then name the real client.
+    if peer not in LOOPBACK_PEERS and not (trusted is not None and trusted(peer)):
         return ""
     name = (_os.environ.get("ATLAS_FORWARDED_IP_HEADER") or "Cf-Connecting-Ip").strip()
     if name.lower() == "none":

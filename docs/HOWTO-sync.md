@@ -52,10 +52,17 @@ sextant-sync status      # local corpus, conflicts, inbox
 ```
 
 If you ran `sextant-init` on the device, its template `identity/user.md`
-differs from the hub's real one, so the very first sync reports ONE
+differs from the hub's real one, so the very first sync reports a
 conflict and parks the hub's copy under `_atlas/sync-conflicts/`. That is
 the design working: copy the parked file over the template (or delete the
-template before the first sync) and the next sync is clean.
+template before the first sync) and the next sync is clean. A device
+initialised by a build older than 2026-11-13 on Windows may report a
+conflict on every scaffold file (they were written with CRLF line endings;
+the hub's are LF): take the hub's copies the same way, once. Sync compares
+bytes, and every build now writes LF on every OS.
+
+The hub caches its manifest for ten seconds, so `sextant-sync plan` right
+after a write on the hub can say "in sync" until the next check.
 
 ## Conflict handling
 

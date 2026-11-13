@@ -3611,6 +3611,7 @@ async def create_ticket_endpoint(request: Request):
     from atlas_plus.tickets.store import create_ticket
     try:
         t = create_ticket(
+            interactive=True,  # the dashboard is the operator's own hand (MN23: it was refused with ATLAS_AUTONOMOUS off)
             title=body["title"],
             project=body["project"],
             assignee=body.get("assignee", "human"),

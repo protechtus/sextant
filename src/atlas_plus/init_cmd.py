@@ -66,6 +66,19 @@ _SCOPE_READMES = {
 }
 
 
+def _permission_sentence(p: Path, exc: PermissionError) -> str:
+    """One sentence instead of a traceback, with the fix for the platform (AG26, MN20)."""
+    import os as _os
+    why = exc.strerror or "permission denied"
+    if _os.name == "nt":
+        fix = ("the folder is read-only or owned by another account: check its permissions "
+               "(Properties > Security, or icacls) or choose another ATLAS_WORKSPACE_ROOT")
+    else:
+        fix = ("the directory belongs to another user; in Docker a bind-mounted /data must be writable "
+               "by the container user (uid 1000): on the host, chown -R 1000:1000 <dir>")
+    return f"sextant-init: cannot write {p}: {why}. {fix}."
+
+
 def run_init(dry_run: bool = False) -> dict:
     """Create the skeleton. Returns {created: [...], existed: [...]}.
 
@@ -85,11 +98,7 @@ def run_init(dry_run: bool = False) -> dict:
                 try:
                     p.mkdir(parents=True, exist_ok=True)
                 except PermissionError as exc:
-                    raise SystemExit(
-                        f"sextant-init: cannot create {p}: permission denied ({exc.strerror}). "
-                        "The directory belongs to another user. In Docker a bind-mounted /data must be "
-                        "writable by the container user (uid 1000): on the host, chown -R 1000:1000 <dir>."
-                    ) from None
+                    raise SystemExit(_permission_sentence(p, exc)) from None
 
     def _ensure_file(p: Path, content: str) -> None:
         if p.exists():
@@ -97,8 +106,11 @@ def run_init(dry_run: bool = False) -> dict:
         else:
             created.append(str(p))
             if not dry_run:
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(content, encoding="utf-8")
+                try:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(content, encoding="utf-8", newline="\n")  # LF on every OS: a Windows scaffold synced to a Linux hub conflicted on every file (MN24)
+                except PermissionError as exc:
+                    raise SystemExit(_permission_sentence(p, exc)) from None
 
     _ensure_dir(memory_root)
     for scope in _SCOPE_DIRS:

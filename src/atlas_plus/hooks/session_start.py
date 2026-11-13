@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from atlas_plus import paths as atlas_paths
 from atlas_plus.hooks._quote import quote_note as _q
-from atlas_plus.hooks._quote import comment_gap as _comment_gap, one_line as _ol
+from atlas_plus.hooks._quote import comment_gap as _comment_gap, identity_is_template as _is_template, one_line as _ol
 
 
 def _under_projects(path: Path) -> bool:
@@ -43,12 +43,15 @@ IS_RESUME = os.environ.get("CLAUDE_HOOK_SESSION_SOURCE", "") == "resume"
 
 # A comment on its own line goes with its line; an inline one leaves the line break. The
 # own-line branch starts at `^` (one try per line), the inline branch at the literal.
-_SOURCE_COMMENT = re.compile(r"(?m)^[ \t]*<!--\s*source:[^>]*-->[ \t]*\r?\n?|[ \t]{0,16}<!--\s*source:[^>]*-->[ \t]*")
+_SOURCE_COMMENT = re.compile(r"(?m)^[ \t]*<!--\s*source:[^>\n]*-->[ \t]*\r?\n?|[ \t]{0,16}<!--\s*source:[^>\n]*-->[ \t]*")
 
 
 def _read_file(path: Path, max_chars: int = 600) -> str:
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
+        if "\ufffd" in text:
+            # a cp932/latin-1 note would prime as mojibake with no warning (MN23)
+            return f"({path.name} is not UTF-8: re-save it as UTF-8; `sextant doctor` lists such notes)"
         # Strip YAML frontmatter
         if text.startswith("---"):
             end = text.find("---", 3)
@@ -385,7 +388,7 @@ def main() -> None:
             name = user_display_name(MEMORY_ROOT)  # ATLAS_USER_NAME wins over the file title
         except Exception:  # noqa: BLE001
             name = ""
-        if "Introduce yourself to your own memory" in identity or name == "Your Name":
+        if _is_template(identity, name):
             # The scaffold's placeholder is not the user (MN7, sweep 10): say so instead of
             # priming the assistant with template text as if it were identity.
             lines += ["## Identity", "(not filled in yet: identity/user.md still holds the sextant-init "
@@ -416,7 +419,7 @@ def main() -> None:
     project_info = _detect_project()
     if project_info:
         name, project_dir = project_info
-        lines += [f"## Active project: {_ol(name)}", f"Path: {project_dir}", ""]
+        lines += [f"## Active project: {_ol(name)}", f"Path: {_ol(str(project_dir))}", ""]
         if (project_dir / ".git").exists():
             lines += ["### Git state", _q(_git_summary(project_dir)), ""]   # commit subjects are third-party text (MN16)
 

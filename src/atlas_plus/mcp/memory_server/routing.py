@@ -150,7 +150,7 @@ def _atomic_write_text(target: Path, content: str) -> None:
     # fsync before the rename so a power loss cannot leave a zero-length note
     # behind a successful replace (round-B 2026-11-09, row 31).
     try:
-        with tmp.open("w", encoding="utf-8") as fh:
+        with tmp.open("w", encoding="utf-8", newline="\n") as fh:  # LF everywhere (MN24)
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())

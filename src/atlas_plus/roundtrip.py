@@ -83,12 +83,20 @@ def server_command(python: str | None = None, command: str | None = None) -> lis
             raise ValueError("--command is empty")
         # The whole registered command pasted in (`<python> -m <module> --stdio`) is accepted:
         # the module is appended once, not twice (sweep 13, AG29).
-        if prefix[-1] == "--stdio":
-            prefix = prefix[:-1]
-        if len(prefix) >= 2 and prefix[-2:] == ["-m", SERVER_MODULE]:
-            prefix = prefix[:-2]
+        for _ in range(4):
+            if prefix and prefix[-1] == "--stdio":
+                prefix = prefix[:-1]
+            elif len(prefix) >= 2 and prefix[-2:] == ["--transport", "stdio"]:
+                prefix = prefix[:-2]
+            elif len(prefix) >= 2 and prefix[-2:] == ["-m", SERVER_MODULE]:
+                prefix = prefix[:-2]
+            else:
+                break
         if not prefix:
-            raise ValueError("--command names only the module; it needs the interpreter or launcher in front")
+            raise ValueError("--command needs the interpreter or launcher in front of the server module")
+        launcher = os.path.basename(prefix[-1]).lower()
+        if launcher.startswith(("sextant-mcp", "atlas-mcp")):
+            return [*prefix, "--stdio"]  # a console script already is the server
         return [*prefix, "-m", SERVER_MODULE, "--stdio"]
     return [python or sys.executable, "-m", SERVER_MODULE, "--stdio"]
 
@@ -318,7 +326,7 @@ def _main_lines(argv: list[str]) -> int:
     ap.add_argument("--skip-remember", action="store_true",
                     help="diagnostics: search only, write nothing, report the hit count without failing")
     args = ap.parse_args(argv)
-    fact = args.fact or f"Sextant install verified on {date.today().isoformat()} at {datetime.now():%H:%M} (sextant verify)."
+    fact = args.fact or f"Sextant install verified on {date.today().isoformat()} at {datetime.now():%H:%M:%S} (sextant verify)."
 
     if args.url:
         skipped_http: list[str] = []

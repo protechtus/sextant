@@ -263,8 +263,8 @@ def main() -> None:
             "an unauthenticated command channel."
         )
         raise SystemExit(1)
-    if len(CMD_SECRET) < 16:
-        log.error("ATLAS_NTFY_CMD_SECRET is only %d characters; refusing to start (16 or more, as every other service requires).", len(CMD_SECRET))
+    if len(CMD_SECRET) < 16 or len(CMD_SECRET.split()) != 1:
+        log.error("ATLAS_NTFY_CMD_SECRET must be one word of 16 or more characters with no whitespace (a message's first word is compared); refusing to start.")
         raise SystemExit(1)
     if not RESP_TOPIC:
         log.warning("ATLAS_NTFY_TOPIC not set; replies will not be delivered to your phone.")

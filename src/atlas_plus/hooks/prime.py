@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 from atlas_plus import paths as atlas_paths
 from atlas_plus.hooks._quote import quote_note as _q
-from atlas_plus.hooks._quote import comment_gap as _comment_gap, one_line as _ol
+from atlas_plus.hooks._quote import comment_gap as _comment_gap, identity_is_template as _is_template, one_line as _ol
 
 MEMORY_ROOT = atlas_paths.memory_root()
 PROJECTS_ROOT = atlas_paths.projects_root()
@@ -61,7 +61,7 @@ def _tokenize(text: str) -> set[str]:
 
 # A comment on its own line goes with its line; an inline one leaves the line break. The
 # own-line branch starts at `^` (one try per line), the inline branch at the literal.
-_SOURCE_COMMENT = re.compile(r"(?m)^[ \t]*<!--\s*source:[^>]*-->[ \t]*\r?\n?|[ \t]{0,16}<!--\s*source:[^>]*-->[ \t]*")
+_SOURCE_COMMENT = re.compile(r"(?m)^[ \t]*<!--\s*source:[^>\n]*-->[ \t]*\r?\n?|[ \t]{0,16}<!--\s*source:[^>\n]*-->[ \t]*")
 
 
 def _read_stripped(path: Path, max_chars: int = 800) -> str:
@@ -237,7 +237,7 @@ def build_prime_context(task: str, memory_root: Optional[Path] = None) -> str:
     identity_file = resolve_identity_path(root)
     if identity_file.exists():
         identity = _read_stripped(identity_file, max_chars=300)
-        if identity.lstrip().startswith("# Your Name") or "Introduce yourself to your own memory" in identity:
+        if _is_template(identity):
             lines += ["## Identity", "(not filled in yet: identity/user.md still holds the sextant-init template)", ""]
         else:
             lines += ["## Identity", _q(identity), ""]

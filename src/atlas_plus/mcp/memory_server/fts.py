@@ -115,6 +115,27 @@ def _index_body(frontmatter_json: str, body: str) -> str:
     return text
 
 
+def _bigram_fallback(raw: str) -> str:
+    """A looser query for a CJK sentence that matched nothing as phrases: every CJK run of three
+    characters or more becomes its overlapping bigrams OR-ed together (ranked by how many the
+    note shares), Latin terms stay as they are. A natural Japanese sentence found nothing
+    because each run had to match whole (MN23). Empty string when it does not apply."""
+    q = unicodedata.normalize("NFKC", raw).replace(_SENTINEL, " ")
+    if not _CJK_RUN_RE.search(q):
+        return ""
+    long_runs = [m.group(0) for m in _CJK_RUN_RE.finditer(q) if len(m.group(0)) >= 3]
+    if not long_runs:
+        return ""
+
+    def _group(run: str) -> str:
+        pairs = [run[i:i + 2] for i in range(len(run) - 1)]
+        return "(" + " OR ".join('"' + _CJK_SEP.join(p) + '"' for p in pairs) + ")"
+
+    out = _CJK_RUN_OR_CHAR_RE.sub(
+        lambda m: " " + (_group(m.group(0)) if len(m.group(0)) >= 3 else '"' + _CJK_SEP.join(m.group(0)) + '"') + " ", q)
+    return " ".join(out.split())
+
+
 def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
@@ -746,6 +767,10 @@ def search(query: str, scope: str = "", limit: int = 10,
 
         results = list(seen.values())
         if not results:
+            if _fallback_stage == 0 and _raw is not None:
+                loose = _bigram_fallback(_raw)
+                if loose:
+                    return search(loose, scope=scope, limit=limit, _fallback_stage=3, _raw=_raw)
             return results
         # NOTE: a single result MUST still go through the blend below.
         # The old `<= 1` early-return left a lone hit carrying its raw
