@@ -126,7 +126,9 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
         if not line.strip():
             end += len(line)  # the blank separator goes with the entry
             break
-        if not _re.match(r"^\s*(?:[-*]\s|\s+\S)", line):
+        # the rendered entry (templates/updates_entry.txt.j2): a dashed rule, `date | title`, a dashed rule,
+        # `COMPLETED:`/`FILES:`/`NEXT:` section lines and indented items; anything else is not ours
+        if not _re.match(r"^(?:-{5,}\s*$|\d{4}-\d{2}-\d{2} \| |[A-Z][A-Z _-]*:\s*$|[ \t]+\S)", line):
             break  # a hand-written line, the next entry's date line, a heading: not ours
         end += len(line)
     return text[:start] + text[end:]
