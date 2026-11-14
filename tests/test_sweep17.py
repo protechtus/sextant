@@ -519,3 +519,51 @@ def test_concurrent_searches_rebuild_a_stale_format_once(tmp_path, monkeypatch):
         th.join()
     assert calls.count(True) == 1                                                # AG60: four searches made four full rebuilds
     assert fts._index_format_tag() == fts.INDEX_FORMAT
+
+
+# ---------------------------------------------------------------- AG56, AG57
+def test_same_file_repeat_is_a_duplicate(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    first = memory_remember("project:dupseq", "the walrus operator landed in version three point eight", source="agent")
+    second = memory_remember("project:dupseq", "the walrus operator landed in version three point eight", source="agent")
+    assert first["ok"] and not first["possible_duplicate"]
+    assert second["ok"] and second["possible_duplicate"] and "dupseq" in (second["duplicate_hint"] or "")
+
+
+def test_decision_and_anti_tools_cap_their_text_and_doctor_flags_duplicate_keys(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.mcp.memory_server.tools.anti import anti_remember
+    from atlas_plus.mcp.memory_server.tools.decision import memory_remember_decision
+
+    big = "x" * 70_000
+    r = memory_remember_decision(title="t", decision=big, interactive=True)
+    assert not r["ok"] and "limit is 65,536" in r["error"]
+    r = anti_remember(scope="libraries", reject_pattern=big, interactive=True)
+    assert not r["ok"] and "limit is 65,536" in r["error"]
+    from atlas_plus.doctor import cli as doctor
+    assert "duplicate_keys_hint" in inspect.getsource(doctor) and '"duplicate_keys"' in inspect.getsource(doctor)
+
+
+def test_verify_hints_and_footer_wording():
+    from atlas_plus import roundtrip
+    from atlas_plus.curation import cli as ccli
+
+    assert roundtrip.main(["--url", "ftp://127.0.0.1:1/mcp"]) == 2
+    assert "for the rest" not in inspect.getsource(ccli)
+
+
+def test_day_log_with_markers_is_refused_by_the_writer(tmp_path, monkeypatch):
+    from atlas_plus.summarizer import renderer
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(renderer, "MEMORY_SESSIONS_DIR", sessions)
+    monkeypatch.setattr(renderer, "UPDATES_TXT", tmp_path / "updates.txt")
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    (sessions / "2026-11-14.md").write_text("<<<<<<< HEAD\n## a\n=======\n## b\n>>>>>>> theirs\n", encoding="utf-8")
+    with pytest.raises(RuntimeError) as e:
+        renderer.write_outputs("## new\n<!-- session:zzz turns:2 -->\nbody\n", "x", "2026-11-14", session_marker="<!-- session:zzz")
+    assert "conflict markers" in str(e.value)
+

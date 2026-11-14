@@ -1333,6 +1333,10 @@ def _run_http_with_auth(token: str) -> None:
     import uvicorn
 
     asgi_app = mcp.streamable_http_app()
+    try:
+        asgi_app.router.redirect_slashes = False  # the 307 to http://<Host>/mcp echoed a hostile Host and dropped the TLS scheme (AG56)
+    except Exception:  # noqa: BLE001
+        pass
 
     if token:
         middleware_cls = _make_auth_middleware(token)

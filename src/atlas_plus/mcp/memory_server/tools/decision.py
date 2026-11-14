@@ -97,6 +97,10 @@ def memory_remember_decision(
         return {"ok": False, "file": None, "slug": None, "error": "title is required"}
     if not decision.strip():
         return {"ok": False, "file": None, "slug": None, "error": "decision text is required"}
+    for _name, _val in (("title", title), ("decision", decision), ("alternatives_rejected", alternatives_rejected)):
+        _cap = 200 if _name == "title" else 65_536
+        if len(_val or "") > _cap:
+            return {"ok": False, "file": None, "slug": None, "error": f"{_name} too long: {len(_val):,} characters; the limit is {_cap:,}."}  # like memory_remember_tool (AG56)
 
     decisions_dir = MEMORY_ROOT / "decisions"
     decisions_dir.mkdir(parents=True, exist_ok=True)

@@ -266,6 +266,9 @@ def _write_locked(session_file, session_log_text, updates_text, replace_session,
     MEMORY_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     if session_file.exists():
         existing = session_file.read_text(encoding="utf-8")
+        from atlas_plus.mcp.memory_server.routing import has_conflict_markers as _hcm
+        if _hcm(existing):
+            raise RuntimeError(f"{session_file.name} holds git conflict markers (two people summarised the same day): resolve the merge first; this summary was not written")  # the writer wrote above the markers (AG57)
         if replace_session:
             # Claude Code fires Stop after every reply, so the session's entry is refreshed in place
             # when it grew (MN33: the first summary froze and every later Stop was skipped)

@@ -256,7 +256,7 @@ def _write_lf(target: Path, text: str) -> None:
     characters and lone surrogates scrubbed (a lone surrogate left a zero-byte note and aborted
     the import, AG16), capped, and atomic (tmp + replace)."""
     from atlas_plus.mcp.memory_server.routing import _scrub_controls
-    text = _scrub_controls(text)
+    text = _scrub_controls(text).replace("\r\n", "\n").replace("\r", "\n")  # a CRLF vault gave LF frontmatter over a CRLF body (AG57)
     if len(text) > MAX_IMPORT_CHARS:
         _TRUNCATED.append(f"{target.name}: {len(text):,} characters cut at {MAX_IMPORT_CHARS:,}")  # named in the report (AG35)
         text = text[:MAX_IMPORT_CHARS] + f"\n\n[truncated by sextant import: {len(text):,} characters]\n"

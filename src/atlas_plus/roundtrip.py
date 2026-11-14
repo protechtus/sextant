@@ -171,10 +171,20 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
             elif exc.code == 429:
                 hint = " (this source is locked out after failed attempts; wait, or see ATLAS_MCP_TRUSTED_PEERS)"
             elif exc.code == 404:
-                hint = " (the MCP path is /mcp)"
+                hint = " (the MCP path is /mcp, without a trailing slash)" if url.rstrip("/") != url else " (the MCP path is /mcp)"
+            elif exc.code in (301, 302, 307, 308):
+                hint = " (the server redirected: check the path, /mcp without a trailing slash)"
+            elif exc.code >= 500 and "<html" in detail.lower():
+                hint = " (this does not look like an MCP server: the reply is an HTML page)"
+                detail = detail.split("\n", 1)[0][:80]
             raise RuntimeError(f"{method}: HTTP {exc.code}{hint}: {detail}") from exc
         except (urllib.error.URLError, OSError) as exc:
-            raise RuntimeError(f"{method}: could not reach {url}: {exc} (in a container the server must "
+            _s = str(exc)
+            if "WRONG_VERSION_NUMBER" in _s or "SSL" in _s.upper() and "wrong version" in _s.lower():
+                raise RuntimeError(f"{method}: {url} answered plain HTTP to a TLS handshake: use http:// for this server, or put it behind a TLS proxy") from exc  # AG56
+            if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower():
+                raise RuntimeError(f"{method}: {url} presented a certificate this client does not trust (a private CA or `tls internal`): point SSL_CERT_FILE at the CA certificate") from exc
+            raise RuntimeError(f"{method}: could not reach {url}: {exc} (is the server running there? in a container it must "
                                f"bind ATLAS_MCP_HOST=0.0.0.0; it takes about 8 s to start)") from exc
         if notify:
             return None
@@ -328,6 +338,9 @@ def _main_lines(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     fact = args.fact or f"Sextant install verified on {date.today().isoformat()} at {datetime.now():%H:%M:%S} (sextant verify)."
 
+    if args.url and not args.url.lower().startswith(("http://", "https://")):
+        print(f"verify: only http:// and https:// URLs are supported (got {args.url.split(':', 1)[0]}://)", file=sys.stderr)  # an ftp:// URL hung (AG56)
+        return 2
     if args.url:
         skipped_http: list[str] = []
         token = args.token if args.token is not None else os.environ.get("ATLAS_MCP_TOKEN", "")

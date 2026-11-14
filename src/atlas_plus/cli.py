@@ -430,6 +430,8 @@ def cmd_remember(
         console.print(f"[red]Not stored:[/red] {_err}")
         raise typer.Exit(1)
     console.print(f"Remembered in {result['file']}")
+    if result.get("autocommit_note"):
+        console.print(f"[yellow]{result['autocommit_note']}[/yellow]")  # AG57
     if result.get("possible_duplicate"):
         console.print(f"[yellow]{result.get('duplicate_hint')}[/yellow]")
     if result.get("anti_warning"):

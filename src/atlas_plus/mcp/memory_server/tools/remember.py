@@ -38,7 +38,36 @@ def _routing_root():
     return _routing.MEMORY_ROOT
 
 
-def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT) -> None:
+_UNMERGED_CACHE: dict = {"at": float("-inf"), "paths": frozenset()}
+
+
+def _is_unmerged(target: Path) -> bool:
+    """True when git holds this path as unmerged (status UU/AA/UD/DU). The list is cached for two seconds
+    per process so a burst of writes costs one `git ls-files -u` (AG57)."""
+    import time as _time
+    root = Path(MEMORY_ROOT)
+    if not (root / ".git").exists():
+        return False
+    now = _time.monotonic()
+    if now - _UNMERGED_CACHE["at"] > 2.0:
+        try:
+            import subprocess as _sp
+            out = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", timeout=5).stdout
+            paths = frozenset(e.split("\t", 1)[1] for e in out.split("\0") if "\t" in e)
+        except Exception:  # noqa: BLE001
+            paths = frozenset()
+        _UNMERGED_CACHE.update(at=now, paths=paths)
+    if not _UNMERGED_CACHE["paths"]:
+        return False
+    try:
+        rel = target.resolve().relative_to(root.resolve()).as_posix()
+    except Exception:  # noqa: BLE001
+        return False
+    return rel in _UNMERGED_CACHE["paths"]
+
+
+def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT) -> str:
     """Stage and commit a single .memory/ file if ATLAS_MEMORY_AUTOCOMMIT=on.
 
     Runs `git -C <memory_root> add <relative>` then `git -C <memory_root> commit -m ...`.
@@ -46,11 +75,11 @@ def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT
     Uses a 5-second timeout per subprocess call to avoid blocking the MCP server.
     """
     if os.environ.get("ATLAS_MEMORY_AUTOCOMMIT", "off").lower() not in ("on", "1", "true"):
-        return
+        return ""
     git_meta = memory_root / ".git"
     if any((git_meta / m).exists() for m in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")):
         log.debug("Memory autocommit skipped: a merge is open in %s (resolve it first)", memory_root)  # MN27
-        return
+        return f"not auto-committed: a merge is open in {memory_root}; commit after you resolve it"  # the skip was silent (AG57)
     try:
         rel = str(file_path.relative_to(memory_root)).replace("\\", "/")
         git_dir = str(memory_root)
@@ -141,6 +170,25 @@ def _find_duplicate(fact: str, written_to: Path) -> Optional[dict]:
     return None
 
 
+def _same_file_repeat(fact: str, written_to: Path) -> Optional[dict]:
+    """The fact's text already stood in this note before the write (two or more copies now)."""
+    try:
+        needle = " ".join(fact.split())
+        if len(needle) < 8:
+            return None
+        lines = written_to.read_text(encoding="utf-8", errors="replace").splitlines()
+        hits = sum(1 for ln in lines if needle in " ".join(ln.split()))
+        if hits >= 2:
+            try:
+                rel = written_to.resolve().relative_to(Path(_routing_root()).resolve()).as_posix()
+            except Exception:  # noqa: BLE001
+                rel = written_to.name
+            return {"path": rel, "score": 1.0}
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def memory_remember(
     scope: str,
     fact: str,
@@ -197,6 +245,14 @@ def memory_remember(
         target, fm_template = resolve_target(scope)
     except ValueError as e:
         return {"ok": False, "file": None, "version_copy": None, "error": str(e)}
+    if target.exists() and _is_unmerged(target):
+        # a modify/delete or add/add conflict has no markers; `git ls-files -u` is the only trace (AG57: the write landed in the file git was holding)
+        try:
+            _rel = target.resolve().relative_to(Path(_routing_root()).resolve()).as_posix()
+        except Exception:  # noqa: BLE001
+            _rel = target.name
+        return {"ok": False, "file": None, "version_copy": None,
+                "error": f"{_rel} is unmerged in git (a modify/delete or add/add conflict): resolve it and `git add` it first; sextant doctor names such paths"}
     if target.exists() and _has_conflict_markers(target):
         # a git merge left markers in this note: writing into it grows a half-resolved note
         # and search would index the markers (MN27, sweep 14)
@@ -238,10 +294,12 @@ def memory_remember(
     version_path = _vh["path"]
 
     # Optional git autocommit (non-blocking, controlled by ATLAS_MEMORY_AUTOCOMMIT)
-    _git_autocommit(target, scope)
+    _ac_note = _git_autocommit(target, scope)
 
     # Post-write duplicate check (non-blocking -- failure returns ok=True anyway)
     dup = _find_duplicate(fact, target)
+    if dup is None:
+        dup = _same_file_repeat(fact, target)  # a retry after a timeout stores the fact twice in the same note; the FTS check skips self (AG56)
     # A rejected idea stored again gets a warning naming the rejection (AG20, sweep 12): the
     # write stands (a note restating WHY something was rejected is a valid fact), the caller
     # decides.
@@ -263,6 +321,7 @@ def memory_remember(
         "version_copy": str(version_path) if version_path else None,
         "error": None,
         "possible_duplicate": dup is not None,
+        "autocommit_note": _ac_note or None,
         "duplicate_hint": f"Similar content at {dup['path']} (sim={dup['score']})" if dup else None,
         "anti_warning": anti_hit,
     }

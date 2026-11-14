@@ -719,10 +719,24 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
             unmerged = sorted({e.split("\t", 1)[1] for e in _u.stdout.split("\0") if "\t" in e})  # NUL-separated, unquoted: CJK paths were octal escapes (AG49)
         except Exception:  # noqa: BLE001
             unmerged = []
+        unmerged = [u for u in unmerged if u not in set(conflicted)]  # a marker note is listed once, above (AG57)
         if unmerged:
             result["unmerged"] = unmerged[:10]
             result["unmerged_hint"] = (f"{len(unmerged)} path(s) are unmerged in git (a modify/delete or add/add conflict without markers): "
                                       "resolve them in git before writing: " + ", ".join(unmerged[:5]))
+    _dupkeys = []
+    for f in files:
+        if f.text and f.text.startswith("---"):
+            _m = re.match(r"---\r?\n(.*?)\r?\n---", f.text, re.S)
+            if _m:
+                _keys = re.findall(r"(?m)^([A-Za-z_][\w-]*):", _m.group(1))
+                if len(_keys) != len(set(_keys)):
+                    _dupkeys.append(f.rel)
+    if _dupkeys:
+        # a frontmatter conflict resolved by deleting the marker lines leaves two of a key; the last one wins silently (AG57)
+        result["duplicate_keys"] = _dupkeys[:10]
+        result["duplicate_keys_hint"] = (f"{len(_dupkeys)} note(s) repeat a frontmatter key (two `priority:` lines after a merge, say): "
+                                         "keep one of each: " + ", ".join(_dupkeys[:5]))
     bad_names = [f.rel for f in files if f.bad_name]
     if bad_names:
         result["bad_names"] = bad_names[:10]
@@ -1613,7 +1627,7 @@ def render_text(data: dict) -> str:
             lines.append(f"  \033[33mempty\033[0m  root: {mc.get('root')}")
         if mc.get("hint"):
             lines.append(f"  \033[33m{mc['hint']}\033[0m")
-        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "unmerged_hint", "import_copies_hint", "locks_hint"):  # unmerged was JSON-only (AG49)
+        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "unmerged_hint", "duplicate_keys_hint", "import_copies_hint", "locks_hint"):  # unmerged was JSON-only (AG49)
             if mc.get(extra_key):
                 lines.append(f"  \033[33m{mc[extra_key]}\033[0m")
         emb = mc.get("embed_index") or {}
@@ -2319,6 +2333,10 @@ def main() -> int:
             "Ollama": "an Ollama URL variable is set",
         }
         bad = []
+        for _sec, _val in data.items():
+            if isinstance(_val, dict) and (_val.get("conflict_markers") or _val.get("unmerged") or _val.get("duplicate_keys")):
+                bad.append("corpus holds unresolved git conflicts or duplicate frontmatter keys")  # --strict exited 0 with markers present (AG57)
+                break
         for val in services:
             if not isinstance(val, dict):
                 continue

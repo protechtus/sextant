@@ -246,6 +246,8 @@ def anti_remember(
     """
     from atlas_plus.mcp.memory_server.routing import _scrub_controls   # ESC/BEL (FN6, final pass)
     reject_pattern = _scrub_controls(str(reject_pattern or ''))
+    if len(reject_pattern) > 65_536:
+        return {"ok": False, "file": None, "error": f"reject_pattern too long: {len(reject_pattern):,} characters; the limit is 65,536.", "propagated": 0}  # a 1 MB rejection made every later list call return megabytes (AG56)
     applies_to = _scrub_controls(str(applies_to or ''))
     project = _scrub_controls(str(project or ''))
     from atlas_plus.autonomous import require_write
