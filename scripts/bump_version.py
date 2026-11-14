@@ -13,7 +13,8 @@ What a bump does (version-before-edit copies first, under versions/):
   3. CHANGELOG.md             the `## [Unreleased]` body moves under a new `## [X.Y.Z] - YYYY-MM-DD`
                                  heading; `[Unreleased]` stays, empty, for the next cycle
   4. prints the release steps: commit, publish the mirror, tag `vX.Y.Z` ON THE MIRROR, GitHub
-     release (publish.yml refuses a tag that differs from pyproject).
+     release (publish.yml refuses a tag that differs from pyproject). docs/RELEASING.md is the
+     public description; a contributor stops after the bump and opens a pull request.
 
 Between tags the public builder stamps `X.Y.Z.devN` (N = public commits since the last tag) when
 `SEXTANT_PUBLISH_DEV_VERSION=on` (scripts/build_public_repo.py); the private tree never carries a
@@ -37,9 +38,19 @@ import os
 # the workspace keeps version copies two levels up (<workspace>/versions, a mirrored path tree);
 # a plain checkout keeps them beside the repo
 _WS = REPO.parent.parent
-VERSIONS = Path(os.environ.get("SEXTANT_VERSIONS_DIR") or ((_WS / "versions") if (_WS / "versions").is_dir() else (REPO / "versions")))
+_IN_WORKSPACE = REPO.parent.name == "projects" and (_WS / "versions").is_dir()  # <workspace>/projects/<repo>; a stranger's clone keeps copies beside itself (MN40)
+VERSIONS = Path(os.environ.get("SEXTANT_VERSIONS_DIR") or ((_WS / "versions") if _IN_WORKSPACE else (REPO / "versions")))
 
 _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_STAMPED = re.compile(r"^(\d+\.\d+\.\d+)\.dev(\d+)$")  # a public build between tags (scripts/build_public_repo.py)
+BUILD_STAMP = REPO / "src" / "atlas_plus" / "_build.py"
+
+
+def _base(v: str) -> tuple[int, ...] | None:
+    m = _SEMVER.match(v) or _STAMPED.match(v)
+    if not m:
+        return None
+    return tuple(int(x) for x in (m.group(1) if _STAMPED.match(v) else v).split("."))
 
 
 def pyproject_version(text: str | None = None) -> str:
@@ -67,24 +78,29 @@ def drift(text_pyproject: str | None = None, text_init: str | None = None, text_
     """Every place that repeats the version must agree. Returns the problems (empty = clean)."""
     problems: list[str] = []
     v = pyproject_version(text_pyproject)
-    if not _SEMVER.match(v):
-        problems.append(f"pyproject version {v!r} is not X.Y.Z (the private tree never carries a dev or local suffix)")
+    stamped = _STAMPED.match(v)
+    if stamped and not BUILD_STAMP.exists():
+        problems.append(f"pyproject version {v!r} carries a dev suffix but src/atlas_plus/_build.py is absent: only the public builder stamps a build")
+    elif not stamped and not _SEMVER.match(v):
+        problems.append(f"pyproject version {v!r} is not X.Y.Z (the source tree never carries a dev or local suffix)")
+    base = stamped.group(1) if stamped else v
     fb = init_fallback_version(text_init)
-    if fb != v:
-        problems.append(f"__init__ fallback {fb!r} != pyproject {v!r} (run scripts/bump_version.py, never edit one by hand)")
+    if fb != base:
+        problems.append(f"__init__ fallback {fb!r} != pyproject {base!r} (run scripts/bump_version.py, never edit one by hand)")
     cl = CHANGELOG.read_text(encoding="utf-8") if text_changelog is None else text_changelog
     if "## [Unreleased]" not in cl:
         problems.append("CHANGELOG.md has no `## [Unreleased]` heading")
     heads = changelog_release_headings(cl)
+    vt = _base(v)
     for h in heads:
-        if tuple(map(int, h.split("."))) > tuple(map(int, v.split("."))):
+        if vt is not None and tuple(map(int, h.split("."))) > vt:
             problems.append(f"CHANGELOG release heading [{h}] is newer than pyproject {v}")
     return problems
 
 
 def _version_copy(path: Path) -> None:
     try:
-        rel = path.resolve().relative_to(_WS.resolve())
+        rel = path.resolve().relative_to(_WS.resolve()) if _IN_WORKSPACE else path.resolve().relative_to(REPO.resolve())
     except ValueError:
         rel = Path(path.name)
     dest_dir = VERSIONS / rel.parent
@@ -143,7 +159,7 @@ def bump(new: str, dry_run: bool = False) -> None:
     INIT.write_text(ini2, encoding="utf-8", newline="\n")
     CHANGELOG.write_text(cl2, encoding="utf-8", newline="\n")
     print(f"bumped {old} -> {new}")
-    print("next:\n"
+    print("next (maintainer steps; the publisher lives in the private source tree, so a contributor stops here and opens a pull request; see docs/RELEASING.md):\n"
           f"  git add pyproject.toml src/atlas_plus/__init__.py CHANGELOG.md && git commit -m 'Release {new}'\n"
           "  python scripts/publish_sextant.py --push                        # the mirror build carries the plain version\n"
           f"  git -C <mirror checkout> tag -a v{new} -m 'Sextant {new}' && git -C <mirror checkout> push origin v{new}\n"

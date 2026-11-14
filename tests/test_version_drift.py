@@ -39,6 +39,28 @@ def test_private_version_is_plain_semver_and_public_build_may_add_dev_suffix():
     assert pv.Version(mod.dev_version(v, 38)) > pv.Version(mod.dev_version(v, 37))  # and each build above the last
 
 
+def test_stamped_public_build_passes_drift_and_check_never_crashes(tmp_path, monkeypatch):
+    """MN40: the public suite runs on the stamped tree; the stamp must not fail it."""
+    bump = _bump_module()
+    py = tmp_path / "pyproject.toml"
+    ini = tmp_path / "__init__.py"
+    cl = tmp_path / "CHANGELOG.md"
+    stamp = tmp_path / "_build.py"
+    py.write_text('[project]\nname = "x"\nversion = "0.1.1.dev3"\n', encoding="utf-8")
+    ini.write_text('def _installed_version():\n    return "0.1.1"\n', encoding="utf-8")
+    cl.write_text("# Changelog\n\n## [Unreleased]\n\n- x\n\n## [0.1.0] - 2026-11-13\n\n- old\n", encoding="utf-8")
+    monkeypatch.setattr(bump, "PYPROJECT", py)
+    monkeypatch.setattr(bump, "INIT", ini)
+    monkeypatch.setattr(bump, "CHANGELOG", cl)
+    monkeypatch.setattr(bump, "BUILD_STAMP", stamp)
+    assert any("_build.py is absent" in p for p in bump.drift())      # a dev suffix without the builder's stamp is drift
+    stamp.write_text('SOURCE = "abc1234"\n', encoding="utf-8")
+    assert bump.drift() == []                                            # stamped: the base version is compared
+    py.write_text('[project]\nname = "x"\nversion = "0.0.9.dev1"\n', encoding="utf-8")
+    problems = bump.drift()                                              # no ValueError (the int('dev1') crash)
+    assert any("newer than pyproject" in p for p in problems)
+
+
 def test_bump_moves_the_unreleased_section(tmp_path, monkeypatch):
     bump = _bump_module()
     py = tmp_path / "pyproject.toml"

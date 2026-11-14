@@ -463,6 +463,10 @@ printed Stop command runs through `wsl -d <distro> -- env ...`: put
 
 ## Updating Sextant
 
+Notes written by a build before 2026-11-13 on Windows may carry CRLF line endings; the first
+write to such a note after the update normalises the whole note to LF (one whole-file diff in
+a git-tracked corpus, once per note; `.gitattributes` keeps git quiet about it).
+
 First, the answer to the question that matters: **your memory data is safe
 across updates.** The corpus is never migrated (it is plain markdown and
 updates never touch it), and derived state either upgrades itself or can
@@ -533,7 +537,7 @@ cd sextant && git pull
 Then restart whatever services you run. Docker users:
 `git pull && docker compose build && docker compose up -d` (on a clone pinned
 to a commit, `git checkout main` first: a detached-HEAD `git pull` prints a
-help page, exits 0, and the build then rebuilds the OLD source). A later
+help page (its exit code depends on the git version), and the build then rebuilds the OLD source). A later
 search rebuilds the keyword index only when a build changed the tokenizer
 (most updates do not; the log says so when it happens), and last week's image
 still reads the new index if you roll back.
