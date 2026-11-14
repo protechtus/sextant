@@ -29,7 +29,7 @@ import logging
 import httpx
 
 _STATUS_CACHE_TTL = 15.0  # seconds between full Ollama re-pings
-_last_refresh: float = 0.0
+_last_refresh: float = float("-inf")  # not 0.0: CLOCK_MONOTONIC starts at boot (AG60)
 
 OLLAMA_BASE_URL = __import__('atlas_plus.llm.ollama_url', fromlist=['default_ollama_url']).default_ollama_url()
 CLAUDE_CLI = os.environ.get("ATLAS_CLAUDE_CLI", "claude")

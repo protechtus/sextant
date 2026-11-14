@@ -397,7 +397,7 @@ inspect the default locations instead of your real ones.
                                       # scripts pass --confirm-path and --confirm-state-path)
    ```
 
-   If you enabled the Stop-hook summarizer (`ATLAS_AUTONOMOUS=on`), it also
+   If you enabled the Stop-hook summarizer (`ATLAS_SESSION_AUTONOMOUS=on` on the hook command), it also
    wrote a session log (`<state>/updates.txt` by default, or `ATLAS_UPDATES_FILE`)
    and version copies in a `versions/` directory beside it. The uninstaller
    does not manage those two -- check whether they predate Sextant before
@@ -456,8 +456,9 @@ are mangled and the hook refuses the payload; use Git Bash for this test.
 
 A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
 activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`,
-`summarizer_skipped`, and for the facts stage `suggest_facts_failed`, `suggest_facts_skipped` and
-`fact_needs_review`) say what happened; `sextant doctor` has a "Stop hook" block with the
+`summarizer_skipped`, `summarizer_chunk_rejected` when one part of a long session came back unusable and
+the entry says so until the next Stop retries it, and for the facts stage `suggest_facts_failed`,
+`suggest_facts_skipped` and `fact_needs_review`) say what happened; `sextant doctor` has a "Stop hook" block with the
 model, the endpoint and the newest summary. Claude Code fires Stop after every reply, not
 only at the end: the session's entry is written once and then refreshed in place (in the
 day's log and in `updates.txt`; across midnight it moves to the new day) each time

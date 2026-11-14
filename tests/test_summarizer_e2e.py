@@ -157,7 +157,7 @@ class TestChunker:
 class TestPrompts:
     def test_map_prompt_contains_chunk_info(self):
         prompt = map_prompt("some transcript", chunk_index=0, chunk_total=3)
-        assert "chunk 1 of 3" in prompt.lower()
+        assert "chunk 1 of 3" not in prompt.lower()  # AG58: a position in the prompt ends up in a cached reply and goes stale when the session grows
         assert "some transcript" in prompt
         assert "JSON" in prompt
 

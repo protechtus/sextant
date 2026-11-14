@@ -229,7 +229,7 @@ def check_autonomous() -> dict:
     """Return current ATLAS_AUTONOMOUS and ATLAS_SESSION_AUTONOMOUS env var values."""
     return {
         "ATLAS_AUTONOMOUS":         os.environ.get("ATLAS_AUTONOMOUS", "(not set)"),
-        "ATLAS_SESSION_AUTONOMOUS": os.environ.get("ATLAS_SESSION_AUTONOMOUS", "(not set)"),
+        "ATLAS_SESSION_AUTONOMOUS": (lambda v: v if len(v) <= 60 else v[:60] + "...")(os.environ.get("ATLAS_SESSION_AUTONOMOUS", "(not set)")),  # cut like the Gate line (AG60)
     }
 
 
@@ -1787,7 +1787,7 @@ def render_text(data: dict) -> str:
         if sh.get("gate"):
             gate = "on"
         elif _raw and _raw.lower() not in ("off", "0", "false", "no"):
-            gate = f"off: ATLAS_SESSION_AUTONOMOUS={(_raw if len(_raw) <= 60 else _raw[:60] + chr(8230))!r} is not one of on/1/true"  # name the bad value (AG50), cut at 60 characters (MN43)
+            gate = f"off: ATLAS_SESSION_AUTONOMOUS={(_raw if len(_raw) <= 60 else _raw[:60] + '...')!r} is not one of on/1/true"  # name the bad value (AG50), cut at 60 characters (MN43)
         else:
             gate = "off in this shell (the hook needs --env ATLAS_SESSION_AUTONOMOUS=on on its command)"
         if not sh.get("reachable"):

@@ -120,18 +120,91 @@ def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
     return True
 
 
-_ECHO_MARKERS = ("You are summarizing", "short description of each thing", "things that were finished", "things started but not finished", "Think step by step")
+def _alnum(s: str) -> str:
+    import re as _re
+    return _re.sub(r"[^0-9a-z]+", "", str(s).lower())
 
 
-def _is_prompt_echo(parsed) -> bool:
-    """An echoed prompt parses as a summary because the prompt holds the schema (AG50: four 22 KB echoes
-    were cached and fed every later reduce; a single-chunk echo wrote the placeholders as the entry)."""
+_TEMPLATE_CACHE: dict = {}
+
+
+def _template_parts():
+    """(long template lines, schema placeholder strings), both alphanumeric-folded, read from the two prompts
+    themselves so an edit to a prompt can never leave the echo check behind (AG58: the five hard-coded phrases
+    missed the reduce prompt entirely and fired on a session about editing the prompt)."""
+    if not _TEMPLATE_CACHE:
+        import re as _re
+        lines: set = set()
+        holders: set = set()
+        for p in (map_prompt("", 0, 1), reduce_prompt([], "")):
+            for ln in p.splitlines():
+                n = _alnum(ln)
+                if len(n) >= 24:
+                    lines.add(n)
+                mm = _re.match(r'^\s*"[a-z_]+":\s*(.*)$', ln)
+                if mm:
+                    for q in _re.findall(r'"([^"]+)"', mm.group(1)):
+                        if len(_alnum(q)) >= 12:
+                            holders.add(_alnum(q))
+        _TEMPLATE_CACHE["v"] = (lines, holders)
+    return _TEMPLATE_CACHE["v"]
+
+
+def _echo_hits(parsed) -> int:
+    """How many of the prompt template's own long lines appear, whole, in the reply."""
     import json as _json
     try:
         flat = _json.dumps(parsed, ensure_ascii=False)
     except Exception:  # noqa: BLE001
         flat = str(parsed)
-    return sum(marker in flat for marker in _ECHO_MARKERS) >= 2  # one quoted phrase (a session about prompts) is a summary; the echoed prompt carries them all (MN43)
+    flat = _alnum(flat)
+    return sum(1 for ln in _template_parts()[0] if ln in flat)
+
+
+def _is_prompt_echo(parsed) -> bool:
+    """An echoed prompt parses as a summary because the prompt holds the schema (AG50). A RATIO of the
+    template, not a phrase count: whole template lines, six or more of the 26 (an echo of either prompt carries 12; a session
+    about editing the prompt quotes one or two phrases, which are fragments of lines, not lines: AG58)."""
+    return _echo_hits(parsed) >= 6
+
+
+_LIST_KEYS = ("worked_on", "completed", "pending", "decisions", "files_touched", "lessons")
+
+
+def _drop_placeholders(parsed):
+    """(copy of ``parsed`` without schema placeholder items, how many were dropped). A reduce reply that is
+    the schema itself ("deduplicated list of things worked on") parsed as a summary and became the entry (AG58)."""
+    if not isinstance(parsed, dict):
+        return parsed, 0
+    holders = _template_parts()[1]
+    out = dict(parsed)
+    dropped = 0
+    for k in _LIST_KEYS:
+        if isinstance(out.get(k), list):
+            keep = [x for x in out[k] if _alnum(x) not in holders]
+            dropped += len(out[k]) - len(keep)
+            out[k] = keep
+    if isinstance(out.get("title"), str) and _alnum(out["title"]) in holders:
+        out["title"] = ""
+        dropped += 1
+    return out, dropped
+
+
+def _reject_reason(parsed) -> str:
+    """One phrase saying WHY a reply is not a summary (AG58: "model reply was not a summary" told the user nothing)."""
+    if not isinstance(parsed, dict):
+        return "the reply was not a JSON object"
+    if parsed.get("_fallback"):
+        return "the reply was not JSON (plain text)"
+    if _is_prompt_echo(parsed):
+        return f"the reply repeated the prompt ({_echo_hits(parsed)} of its template lines)"
+    clean, dropped = _drop_placeholders(parsed)
+    if dropped and not any(isinstance(clean.get(k), list) and clean.get(k) for k in ("completed", "pending", "worked_on", "decisions")):
+        return f"the reply was the prompt's schema with its placeholders ({dropped} of them) and no real content"
+    t = parsed.get("title")
+    if t is not None and (not isinstance(t, str) or len(t) > 160 or "\n" in t or "JSON" in t):
+        return "the title was not a short one-line title"
+    return "the reply had no completed, pending or worked-on items"
 
 
 def _looks_like_chunk_summary(parsed) -> bool:
@@ -139,12 +212,18 @@ def _looks_like_chunk_summary(parsed) -> bool:
     echo of the prompt."""
     if not isinstance(parsed, dict) or parsed.get("_fallback") or _is_prompt_echo(parsed):
         return False
+    clean, dropped = _drop_placeholders(parsed)
+    if dropped and not any(isinstance(clean.get(k), list) and clean.get(k) for k in _LIST_KEYS):
+        return False  # only the schema's placeholders (AG58)
     return any(isinstance(parsed.get(k), list) for k in ("worked_on", "completed", "pending", "decisions", "files_touched"))
 
 
 def _looks_like_summary(summary) -> bool:
     if not isinstance(summary, dict) or summary.get("_fallback") or _is_prompt_echo(summary):
         return False
+    _c, _d = _drop_placeholders(summary)
+    if _d and not any(isinstance(_c.get(k), list) and _c.get(k) for k in ("completed", "pending", "worked_on", "decisions")):
+        return False  # the schema's own placeholders and nothing else (AG58)
     title = summary.get("title")
     # the MAP prompt's schema has no title, so a single-chunk session (no reduce) arrives without one
     # (MN39: every short session was refused as "not a summary" for a whole day); a title that IS present
@@ -259,6 +338,7 @@ def main(
     used_cache: dict[str, str] = {}
     chunk_summaries: list[str] = []
     reused = 0
+    rejected: list[str] = []
     for chunk in chunks:
         red = _redact(chunk.text)
         key = _chunk_key(red)
@@ -279,9 +359,28 @@ def main(
             if safe_id and not dry_run and used_cache:
                 _save_chunk_cache(safe_id, used_cache)  # the chunks already summarised are kept for the retry (AG54: 34 calls paid twice)
             raise typer.Exit(1)
-        chunk_summaries.append(text)
-        if _looks_like_chunk_summary(_parse_json_response(text)):
+        _parsed = _parse_json_response(text)
+        if _looks_like_chunk_summary(_parsed):
+            _clean, _ = _drop_placeholders(_parsed)
+            text = json.dumps(_clean, ensure_ascii=False)  # one placeholder next to real items is dropped, not kept
+            chunk_summaries.append(text)
             used_cache[key] = text  # only a reply shaped like a chunk summary is cached (MN39, AG49: a JSON list crashed here and a JSON object of junk was cached)
+        else:
+            # AG58: a rejected reply (an echoed 21 KB prompt, plain text) used to go into the reduce prompt as
+            # a chunk summary: the reduce grew to 34 KB, the entry lost the chunk and kept the prompt's own
+            # placeholders, and the only event was summary_written. Now: an event naming the chunk, a placeholder
+            # in the reduce input instead of the reply, and a `partial` marker so the next Stop retries.
+            _first_turn = sum(len(c.turns) for c in chunks[:chunk.index]) + 1
+            _label = f"part {chunk.index + 1} of {len(chunks)} (turns {_first_turn}-{_first_turn + len(chunk.turns) - 1})"
+            rejected.append(_label)
+            _event("summarizer_chunk_rejected", chunk=chunk.index + 1, of=len(chunks), reply_chars=len(text),
+                   reason=_reject_reason(_parsed)[:160], conversation_id=conversation_id or "")
+            console.print(f"[yellow]Chunk {chunk.index + 1}/{len(chunks)} rejected: {_reject_reason(_parsed)}.[/yellow]")
+            chunk_summaries.append(json.dumps({"worked_on": [f"{_label} could not be summarised"], "completed": [], "pending": [], "files_touched": [], "lessons": []}))
+    if rejected and len(rejected) == len(chunks):
+        console.print("[red]Every chunk reply was unusable; nothing written.[/red]")
+        _event("summarizer_failed", reason=f"all {len(chunks)} chunk replies were unusable (not summaries); see summarizer_chunk_rejected", conversation_id=conversation_id or "")
+        raise typer.Exit(1)
     if reused:
         console.print(f"[dim]{reused} of {len(chunks)} chunk summaries reused from the last run.[/dim]")
     if safe_id and not dry_run:
@@ -301,16 +400,30 @@ def main(
         summary = _parse_json_response(final_text)
     else:
         summary = _parse_json_response(chunk_summaries[0])
+    if isinstance(summary, dict):
+        _s, _n = _drop_placeholders(summary)
+        if _looks_like_summary(_s) or not _n:
+            summary = _s
     if isinstance(summary, dict) and not str(summary.get("title") or "").strip():
         _first = next((v[0] for k in ("worked_on", "completed", "pending") for v in [summary.get(k)] if isinstance(v, list) and v and isinstance(v[0], str)), "")
         summary["title"] = (_first.strip()[:80] or "Session summary")  # the map schema carries no title (MN39)
     if not _looks_like_summary(summary):
         # a non-JSON reply used to be written as the session's summary and then protected by its
         # marker (MN33: "things that were finished and confirmed working Pending: ...")
-        console.print("[red]The model's reply was not a summary; nothing written.[/red]")
-        _event("summarizer_failed", reason="model reply was not a summary", conversation_id=conversation_id or "")
+        _why = _reject_reason(summary)
+        console.print(f"[red]The model's reply was not a usable summary: {_why}; nothing written. It is retried at the next Stop; if it keeps happening, try a larger model (ATLAS_SUMMARIZER_MODEL).[/red]")
+        _event("summarizer_failed", reason=f"model reply was not a summary: {_why}", conversation_id=conversation_id or "")
         raise typer.Exit(1)
 
+    if rejected:
+        # the entry says what is missing, by name, and the marker makes the next Stop retry it
+        summary.setdefault("pending", [])
+        if not isinstance(summary["pending"], list):
+            summary["pending"] = []
+        summary["pending"].append("Incomplete: " + "; ".join(rejected) + " could not be summarised (unusable model reply); retried at the next Stop")
+        console.print(f"[yellow]{len(rejected)} of {len(chunks)} chunks could not be summarised; the entry says so and is retried at the next Stop.[/yellow]")
+        if marker:
+            marker = marker[:-4] + " partial:1 -->"
     # --- 5. Render ---
     for _k in ("worked_on", "completed", "pending", "decisions", "files_touched"):
         if isinstance(summary.get(_k), list):
@@ -326,6 +439,7 @@ def main(
         session_log_text = head + "\n" + marker + "\n" + rest
         uhead, _, urest = updates_text.partition("\n")
         updates_text = uhead + "\n" + marker + "\n" + urest  # the updates entry is found and replaced by its marker too (AG43)
+        updates_text = updates_text.rstrip("\n") + f"\n<!-- end session:{safe_id} -->\n"  # AG58: the entry's last line, so removal ends exactly here
 
     # --- 6. Review ---
     if auto_commit or dry_run:
@@ -337,12 +451,17 @@ def main(
         raise typer.Exit(0)
 
     # --- 7. Write ---
-    result = write_outputs(session_log_text, updates_text, date, dry_run=dry_run, session_marker=marker, replace_session=replace_prefix)
+    try:
+        result = write_outputs(session_log_text, updates_text, date, dry_run=dry_run, session_marker=marker, replace_session=replace_prefix)
+    except Exception as exc:  # noqa: BLE001
+        # AG58: a write that died (Windows PermissionError under concurrent Stops) was a traceback in a discarded stream
+        _event("summarizer_failed", reason=f"write failed: {type(exc).__name__}: {exc}"[:200], conversation_id=conversation_id or "")
+        raise
     if result.get("skipped"):
         console.print(f"[yellow]{result['skipped']}[/yellow]")
         raise typer.Exit(0)
     if not dry_run:
-        _event("summary_written", path=result.get("session_log", ""), conversation_id=conversation_id or "")
+        _event("summary_written", path=result.get("session_log", ""), conversation_id=conversation_id or "", **({"partial_chunks": len(rejected)} if rejected else {}))
     dry_tag = " (dry-run)" if dry_run else ""
     for label, path in result.items():
         console.print(f"[green]Written{dry_tag}:[/green] {label} -> {path}")

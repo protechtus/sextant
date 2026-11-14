@@ -237,7 +237,9 @@ def _tokenize(text: str) -> set[str]:  # `\w+` since MN46: the similarity note a
         end = text.find("---", 3)
         if end != -1:
             text = text[end + 3:]
-    words = re.findall(r"\w+", text.lower())
+    from atlas_plus.mcp.memory_server.fts import _WORD_RE as _w
+    import unicodedata as _ud
+    words = _w.findall((text if text.isascii() else _ud.normalize("NFC", text)).lower())  # marks stay inside their words (AG60: vocalised Arabic and Hindi had shattered)
     return {w for w in words if len(w) > 2 and w not in _STOPS}
 
 
@@ -379,7 +381,23 @@ def _queue_for_review(cand: dict, conversation_id: str | None) -> None:
 
 
 def _fact_tokens(text: str) -> set[str]:
-    return set(re.findall(r"\w+", text.lower()))  # letters of every script (AG52: a fact with no ASCII never counted as present)
+    from atlas_plus.mcp.memory_server.fts import _WORD_RE as _w
+    import unicodedata as _ud
+    return set(_w.findall((text if text.isascii() else _ud.normalize("NFC", text)).lower()))  # letters of every script with their marks (AG52, AG60)
+
+
+_NEGATIONS = {"not", "no", "never", "dont", "doesnt", "isnt", "cannot", "cant", "without", "stop", "avoid", "disable", "disabled", "off", "instead", "replaced", "replaces"}
+
+
+def _near_dup_threshold() -> float:
+    """Per-line token-Jaccard bar for a REWORDED duplicate (AG58: `--skip-similar 0.8` compared a fact with
+    the whole note, whose growing vocabulary kept every score low: 50 one-word rewordings were all written).
+    0 or 1 turns it off (exact match only)."""
+    try:
+        v = float(os.environ.get("ATLAS_FACT_NEAR_DUP", "0.8"))
+    except ValueError:
+        v = 0.8
+    return 1.0 if v <= 0 or v > 1 else v
 
 
 def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:
@@ -404,7 +422,11 @@ def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:
             if _norm_fact(body) == _norm_fact(fact):
                 return True
             if threshold < 1.0 and len(want & have) / len(want | have) >= threshold:
-                return True
+                # MN31: a correction differs from its original by ONE token that carries the meaning (a digit,
+                # a negation): that line is not a duplicate however similar the rest is
+                diff = want ^ have
+                if not any(re.search(r"\d", t) or t in _NEGATIONS for t in diff):
+                    return True
     except Exception:  # noqa: BLE001
         return False
     return False
@@ -536,8 +558,8 @@ def _review_candidates(
                 _queue_for_review(cand, _CURRENT_SESSION.get("id"))
                 skipped += 1
                 continue
-            if _fact_already_there(cand["scope"], cand["fact"]):
-                _print("[dim]Already in memory (same fact line); skipped.[/dim]" if console else "Already in memory (same fact line); skipped.")
+            if _fact_already_there(cand["scope"], cand["fact"], _near_dup_threshold()):
+                _print("[dim]Already in memory (same or near-identical fact line); skipped.[/dim]" if console else "Already in memory (same or near-identical fact line); skipped.")
                 skipped += 1
                 continue
             _print("[green]Auto-approved.[/green]" if console else "Auto-approved.")

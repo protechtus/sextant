@@ -219,7 +219,7 @@ class _PeerClient:
     eight in parallel stalled /health). Actions (POST and the rest) are always tried. It wraps the
     client object at call time, so a test that patches ``httpx.AsyncClient`` is honoured."""
     _down: dict[str, float] = {}
-    PEER_DOWN_SECONDS = 20.0
+    PEER_DOWN_SECONDS = 10.0  # a revived Brain showed up after 21 s at 20 (MN48); the panels poll every few seconds anyway
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("verify", _shared_ssl_context())  # building a certifi context per client cost 0.43 s on the loop (AG54)
@@ -285,6 +285,36 @@ class _PeerClient:
         return getattr(self._target(), name)
 
 
+_LOCK_NAMED: dict[str, list] = {}  # peer -> [window start, named, suppressed]
+_LOCK_NAMED_PER_PEER = 5  # named lines per peer per window; a forger naming 40 sources got 40 lines (MN37/MN38)
+
+
+def _warn_lockout(throttle_ip: str, client_ip: str) -> None:
+    """One WARNING per locked CLIENT per window, at most five per peer, then one summary line per
+    peer per window (with one proxy only the first locked client in a window was named)."""
+    import time as _time
+    now = _time.time()
+    win = AUTH_FAILURES.window_seconds
+    key = f"{client_ip}|{throttle_ip}"
+    if now - _LOCK_WARNED.get(key, 0.0) <= win:
+        return
+    row = _LOCK_NAMED.get(client_ip)
+    if row is None or now - row[0] > win:
+        row = _LOCK_NAMED[client_ip] = [now, 0, 0]
+        if len(_LOCK_NAMED) > 512:
+            _LOCK_NAMED.pop(next(iter(_LOCK_NAMED)))
+    if row[1] >= _LOCK_NAMED_PER_PEER:
+        row[2] += 1
+        if row[2] == 1:
+            log.warning("dashboard: more than %d clients via %s are locked out this window; the rest are not named (the Security panel counts them)", _LOCK_NAMED_PER_PEER, client_ip)
+        return
+    row[1] += 1
+    _LOCK_WARNED[key] = now
+    if len(_LOCK_WARNED) > 512:
+        _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))
+    log.warning("dashboard: %s is locked out after repeated auth failures (via %s); refusing with 429", throttle_ip, client_ip)  # the log said nothing (MN35)
+
+
 def _check_auth(request: Request, header_only: bool = False) -> None:
     if _ALLOW_NO_AUTH and not API_KEY:
         _refuse_cross_site(request)
@@ -309,12 +339,7 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
         try:
             AUTH_FAILURES.record(path=request.url.path, client_ip=client_ip, cf_ip=cf_ip, reason="locked_out")  # visible in the panel, not counted (MN29)
             import time as _time
-            _wk = client_ip if cf_ip else throttle_ip  # one line per PEER per window: a forger named 40 sources and got 40 lines (MN37/MN38)
-            if _time.time() - _LOCK_WARNED.get(_wk, 0.0) > AUTH_FAILURES.window_seconds:
-                _LOCK_WARNED[_wk] = _time.time()
-                if len(_LOCK_WARNED) > 512:
-                    _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))
-                log.warning("dashboard: %s is locked out after repeated auth failures (via %s); refusing with 429", throttle_ip, client_ip)  # the log said nothing (MN35)
+            _warn_lockout(throttle_ip, client_ip)
         except Exception:  # noqa: BLE001
             pass
         raise HTTPException(
@@ -434,8 +459,8 @@ async def _task_poll_loop() -> None:
         except Exception as exc:
             if not _POLL_STATE.get("warned"):
                 _POLL_STATE["warned"] = True
-                log.warning("Brain at %s is not reachable (%s): the dashboard works without it; "
-                            "start sextant-brain or set ATLAS_BRAIN_URL", BRAIN_URL, type(exc).__name__)
+                log.warning("Brain at %s is not running or not reachable: the dashboard works without it; "
+                            "start sextant-brain or set ATLAS_BRAIN_URL", BRAIN_URL)  # the exception type (ConnectTimeout on Windows) said nothing to a user (MN48)
             log.debug("Task poll error: %s", exc)
         poll_interval = 2.0 if changed else min(poll_interval * 1.5, 30.0)
         await asyncio.sleep(poll_interval)
@@ -765,7 +790,7 @@ async def status_partial(request: Request):
     except Exception:
         pass
 
-    return HTMLResponse(" &nbsp;|&nbsp; ".join(parts))
+    return HTMLResponse('<span class="sep"> &nbsp;|&nbsp; </span>'.join(parts))
 
 
 @app.get("/api/maintenance", response_class=HTMLResponse)
@@ -870,7 +895,7 @@ async def agents_html(request: Request):
         agents = r.json().get("agents", [])
     except httpx.ConnectError:
         return HTMLResponse(
-            f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it, or set ATLAS_BRAIN_URL.</div>'  # the source-tree command was wrong for a pip install (MN43)
+            f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it (<code>sextant-brain</code>), or set ATLAS_BRAIN_URL.</div>'  # the source-tree command was wrong for a pip install (MN43)
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 401:
@@ -884,7 +909,7 @@ async def agents_html(request: Request):
     except Exception as exc:
         if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
             return HTMLResponse(  # on Windows a refused loopback connect reads as ConnectTimeout, so the "not running" branch never fired (AG54)
-                f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it, or set ATLAS_BRAIN_URL.</div>'
+                f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it (<code>sextant-brain</code>), or set ATLAS_BRAIN_URL.</div>'
             )
         return HTMLResponse(
             f'<div class="text-red-400 text-xs">Brain unreachable: {type(exc).__name__}: {_html_mod.escape(str(exc)[:160])}</div>'
@@ -1790,7 +1815,7 @@ async def chat_history(request: Request, session_id: str = ""):
         data = r.json()
         messages = data.get("messages", [])
     except httpx.ConnectError:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it, or set ATLAS_BRAIN_URL.</div>')
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it (<code>sextant-brain</code>), or set ATLAS_BRAIN_URL.</div>')
     except Exception as exc:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc))}</div>')
     if not messages:
@@ -1936,6 +1961,8 @@ _TTL_CACHE: dict[str, tuple[float, object]] = {}
 
 def _ttl_cached(key: str, build, ttl: float):
     import time as _time
+    if os.environ.get("ATLAS_WEB_PANEL_CACHE", "on").strip().lower() not in ("on", "1", "true"):
+        return build()  # the switch that turns the panel cache off turns this one off too (MN48 fold)
     hit = _TTL_CACHE.get(key)
     if hit and _time.monotonic() - hit[0] < ttl:
         return hit[1]
@@ -2535,7 +2562,7 @@ async def memory_convergence(request: Request):
 
     def _get_convergence() -> list[dict]:
         from atlas_plus.curation.weekly_report import _scan_convergence
-        return _scan_convergence(MEMORY_ROOT)
+        return _ttl_cached("convergence", lambda: _scan_convergence(MEMORY_ROOT), ttl=300.0)  # the one Memory panel that was recomputed on every poll (MN48)
 
     try:
         flagged = await asyncio.to_thread(_get_convergence)
@@ -4665,8 +4692,13 @@ async def ws_chat(websocket: WebSocket, session_id: str):
                             elif event.get("type") == "error":
                                 await websocket.send_json({"type": "error", "detail": event.get("detail", "unknown error")})
                 except Exception as exc:
+                    # httpx's timeout errors carry an empty message: the chat said just "Error: "
+                    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                        _detail = f"Brain not running or not reachable at {BRAIN_URL}: start it, or set ATLAS_BRAIN_URL."
+                    else:
+                        _detail = str(exc) or f"{type(exc).__name__} (Brain at {BRAIN_URL} did not answer in time)"
                     try:
-                        await websocket.send_json({"type": "error", "detail": str(exc)})
+                        await websocket.send_json({"type": "error", "detail": _detail})
                     except Exception:  # the client is gone: nothing to tell it
                         break
     except (WebSocketDisconnect, RuntimeError):
@@ -4826,6 +4858,19 @@ button{{font-family:inherit;cursor:pointer}}
   .tab{{padding:.3rem .5rem;font-size:.65rem}}
   .detail-panel{{height:12rem!important}}
   #dash-detail{{height:10rem!important}}
+  /* phone (AG59): header 277 px (one service per row), the memory search box 89 px, the Sessions
+     panes cut off at the right edge, the Map's drawing squeezed to nothing */
+  div:has(> #status-bar){{min-width:0;flex:1 1 0}}
+  #status-bar{{display:grid;grid-template-columns:1fr 1fr;gap:.1rem .5rem;flex:1;min-width:0}}
+  #status-bar .sep{{display:none}}
+  div:has(> #mem-q){{flex-wrap:wrap}}
+  #mem-q{{flex:1 1 100%!important}}
+  #tab-sessions{{flex-direction:column!important;overflow-y:auto}}
+  #tab-sessions>div{{width:100%!important;flex-shrink:0}}
+  #tab-sessions #session-list,#tab-sessions #session-content,#tab-sessions #brain-session-list{{max-height:14rem}}
+  #tab-map>.flex-1{{flex-direction:column;overflow-y:auto}}
+  #tab-map>.flex-1>.flex-1{{flex:0 0 18rem}}
+  #tab-map .w-80{{flex:0 0 9rem}}
 }}
 /* phone (AG45): the ticket, task and inbox detail panes were 320 px fixed beside a 0 px list;
    the tab bar scrolled sideways with no sign of it */
@@ -5500,9 +5545,10 @@ function toggleTheme(){{
 
 // ---- Stop server ----
 async function stopServer(){{
-  if(!confirm("Stop the Atlas Web UI server?"))return;
+  if(!confirm("Stop the Sextant dashboard server?"))return;
   try{{const r=await fetch("/stop",{{method:"POST",headers:{{}}}});if(!r.ok){{showToast('Stop refused (HTTP '+r.status+'): sign in again','failed');return;}}}}catch(e){{}}  // a dead socket means it stopped (MN29)
   window._sextantStopped=true;
+  try{{es.close();}}catch(e){{}}  // the event stream reconnected every few seconds on the stopped page (AG59)
   document.body.innerHTML='<div style="color:#4ade80;font-family:monospace;padding:2rem;font-size:1rem">Server stopped. Close this tab.</div>';
 }}
 
@@ -5613,6 +5659,7 @@ function mapTabShown(){{
 // was missing operator/watchtower, which misaligned highlighting from the
 // third tab on and left those two panels active when switching away).
 function switchTab(name){{
+  if(!document.getElementById('tab-'+name))return;  // an optional tab that is not installed (watchtower) left every pane hidden: a blank page
   document.querySelectorAll('.tab[data-tab]').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
   document.querySelectorAll('.tab-content').forEach(el=>{{
     el.classList.remove('active');
@@ -5644,7 +5691,8 @@ document.body.addEventListener("htmx:responseError",function(e){{
   }}
 }});
 document.body.addEventListener('htmx:beforeRequest',function(e){{if(window._sextantExpired)e.preventDefault();}});
-(function(){{const _f=window.fetch;window.fetch=function(){{if(window._sextantExpired)return Promise.reject(new Error('session expired'));return _f.apply(this,arguments);}};}})();
+(function(){{const _f=window.fetch;window.fetch=function(){{if(window._sextantExpired||window._sextantStopped)return Promise.reject(new Error('session expired'));return _f.apply(this,arguments);}};}})();  // the stopped page kept polling /api/pending-facts/count every 30 s (AG59)
+(function(){{const _s=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){{if(window._sextantStopped)return;return _s.apply(this,arguments);}};}})();  // htmx's pollers (tasks every 8 s, status every 30 s) kept asking a stopped server: 21 requests in 45 s (AG59)
 document.addEventListener('input',function(e){{if(e.target&&e.target.tagName==='TEXTAREA')e.target.dataset.dirty=e.target.value.trim()?'1':'0';}});  // an emptied or abandoned box is not unsaved work (MN38)
 const es=new EventSource("/events");
 es.onopen=()=>document.getElementById("conn").textContent="live";
@@ -5705,7 +5753,7 @@ function cwS(){{
       b.appendChild(d);
     }}else if(m.type==="error"){{
       const t=document.getElementById("tind");if(t)t.remove();
-      const d=document.createElement("div");d.className="msg-error text-xs";d.textContent="Error: "+m.detail;b.appendChild(d);
+      const d=document.createElement("div");d.className="msg-error text-xs";d.textContent="Error: "+(m.detail||"no answer from Brain");b.appendChild(d);
     }}
     b.scrollTop=b.scrollHeight;
   }};
@@ -6349,7 +6397,7 @@ async function editMemoryFile(path){{
   const pre=document.getElementById('mf-content');
   if(!pre)return;
   let current=pre.textContent;
-  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';if(_mfEol==='mixed')showToast('This note has line endings other than plain LF (CRLF mixed in, or lone CR); a save makes them LF','done');}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
+  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';if(_mfEol==='mixed')showToast('This note has line endings other than plain LF (CRLF mixed in, or lone CR); a save with edits makes them LF; a save with none says No change and leaves them','done');}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
   catch(e){{showToast('Could not load the whole file: '+e.message,'failed');return;}}
   const r=document.getElementById('mem-results');
   // Static skeleton via innerHTML; the PATH lands via textContent -- a

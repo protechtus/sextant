@@ -53,7 +53,7 @@ def _version_file(path: Path) -> Path | None:
     return dest
 
 
-_MARKER_RE_TMPL = r"<!-- session:{sid}(?: turns:(\d+))? -->"
+_MARKER_RE_TMPL = r"<!-- session:{sid}(?: turns:(\d+))?( partial:1)? -->"  # `partial:1` = a chunk was rejected: the next Stop retries
 
 
 def find_session_entry(sessions_dir: Path, safe_id: str, days: int = 3):
@@ -71,7 +71,7 @@ def find_session_entry(sessions_dir: Path, safe_id: str, days: int = 3):
         except OSError:
             continue
         if m:
-            return f, int(m.group(1) or 0)
+            return f, (0 if m.group(2) else int(m.group(1) or 0))  # a partial entry is always retried
     return None
 
 
@@ -81,11 +81,11 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     section, is left alone (MN37: a user's notes that quoted the marker were deleted). The prefix must
     end the id (`<!-- session:abc` never matches `abc-def`: AG44)."""
     import re as _re
-    pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)? -->\n", _re.M)
+    pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:1)? -->\n", _re.M)
     m = None
     for cand in pat.finditer(text):
         # a match inside a fenced code block is a user's quotation, not the entry (AG50: the quoted pair was cut)
-        if len(_re.findall(r"(?m)^[ \t]{0,3}(?:```|~~~)", text[:cand.start()])) % 2 == 0:  # ``` and ~~~ fences, at the file start too (MN43: a file opening with a fence never had its entry replaced)
+        if not _inside_fence(text, cand.start()):  # a real fence tracker (MN43, AG60: parity counting let `~~~` inside a backtick block hide the entry)
             m = cand
             break
     if not m:
@@ -113,7 +113,28 @@ def _remove_entry_elsewhere(current: Path, marker_prefix: str, days: int = 3) ->
         new = remove_session_entry(text, marker_prefix)
         if new != text:
             _version_file(f)
-            _atomic_write(f, new if new.strip() else "")
+            if new.strip():
+                _atomic_write(f, new)
+            else:
+                try:
+                    f.unlink()  # AG58: the entry was the file's only content and moved to the new day; a 0-byte dated log is noise (the version copy keeps it)
+                except OSError:
+                    _atomic_write(f, "")
+
+
+def _inside_fence(text: str, pos: int) -> bool:
+    """True when `pos` lies inside a CommonMark code fence. A fence opens with three or more backticks or tildes
+    indented at most three spaces and closes only on the same character with at least the opening length; a
+    tab-indented line is indented code, not a fence (AG60)."""
+    import re as _re
+    open_ch, open_len = "", 0
+    for m in _re.finditer(r"(?m)^ {0,3}(`{3,}|~{3,})", text[:pos]):
+        run = m.group(1)
+        if not open_ch:
+            open_ch, open_len = run[0], len(run)
+        elif run[0] == open_ch and len(run) >= open_len:
+            open_ch, open_len = "", 0
+    return bool(open_ch)
 
 
 def remove_updates_entry(text: str, marker_prefix: str) -> str:
@@ -121,7 +142,7 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
     entry ends at the next blank line OR the next line that starts a new entry (a date, a heading),
     so hand-written lines appended without a blank line survive (MN37)."""
     import re as _re
-    pat = _re.compile(r"^[^\n]+\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)? -->\n", _re.M)
+    pat = _re.compile(r"^[^\n]+\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:1)? -->\n", _re.M)
     m = pat.search(text)
     if not m:
         return text
@@ -129,6 +150,19 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
     end = m.end()
     first = True
     _lines = text[m.end():].splitlines(keepends=True)
+    # AG58: the entry's LAST line is `<!-- end session:ID -->` (written since this fix). When it is there the
+    # entry ends exactly at it, so an indented line a user typed straight after the last item survives;
+    # entries written before have no end line and keep the heuristics below.
+    _sid = marker_prefix.split("session:", 1)[-1]
+    _end_re = _re.compile(r"^<!-- end session:" + _re.escape(_sid) + r" -->\s*$")
+    for _j, _ln in enumerate(_lines):
+        if not _ln.strip():
+            break
+        if _end_re.match(_ln):
+            _tail = sum(len(x) for x in _lines[:_j + 1])
+            if _j + 1 < len(_lines) and not _lines[_j + 1].strip():
+                _tail += len(_lines[_j + 1])  # the blank separator goes with the entry
+            return text[:start] + text[m.end() + _tail:]
     for _i, line in enumerate(_lines):
         if not line.strip():
             end += len(line)  # the blank separator goes with the entry
@@ -145,6 +179,49 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
             break  # a hand-written line, the next entry's date line, a heading: not ours
         end += len(line)
     return text[:start] + text[end:]
+
+
+def _write_lock(timeout: float = 60.0, stale: float = 120.0):
+    """AG58: one writer at a time across SESSIONS (`<state>/summarizer/write.lock`). Four sessions stopping
+    together each read the day's log, prepended and replaced it: one died on a Windows PermissionError with its
+    output discarded (no event) and the others could overwrite each other's entry."""
+    import contextlib
+    import random
+    import time as _time
+
+    @contextlib.contextmanager
+    def _cm():
+        lock = atlas_paths.state_dir() / "summarizer" / "write.lock"
+        held = False
+        try:
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            deadline = _time.time() + timeout
+            while True:
+                try:
+                    os.close(os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                    held = True
+                    break
+                except FileExistsError:
+                    try:
+                        if _time.time() - lock.stat().st_mtime > stale:
+                            lock.unlink()
+                            continue
+                    except OSError:
+                        pass
+                    if _time.time() > deadline:
+                        break  # never block the hook for ever: write without the lock
+                    _time.sleep(0.05 + random.random() * 0.1)
+        except OSError:
+            pass
+        try:
+            yield
+        finally:
+            if held:
+                try:
+                    lock.unlink()
+                except OSError:
+                    pass
+    return _cm()
 
 
 def write_outputs(
@@ -176,6 +253,11 @@ def write_outputs(
         result["updates_txt"] = str(UPDATES_TXT)
         return result
 
+    with _write_lock():
+        return _write_locked(session_file, session_log_text, updates_text, replace_session, result)
+
+
+def _write_locked(session_file, session_log_text, updates_text, replace_session, result):
     # version-before-edit
     _version_file(session_file)
     _version_file(UPDATES_TXT)

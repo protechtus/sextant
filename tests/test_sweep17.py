@@ -79,7 +79,7 @@ def test_only_chunk_summary_shaped_replies_are_cached_and_items_are_one_line():
     assert not scli._looks_like_chunk_summary(scli._parse_json_response("Sure! here"))
     assert scli._looks_like_chunk_summary({"worked_on": ["x"], "completed": []})
     src = inspect.getsource(scli.main)
-    assert "_looks_like_chunk_summary(_parse_json_response(text))" in src and '" ".join(str(x).split())' in src
+    assert "_looks_like_chunk_summary(_parsed)" in src and '" ".join(str(x).split())' in src
     upd = ("header\n====\n\n----------\n<!-- session:abc turns:6 -->\n2026-11-12 | sess\n----------\nCOMPLETED:\n  - a\n"
            "NOTES:\n  my own note\n----------\n2026-11-12 | earlier\n----------\nNEXT:\n  - c\n\n")
     out = remove_updates_entry(upd, "<!-- session:abc")
@@ -192,7 +192,7 @@ def test_index_format_tag_forces_a_rebuild_and_breaker_is_wired():
     from atlas_plus.mcp.memory_server import fts
     from atlas_plus.web import app as web
 
-    assert fts.INDEX_FORMAT == "3" and "index_format" in inspect.getsource(fts._needs_rebuild)
+    assert fts.INDEX_FORMAT == "3" and fts._index_format_tag() in ("", "3", None)
     page = inspect.getsource(web)
     assert page.count("= httpx.AsyncClient(") == 1 and "async with httpx.AsyncClient(" not in page and "_PeerClient(" in page   # the one real client lives inside the breaker wrapper
     assert ".tk-id{{width:3.6rem" in page and "scrollIntoView" in page and "_same_bytes_as_disk" in page
@@ -309,7 +309,7 @@ def test_codec_dump_named_in_the_result_branch_and_rtl_dir_present():
     from atlas_plus.web import app as web
 
     assert "codec can't encode" in inspect.getsource(cli)
-    assert 're.findall(r"\\w+"' in inspect.getsource(sf._tokenize)
+    assert len(sf._tokenize("الْخَادِمُ الرَّئِيسِيُّ يَعْمَلُ عَلَى الْمَنْفَذِ")) >= 3  # marks stay inside words (AG60)
     page = inspect.getsource(web)
     assert 'id="mf-edit" dir="auto"' in page and page.count('dir="auto"') >= 3
 
@@ -342,7 +342,7 @@ def test_bitset_table_holds_indexes_and_hebrew_punctuation_survives_the_fold():
     from atlas_plus.mcp.memory_server import fts
 
     src = inspect.getsource(dup)
-    assert "shared_bit[tok] = len(shared_bit)" in src and "b |= 1 << bit" in src
+    assert "shared_bit[tok] = len(shared_bit)" in src and "ba[bit >> 3] |= 1 << (bit & 7)" in src
     assert fts._fold_marks("\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8") == "\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8"   # maqaf kept
     assert fts._fold_marks("\u05e9\u05c1\u05b8\u05dc\u05d5\u05b9\u05dd") == "\u05e9\u05dc\u05d5\u05dd"                     # points folded
     assert fts.INDEX_FORMAT == "3"
@@ -362,7 +362,9 @@ def test_echo_needs_two_markers_and_fences_and_back_to_back_entries():
     from atlas_plus.summarizer.renderer import remove_session_entry, remove_updates_entry
 
     assert not _is_prompt_echo({"completed": ["removed 'Think step by step' from the prompt"]})
-    assert _is_prompt_echo({"completed": ["You are summarizing", "things that were finished"]})
+    assert not _is_prompt_echo({"completed": ["You are summarizing", "things that were finished"]})  # AG58: two bare phrases are a quotation; the echo test is six whole template lines
+    from atlas_plus.summarizer.prompts import map_prompt as _mp, reduce_prompt as _rp
+    assert _is_prompt_echo({"completed": [_mp("t", 0, 2)]}) and _is_prompt_echo({"completed": [_rp(["a", "b"], "d")]})
     quoted = "~~~\n## x\n<!-- session:abc turns:1 -->\n~~~\n"
     real = "## real\n<!-- session:abc turns:1 -->\nbody\n"
     out = remove_session_entry(quoted + real, "<!-- session:abc")
@@ -404,3 +406,116 @@ def test_unreadable_cert_bundle_is_named_by_the_sync_client(tmp_path, monkeypatc
     with pytest.raises(SyncClientError):
         SyncClient("https://hub.example:8443", token="t")
 
+
+# ---------------------------------------------------------------- MN48: the hybrid duplicate scan
+def test_duplicate_scan_hybrid_matches_bitsets_and_brute_force(tmp_path, monkeypatch):
+    import itertools
+    import random
+    from atlas_plus.curation import duplicates as dup
+
+    rng = random.Random(48)
+    vocab = [f"tok{i}" for i in range(400)]
+    root = tmp_path / "mem"
+    root.mkdir()
+    texts = []
+    for i in range(60):
+        words = rng.sample(vocab, 25)
+        if i % 7 == 0 and texts:
+            words = texts[-1][:20] + rng.sample(vocab, 5)                  # a near copy
+        texts.append(words)
+        (root / f"n{i:03d}.md").write_text("---\nid: n\n---\n" + " ".join(words) + "\n", encoding="utf-8")
+
+    def run():
+        return sorted((*sorted((p.file1, p.file2)), round(p.similarity, 6)) for p in dup.find_duplicates(root, threshold=0.4))
+
+    with_bits = run()
+    monkeypatch.setattr(dup, "_BITSET_MAX_TOKENS", 0)                       # force the set-intersection path
+    with_sets = run()
+    assert with_bits == with_sets and with_bits
+    toks = {f"n{i:03d}.md": dup._tokenize((root / f"n{i:03d}.md").read_text(encoding="utf-8")) for i in range(60)}
+    brute = sorted((a, b, round(len(toks[a] & toks[b]) / len(toks[a] | toks[b]), 6))
+                   for a, b in itertools.combinations(sorted(toks), 2)
+                   if len(toks[a] & toks[b]) / len(toks[a] | toks[b]) >= 0.4)
+    assert with_bits == brute
+
+
+def test_long_dashed_slug_masks_and_breaker_is_ten_seconds():
+    from atlas_plus.redaction import redact
+    from atlas_plus.web import app as web
+
+    v = "Qm7rT2kW9pLx"
+    assert v not in redact(f"a-b-c-d-e-f-g-h-i-password={v}")
+    assert v not in redact(f"-password={v}") and v not in redact(f"mysql -password={v}")
+    assert web._PeerClient.PEER_DOWN_SECONDS == 10.0
+
+
+# ---------------------------------------------------------------- AG60: the expert's sixth sitting
+def test_marks_stay_inside_words_everywhere():
+    from atlas_plus.curation import duplicates as dup
+    from atlas_plus.curation import suggest_facts as sf
+
+    down = dup._tokenize("---\nid: p\n---\nसर्वर बंद है। दिन में काम नहीं हुआ।\n")
+    up = dup._tokenize("---\nid: q\n---\nसर्वर चालू है। दान में कम नहीं दिया।\n")
+    assert down != up and len(down & up) / len(down | up) < 0.5                  # AG60: both had become {'सरवर'} and scored 1.00
+    assert "दिन" in down and "दान" in up
+    assert len(dup._tokenize("आज मैंने दिन भर काम किया और फिर दान दिया")) >= 4
+    plain = sf._fact_tokens("الخادم الرئيسي يعمل على المنفذ")
+    voc = sf._fact_tokens("الْخَادِمُ الرَّئِيسِيُّ يَعْمَلُ عَلَى الْمَنْفَذِ")
+    assert len(voc) >= 4 and len(plain) >= 4                                     # not 17 single-letter fragments
+    assert dup._tokenize("plain ascii text only here") == {"plain", "ascii", "text", "only", "here"}
+
+
+def test_pass_assignments_mask_and_render_pass_words_do_not():
+    from atlas_plus.redaction import redact
+
+    v = "Zq8vN3pLx7Rw"
+    for s in (f"PASS={v}", f"pass={v}", f"export PASS={v}", f"رمـز الوصول: {v}", f"مفتـاح API={v}", f"كلمة المـرور: {v}", f"סיסמא: {v}"):
+        assert v not in redact(s), s
+    for s in ("renderPass: forward_pass", "firstPass: analysis", "secondPass = resolve", "onePass: true", "--compass=northwest", "pass: 3 of 4 tests"):
+        assert redact(s) == s, s
+
+
+def test_fence_tracker_and_dry_run_flag(monkeypatch):
+    from atlas_plus.summarizer import hook_entry
+    from atlas_plus.summarizer.renderer import _inside_fence, remove_session_entry
+
+    real = "## real\n<!-- session:abc turns:1 -->\nbody\n"
+    assert "## real" not in remove_session_entry("```\n~~~\n```\n" + real, "<!-- session:abc")      # `~~~` inside a backtick block
+    assert "## real" not in remove_session_entry("````\n```\n````\n" + real, "<!-- session:abc")    # three inside four
+    assert "## real" not in remove_session_entry("\t```\ncode\n" + real, "<!-- session:abc")        # a tab-indented line is indented code
+    assert _inside_fence("```\nx\n", 5) and not _inside_fence("```\nx\n```\n", 9)
+    monkeypatch.delenv("ATLAS_SUMMARIZER_DRY_RUN", raising=False)
+    assert hook_entry._dry_run_flag() == []
+    monkeypatch.setenv("ATLAS_SUMMARIZER_DRY_RUN", "on")
+    assert hook_entry._dry_run_flag() == ["--dry-run"]
+
+
+def test_concurrent_searches_rebuild_a_stale_format_once(tmp_path, monkeypatch):
+    import threading
+    from atlas_plus.mcp.memory_server import fts
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    _pin_corpus(tmp_path, monkeypatch)
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "search.sqlite", raising=False)
+    monkeypatch.setattr(fts, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    memory_remember("reference:x", "a note to index", source="agent")
+    fts.rebuild(force=True)
+    conn = fts._connect()
+    conn.execute("UPDATE atlas_meta SET value='2' WHERE key='index_format'")
+    conn.commit()
+    conn.close()
+    calls = []
+    real_rebuild = fts.rebuild
+
+    def counting(force=False):
+        calls.append(force)
+        return real_rebuild(force=force)
+
+    monkeypatch.setattr(fts, "rebuild", counting)
+    threads = [threading.Thread(target=fts.update_incremental) for _ in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert calls.count(True) == 1                                                # AG60: four searches made four full rebuilds
+    assert fts._index_format_tag() == fts.INDEX_FORMAT

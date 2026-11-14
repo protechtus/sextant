@@ -24,7 +24,7 @@ def map_prompt(chunk_text: str, chunk_index: int, chunk_total: int) -> str:
     """Build the per-chunk map prompt asking the LLM for JSON {worked_on, completed, pending, ...}."""
     return f"""\
 You are summarizing a chunk of a software development session transcript.
-This is chunk {chunk_index + 1} of {chunk_total}.
+This is one part of a longer session (parts are in time order; do not mention a part number).
 
 Extract the following from the transcript below and return ONLY valid JSON
 (no markdown, no preamble):

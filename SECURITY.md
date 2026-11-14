@@ -43,7 +43,10 @@ client only, so one locked client does not lock the proxy's other clients, and
 a flood through one LISTED proxy, whatever names it forwards, locks the proxy
 itself after ten times the per-client limit; a proxy on loopback is the
 operator's own machine and is never locked, so it must overwrite the forwarded
-header (Recipe B's `header_up`), never pass a client's through. Docker's published port is a NAT, not a
+header (Recipe B's `header_up`), never pass a client's through. A forwarded address that is itself
+loopback (`127.0.0.1`, `::1`, `[::1]`, `::ffff:127.0.0.1`), arriving from a proxy on this host, is the
+operator and is never counted or locked; behind a listed proxy on another address a forwarded loopback
+value is counted like any other source. Docker's published port is a NAT, not a
 proxy: it adds no header, so listing the compose gateway separates nothing for
 clients that reach the port directly. Sextant reads these
 headers itself and starts its servers with uvicorn's own proxy-header

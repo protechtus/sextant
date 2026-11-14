@@ -498,7 +498,7 @@ async def root():
 # /health backend probe: cached so frequent polling stays cheap, short
 # timeout so a dead backend can never hang a liveness check.
 _BACKEND_PROBE_TTL = 30.0
-_backend_probe: dict = {"at": 0.0, "ok": True}
+_backend_probe: dict = {"at": float("-inf"), "ok": True}  # not 0.0: a fresh host reported the backend reachable without a probe (AG60)
 
 
 def _probe_backend() -> bool:

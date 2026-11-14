@@ -147,7 +147,7 @@ class SyncClient:
                 )
             except (OSError, ValueError) as exc:  # ssl.SSLError is an OSError: httpx loads SSL_CERT_FILE here (MN47: a traceback for a missing or garbage file)
                 import os as _os
-                _cf = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE") or ""
+                _cf = _os.environ.get("SSL_CERT_FILE") or ""  # httpx reads SSL_CERT_FILE only (AG60)
                 raise SyncClientError(
                     f"the certificate bundle {_cf!r} (SSL_CERT_FILE) cannot be read as a PEM certificate file: {type(exc).__name__}: "
                     f"{str(exc)[:160]}. Point SSL_CERT_FILE at the hub's CA certificate, or unset it."

@@ -272,17 +272,33 @@ def forwarded_ip(headers, peer: str, trusted=None) -> str:
     name = (_os.environ.get("ATLAS_FORWARDED_IP_HEADER") or "Cf-Connecting-Ip").strip()
     if name.lower() == "none":
         return ""
+    on_loopback = peer in LOOPBACK_PEERS
     value = (headers.get(name) or "").strip()
     if value:
-        return _valid_ip(value.split(",")[0].strip())
+        v = _valid_ip(value.split(",")[0].strip())
+        # a same-host proxy that says the client is loopback is the operator's own machine: loopback is
+        # never locked (SECURITY.md); X-Forwarded-For already skipped loopback hops (AG59)
+        return "" if (on_loopback and _is_loopback_ip(v)) else v
     xff = (headers.get("X-Forwarded-For") or "").strip()
     if not xff:
         return ""
     hops = [h.strip() for h in xff.split(",") if h.strip()]
     for hop in reversed(hops):
-        if hop not in LOOPBACK_PEERS:
-            return _valid_ip(hop)
+        v = _valid_ip(hop)  # `[::1]` was not in the loopback set as written and counted as a source (AG59)
+        if not _is_loopback_ip(v):
+            return v
     return ""
+
+
+def _is_loopback_ip(v: str) -> bool:
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(v)
+    except ValueError:
+        return False
+    if a.version == 6 and a.ipv4_mapped is not None:
+        a = a.ipv4_mapped
+    return a.is_loopback
 
 
 def _valid_ip(value: str) -> str:

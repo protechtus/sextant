@@ -130,6 +130,11 @@ _SESSION: dict[str, str] = {"id": ""}  # the Stop payload's session id, for the 
 _PAYLOAD = {"seen": False}
 
 
+def _dry_run_flag() -> list[str]:
+    """`--dry-run` for the summarizer child when ATLAS_SUMMARIZER_DRY_RUN is on (AG60)."""
+    return ["--dry-run"] if os.environ.get("ATLAS_SUMMARIZER_DRY_RUN", "").strip().lower() in ("on", "1", "true") else []
+
+
 def _payload_seen() -> bool:
     return _PAYLOAD["seen"]
 
@@ -216,7 +221,7 @@ def main() -> int:
     """Entry point for the transcript summarizer hook: read stdin transcript, produce summaries, write session log."""
     import sys as _sys
     if len(_sys.argv) > 1 and _sys.argv[1] in ("-h", "--help"):
-        print("Usage: atlas-summarize-session   (Claude Code Stop hook entry point)\n\n"
+        print("Usage: python -m atlas_plus.hooks.run --env ATLAS_SESSION_AUTONOMOUS=on stop  (the Stop hook; `atlas-summarize-session` is the transcript CLI and ignores stdin)   (Claude Code Stop hook entry point)\n\n"
               "Reads the hook payload from stdin, summarizes the finished session with the\n"
               "configured local model, and writes the session log into the memory corpus and\n"
               "the updates file in the state dir. Dry run: ATLAS_SUMMARIZER_DRY_RUN=on.")
@@ -250,7 +255,7 @@ def main() -> int:
         _sys.stderr.write("Sextant: the Stop payload is not JSON (a shell mangled the quotes?); nothing summarised.\n" if _PAYLOAD.get("garbled") else "Sextant: the Stop payload carries no session_id; nothing summarised.\n")
         try:
             from atlas_plus import activity as _act
-            _act.record("hook", "summarizer_skipped", reason="payload has no session_id")
+            _act.record("hook", "summarizer_skipped", reason=("payload is not JSON" if _PAYLOAD.get("garbled") else "payload has no session_id"))  # the recorded reason matches stderr (AG60)
         except Exception:  # noqa: BLE001
             pass
         return 0
@@ -279,6 +284,7 @@ def main() -> int:
                 "--since", "today",
                 *(["--conversation-id", _SESSION["id"]] if _SESSION.get("id") else []),  # the finished session only (AG34)
                 "--auto-commit",
+                *_dry_run_flag(),  # ATLAS_SUMMARIZER_DRY_RUN=on: the help advertised it, nothing read it (AG60)
             ],
             cwd=project_dir,
             start_new_session=True,

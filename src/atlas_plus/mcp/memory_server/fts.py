@@ -84,6 +84,24 @@ def _cjk_split(text: str) -> str:
 
 _MARKS_RE = re.compile("[\u064b-\u0652\u0670\u0640\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7]")  # Arabic harakat and tatweel, Hebrew points (AG52); maqaf, paseq and sof pasuq are punctuation and stay (MN43: `בית־ספר` lost `ספר`)
 
+# Combining-mark ranges of the scripts the corpus meets (Latin, Cyrillic, Hebrew, Arabic, the Indic scripts, Thai, Lao,
+# Tibetan, Myanmar, Khmer, the generic blocks, kana voicing marks, variation selectors). `\w` stops at every one of
+# them, so a word with vowel signs shattered into fragments; deleting them merged different words (दिन/दान: AG60).
+_MARK_RANGES = (
+    (0x0300, 0x036F), (0x0483, 0x0489), (0x0591, 0x05BD), (0x05BF, 0x05BF), (0x05C1, 0x05C2), (0x05C4, 0x05C5), (0x05C7, 0x05C7),
+    (0x0610, 0x061A), (0x064B, 0x065F), (0x0670, 0x0670), (0x06D6, 0x06DC), (0x06DF, 0x06E4), (0x06E7, 0x06E8), (0x06EA, 0x06ED),
+    (0x0900, 0x0903), (0x093A, 0x093C), (0x093E, 0x094F), (0x0951, 0x0957), (0x0962, 0x0963), (0x0981, 0x0983), (0x09BC, 0x09C4),
+    (0x09C7, 0x09C8), (0x09CB, 0x09CD), (0x0A01, 0x0A03), (0x0A3C, 0x0A51), (0x0A70, 0x0A71), (0x0A81, 0x0A83), (0x0ABC, 0x0ACD),
+    (0x0B01, 0x0B03), (0x0B3C, 0x0B57), (0x0B82, 0x0B82), (0x0BBE, 0x0BCD), (0x0C00, 0x0C04), (0x0C3E, 0x0C56), (0x0C81, 0x0C83),
+    (0x0CBC, 0x0CCD), (0x0D00, 0x0D03), (0x0D3E, 0x0D4D), (0x0DCA, 0x0DDF), (0x0E31, 0x0E31), (0x0E34, 0x0E3A), (0x0E47, 0x0E4E),
+    (0x0EB1, 0x0EB1), (0x0EB4, 0x0EBC), (0x0EC8, 0x0ECD), (0x0F71, 0x0F84), (0x0F86, 0x0F87), (0x102B, 0x103E), (0x1056, 0x1059),
+    (0x105E, 0x1060), (0x1062, 0x1064), (0x1067, 0x106D), (0x1071, 0x1074), (0x1082, 0x108D), (0x108F, 0x108F), (0x109A, 0x109D),
+    (0x17B4, 0x17D3), (0x17DD, 0x17DD), (0x1AB0, 0x1AFF), (0x1DC0, 0x1DFF), (0x20D0, 0x20F0), (0x302A, 0x302F), (0x3099, 0x309A),
+    (0xFE00, 0xFE0F), (0xFE20, 0xFE2F),
+)
+_MARK_CLASS = "".join(chr(a) + "-" + chr(b) if a != b else chr(a) for a, b in _MARK_RANGES)
+_WORD_RE = re.compile("[\\w" + _MARK_CLASS + "]+")  # a word of any script with its marks attached (AG60)
+
 
 def _fold_marks(text: str) -> str:
     return _MARKS_RE.sub("", text)
@@ -423,7 +441,21 @@ def _needs_rebuild() -> bool:
         conn.close()
 
 
-_rebuild_lock = threading.Lock()
+_rebuild_lock = threading.RLock()  # re-entrant since AG60: the format pre-check holds it while calling rebuild()
+
+
+def _index_format_tag():
+    """The index's format tag: '' when the row is missing (an index from before the tag), None when it cannot be read
+    (the search path then fails open to the incremental update instead of forcing a rebuild: AG60)."""
+    try:
+        conn = _connect()
+        try:
+            row = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return None
+    return row[0] if row else ""
 
 
 def _parse_md(raw: str) -> tuple[str, str, float | None]:
@@ -489,16 +521,11 @@ def update_incremental() -> int:
         conn.close()
     if empty:
         return max(rebuild(force=True), 0)
-    try:
-        _c = _connect()
-        try:
-            _fmt = _c.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
-        finally:
-            _c.close()
-    except Exception:  # noqa: BLE001
-        _fmt = None
-    if not _fmt or _fmt[0] != INDEX_FORMAT:
-        return max(rebuild(force=True), 0)  # a normalisation change re-indexes every note once; the tag was read by the rebuild command only (MN46)
+    _fmt = _index_format_tag()
+    if _fmt is not None and _fmt != INDEX_FORMAT:
+        with _rebuild_lock:  # re-entrant: a concurrent search may have rebuilt while we waited (AG60: four searches made four full rebuilds)
+            if _index_format_tag() != INDEX_FORMAT:
+                return max(rebuild(force=True), 0)  # a normalisation change re-indexes every note once; the tag was read by the rebuild command only (MN46)
 
     with _rebuild_lock:
         conn = _connect()

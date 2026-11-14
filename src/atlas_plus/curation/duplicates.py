@@ -35,9 +35,10 @@ def _tokenize(text: str) -> set[str]:
         if end != -1:
             text = text[end + 3:]
     text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
-    import unicodedata as _ud
-    text = "".join(ch for ch in _ud.normalize("NFC", text) if not _ud.category(ch).startswith("M"))  # `\w` breaks at every combining mark: vocalised Arabic and Hindi shattered into fragments and scored 1.00 (MN46)
-    words = re.findall(r"\w+", text.lower())  # letters of every script
+    if not text.isascii():
+        import unicodedata as _ud
+        text = _ud.normalize("NFC", text)  # one form for a letter with its marks (MN46); ASCII skips it (AG60: the fold was half of tokenize time)
+    words = _WORD_RE.findall(text.lower())  # letters of every script with their combining marks attached (AG60: deleting the marks merged Hindi words)
     # CJK, Thai, Lao, Khmer and Burmese body text has no spaces: without bigrams every Japanese note looked identical (MN23)
     for run in re.findall(_CJK_RE.pattern + "+", text):
         words.extend(run[i:i + 2] for i in range(len(run) - 1))
@@ -100,7 +101,9 @@ _NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
 
 
 # the same run classes search uses: CJK, Hangul and the space-less South-East Asian scripts (MN46)
-from atlas_plus.mcp.memory_server.fts import _CJK_RE  # noqa: E402
+from atlas_plus.mcp.memory_server.fts import _CJK_RE, _WORD_RE  # noqa: E402
+
+_BITSET_MAX_TOKENS = 16384  # shared tokens; above this the set intersection is cheaper and bounded in memory (MN48)
 
 
 def _weight(s: str) -> int:
@@ -277,14 +280,21 @@ def find_duplicates(
     for tok, n_docs in df.items():
         if n_docs >= 2:
             shared_bit[tok] = len(shared_bit)  # the bit index: storing `1 << k` per token was quadratic in memory (799 MB on 98,000 tokens: MN43)
+    # Bitsets pay off while the shared vocabulary is small: each AND and popcount costs V/64 words, and on a
+    # 100,000-word vocabulary the scan took 77 s and 2.3 GB against 60 s and 411 MB for set intersection
+    # (MN48, round seven). Past the bound the exact set intersection is used instead. Each note's int is
+    # assembled in a bytearray and converted once: `b |= 1 << k` per token copied a V-bit integer every time.
+    use_bits = len(shared_bit) <= _BITSET_MAX_TOKENS
     bits: list[int] = []
-    for f in file_list:
-        b = 0
-        for tok in tokens[f]:
-            bit = shared_bit.get(tok)
-            if bit is not None:
-                b |= 1 << bit
-        bits.append(b)
+    if use_bits:
+        nbytes = (len(shared_bit) + 7) // 8 or 1
+        for f in file_list:
+            ba = bytearray(nbytes)
+            for tok in tokens[f]:
+                bit = shared_bit.get(tok)
+                if bit is not None:
+                    ba[bit >> 3] |= 1 << (bit & 7)
+            bits.append(int.from_bytes(ba, "little"))
     found: list[tuple[float, int, int]] = []
     # Postings are appended in ascending i, so they are sorted: bisect to the entries with j > i
     # instead of walking the whole list (AG48: 80 million set.add on 5,000 notes, 135 s). Once more
@@ -297,7 +307,7 @@ def find_duplicates(
         if si == 0:
             continue
         toks1 = tokens[file_list[i]]
-        bi = bits[i]
+        bi = bits[i] if use_bits else 0
         need = int(-(-(thr * si) // 1))                  # ceil(t * |A|)
         prefix = sorted(toks1, key=lambda t: (df[t], t))[:max(1, si - need + 1)]
         cand: set[int] = set()
@@ -308,7 +318,7 @@ def find_duplicates(
             sj = sizes[j]
             if min(si, sj) < thr * max(si, sj):
                 continue                              # size band: Jaccard <= min/max
-            common = (bi & bits[j]).bit_count()
+            common = (bi & bits[j]).bit_count() if use_bits else len(toks1 & tokens[file_list[j]])
             sim = common / (si + sj - common)
             if sim >= thr:
                 found.append((sim, i, j))

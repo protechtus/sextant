@@ -44,6 +44,8 @@ def _reset_web_panel_cache(monkeypatch):
     mod = _sys.modules.get("atlas_plus.web.app")
     if mod is not None and hasattr(mod, "_PANEL_CACHE"):
         mod._PANEL_CACHE.clear()
+    if mod is not None and hasattr(mod, "_TTL_CACHE"):
+        mod._TTL_CACHE.clear()  # the services/convergence TTL cache (sweep 17)
     if mod is not None and hasattr(mod, "_PeerClient"):
         mod._PeerClient._down.clear()  # the dead-peer breaker (sweep 17) must not carry a dead port from one test to the next
     yield
