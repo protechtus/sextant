@@ -201,7 +201,11 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
     _is_loopback = (not cf_ip) and client_ip in ("127.0.0.1", "::1", "localhost")
     # A source that has already failed too many times this window is blocked
     # regardless of whether this attempt carries a valid key.
-    if not _is_loopback and AUTH_FAILURES.is_rate_limited(throttle_ip):
+    # a listed proxy whose clients rotate forged names is itself the source once ten times the
+    # per-client limit has come through it (AG44)
+    _peer_flood = bool(cf_ip) and client_ip not in ("127.0.0.1", "::1", "localhost") and \
+        AUTH_FAILURES.failures_via_peer(client_ip) >= 10 * AUTH_FAILURES.max_failures_per_window
+    if not _is_loopback and (AUTH_FAILURES.is_rate_limited(throttle_ip) or _peer_flood):
         try:
             AUTH_FAILURES.record(path=request.url.path, client_ip=client_ip, cf_ip=cf_ip, reason="locked_out")  # visible in the panel, not counted (MN29)
             if AUTH_FAILURES.stats().get("locked_out_refusals", {}).get(throttle_ip) == 1:
@@ -1420,9 +1424,25 @@ async def session_expired_page():
         "code{color:#67e8f9}</style></head><body><h1>Session expired</h1>"
         "<p>The dashboard restarted, its key was rotated, or this session reached its 12-hour limit.</p>"
         "<p>Open it again with your key: <code>http://&lt;host&gt;:&lt;port&gt;/?key=&lt;ATLAS_WEB_API_KEY&gt;</code></p>"
-        "<p>Sessions are held in memory on purpose; nothing was lost.</p></body></html>"
+        "<p>Sessions are held in memory on purpose. Saved notes and tickets are untouched; text typed in the editor but not saved is gone with the page.</p></body></html>"
     )
 
+
+
+from starlette.exceptions import HTTPException as _StarletteHTTPException  # noqa: E402
+from fastapi.exception_handlers import http_exception_handler as _default_http_exception_handler  # noqa: E402
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def _html_401_for_browsers(request: Request, exc: _StarletteHTTPException):
+    """A browser navigating to `/` with a dead cookie sees the expired page (status 401), not
+    `{"detail": "Unauthorized"}` (AG45, MN34); API callers keep the JSON."""
+    if exc.status_code == 401 and request.method == "GET" and request.url.path == "/" and "text/html" in (request.headers.get("accept") or ""):
+        page = session_expired_page()
+        if hasattr(page, "__await__"):
+            page = await page
+        return HTMLResponse(page.body, status_code=401)
+    return await _default_http_exception_handler(request, exc)
 
 @app.get("/api/memory/file", response_class=HTMLResponse)
 async def memory_file_read(request: Request, path: str = "", raw: str = ""):
@@ -1459,7 +1479,7 @@ async def memory_file_read(request: Request, path: str = "", raw: str = ""):
             "X-Sextant-Etag": _hl.sha256(data).hexdigest(),
             # the textarea folds CRLF to LF and fetch().text() drops a BOM: the editor re-applies both
             # on save, so a no-edit Save is a no-op and a real edit keeps the note's shape (AG41)
-            "X-Sextant-Eol": ("mixed" if (b"\r\n" in data and _re.search(rb"(?<!\r)\n", data)) else ("crlf" if b"\r\n" in data else "lf")),  # a mixed note is normalised on save, and the editor says so (MN31/MN32)
+            "X-Sextant-Eol": ("mixed" if ((b"\r\n" in data and _re.search(rb"(?<!\r)\n", data)) or _re.search(rb"\r(?!\n)", data)) else ("crlf" if b"\r\n" in data else "lf")),  # a lone CR counts as mixed too (AG44)  # a mixed note is normalised on save, and the editor says so (MN31/MN32)
             "X-Sextant-Bom": "1" if data.startswith(b"\xef\xbb\xbf") else "0",
         })
     full = target.read_text(encoding="utf-8", errors="replace")
@@ -1514,7 +1534,8 @@ async def memory_file_write(request: Request):
                 # another writer (a CLI remember, a sync) changed the note since the editor loaded
                 # it; a save would silently drop that write (MN29)
                 raise HTTPException(status_code=409, detail="The note changed since you opened it (another writer). Reload it and re-apply your edit.")
-            if content.encode("utf-8") == current or content.replace("\r\n", "\n") == current.decode("utf-8", "replace").replace("\r\n", "\n"):
+            _eol = lambda s: s.replace("\r\n", "\n").replace("\r", "\n")  # noqa: E731
+            if content.encode("utf-8") == current or _eol(content) == _eol(current.decode("utf-8", "replace")):
                 return {"ok": True, "unchanged": True, "path": safe_path}  # line endings alone are not an edit (MN34: a mixed note was rewritten)
             # A failed version copy aborts the write: never overwrite without
             # a way back.
@@ -3450,6 +3471,7 @@ async def services_action(task: str, action: str, request: Request):
             f"Enable-ScheduledTask -TaskName '{task}' -EA SilentlyContinue | Out-Null; Start-ScheduledTask -TaskName '{task}'"
         )
     rc, out = await asyncio.to_thread(_run_powershell, cmd, 30.0)
+    _TTL_CACHE.pop("services-ps", None)  # the next list reads the new state, not the 30 s cache (AG44)
     return {"task": task, "action": action, "ok": rc == 0, "output": out[-500:]}
 
 
@@ -3565,7 +3587,7 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
 
         rows.append(
             f'<div class="flex items-center gap-2 py-1 border-b border-slate-700 row-hover group"'
-            f' onclick="showTicketDetail({_js_arg(t.id)})">'
+            f' onclick="showTicketDetail({_js_arg(_tref(t))})">'
             f'<span class="text-slate-500 text-xs w-24 truncate font-mono">{t.id}</span>'
             f'<span class="{sc} text-xs w-20">{t.status}</span>'
             f'<span class="{pc} text-xs w-4 shrink-0">{getattr(t, "priority", "N")[0].upper()}</span>'
@@ -3696,11 +3718,11 @@ async def operator_queue_html(request: Request):
             f'{_html_mod.escape(body)}</pre>'
             f'<div class="flex gap-2 px-3 pb-2">'
             f'<button class="text-xs text-green-400 border border-green-700 rounded px-2"'
-            f' onclick="operatorAct({_js_arg(t.id)},{_js_arg("done")})">Mark done</button>'
+            f' onclick="operatorAct({_js_arg(_tref(t))},{_js_arg("done")})">Mark done</button>'
             f'<button class="text-xs text-slate-400 border border-slate-600 rounded px-2"'
-            f' onclick="operatorAct({_js_arg(t.id)},{_js_arg("skipped")})">Skip</button>'
+            f' onclick="operatorAct({_js_arg(_tref(t))},{_js_arg("skipped")})">Skip</button>'
             f'<button class="text-xs text-slate-500 border border-slate-700 rounded px-2"'
-            f' onclick="switchTab(\'tickets\');showTicketDetail({_js_arg(t.id)})">Open ticket</button>'
+            f' onclick="switchTab(\'tickets\');showTicketDetail({_js_arg(_tref(t))})">Open ticket</button>'
             f'</div>'
             f'</details>'
         )
@@ -3718,7 +3740,19 @@ async def operator_queue_html(request: Request):
     return HTMLResponse("\n".join(parts))
 
 
-@app.post("/api/operator/{ticket_id}/complete")
+def _tref(t) -> str:
+    """`project/ID`: the one name for a ticket when two projects minted the same id (AG45: the board's
+    Done landed on the other project's ticket)."""
+    proj = getattr(t, "project", "") or ""
+    return f"{proj}/{t.id}" if proj else t.id
+
+
+def _norm_ref(ref: str) -> str:
+    proj, sep, tid = ref.rpartition("/")
+    return f"{proj}/{tid.upper()}" if sep else tid.upper()
+
+
+@app.post("/api/operator/{ticket_id:path}/complete")
 async def operator_complete(ticket_id: str, request: Request):
     """POST /api/operator/{id}/complete -- record an operator action.
 
@@ -3739,6 +3773,7 @@ async def operator_complete(ticket_id: str, request: Request):
 
     from atlas_plus.tickets.store import get_ticket, update_ticket_status
 
+    ticket_id = _norm_ref(ticket_id)
     t = get_ticket(ticket_id)
     if t is None:
         raise HTTPException(status_code=404, detail=f"No ticket {ticket_id!r}.")
@@ -3840,7 +3875,7 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
     return {"task_id": task["task_id"], "ticket_id": ticket_id.upper(), "status": "dispatched"}
 
 
-@app.patch("/api/tickets/{ticket_id}/status")
+@app.patch("/api/tickets/{ticket_id:path}/status")
 async def update_ticket_status(ticket_id: str, request: Request):
     """PATCH /api/tickets/{id}/status -- update ticket status in .memory/tickets/.
 
@@ -3851,7 +3886,7 @@ async def update_ticket_status(ticket_id: str, request: Request):
     body = await _json_object(request, required=("status",))
     from atlas_plus.tickets.store import update_ticket_status as _update
     try:
-        t = _update(ticket_id.upper(), body["status"])
+        t = _update(_norm_ref(ticket_id), body["status"])  # `alp-b/ALP-001` keeps its project (AG45)
         return t.as_dict()
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -3929,7 +3964,7 @@ async def tickets_dispatch_stats_html(request: Request):
     return HTMLResponse(badge_html)
 
 
-@app.get("/api/tickets/{ticket_id}/detail", response_class=HTMLResponse)
+@app.get("/api/tickets/{ticket_id:path}/detail", response_class=HTMLResponse)
 async def ticket_detail(ticket_id: str, request: Request):
     """GET /api/tickets/{id}/detail -- HTMX ticket detail panel for the Tickets tab.
 
@@ -3937,8 +3972,8 @@ async def ticket_detail(ticket_id: str, request: Request):
     Reads directly from .memory/tickets/ (local file, no HTTP round-trip).
     """
     _check_auth(request)
-    from atlas_plus.tickets.store import list_tickets
-    ticket = next((t for t in list_tickets() if t.id == ticket_id.upper()), None)
+    from atlas_plus.tickets.store import get_ticket as _get_ticket, list_tickets
+    ticket = _get_ticket(_norm_ref(ticket_id)) if "/" in ticket_id else next((t for t in list_tickets() if t.id == ticket_id.upper()), None)
     if not ticket:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Ticket {ticket_id} not found</div>')
     body_text = getattr(ticket, "body", "") or ""
@@ -3975,11 +4010,11 @@ async def ticket_detail(ticket_id: str, request: Request):
         f'<div class="mt-2 flex gap-2 flex-wrap">'
         f'<button onclick="dispatchTicketToBrain({_js_arg(ticket.id)},{_js_arg(ticket.title)},{_js_arg(body_text[:300])})" '
         f'class="btn btn-cyan text-xs">Dispatch to Brain</button>'
-        f'<button onclick="updateTicket({_js_arg(ticket.id)},\'in-progress\')" '
+        f'<button onclick="updateTicket({_js_arg(_tref(ticket))},\'in-progress\')" '
         f'class="btn btn-yellow text-xs">Start</button>'
-        f'<button onclick="updateTicket({_js_arg(ticket.id)},\'done\')" '
+        f'<button onclick="updateTicket({_js_arg(_tref(ticket))},\'done\')" '
         f'class="btn btn-green text-xs">Done</button>'
-        f'<button onclick="updateTicket({_js_arg(ticket.id)},\'blocked\')" '
+        f'<button onclick="updateTicket({_js_arg(_tref(ticket))},\'blocked\')" '
         f'class="btn btn-slate text-xs">Block</button>'
         f'</div>'
         f'</div>'
@@ -4665,6 +4700,13 @@ button{{font-family:inherit;cursor:pointer}}
   .detail-panel{{height:12rem!important}}
   #dash-detail{{height:10rem!important}}
 }}
+/* phone (AG45): the ticket, task and inbox detail panes were 320 px fixed beside a 0 px list;
+   the tab bar scrolled sideways with no sign of it */
+@media (max-width: 640px) {{
+  div:has(> .detail-panel), div:has(> #inbox-detail) {{ flex-wrap: wrap; }}
+  .detail-panel, #inbox-detail {{ width: 100% !important; flex: 1 1 100% !important; }}
+  nav, .tabs, [role=tablist] {{ flex-wrap: wrap; }}
+}}
 </style>
 </head>
 <body hx-headers='{{"X-Sextant-Request": "1"}}'>
@@ -4951,6 +4993,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
     </div>
     <div class="mt-2">
       <div class="text-xs text-slate-500 mb-1">Body (optional)</div>
+      <div class="flex gap-2 flex-wrap"><input id="tk-requires" class="flex-1 text-xs" placeholder="requires (e.g. WEB-001)"><input id="tk-verified" class="flex-1 text-xs" placeholder="verified (YYYY-MM-DD)"><select id="tk-effort" class="text-xs"><option value="">effort</option><option>S</option><option>M</option><option>L</option></select></div>
       <textarea id="tk-body" rows="2" class="w-full resize-none" placeholder="Description, context, steps..."></textarea>
     </div>
     <div class="flex gap-2 mt-2">
@@ -5462,8 +5505,12 @@ function switchTab(name){{
 // instead of polling 43 panels into a lockout (AG31, sweep 14).
 document.body.addEventListener("htmx:responseError",function(e){{
   const s=e.detail&&e.detail.xhr?e.detail.xhr.status:0;
-  if(s===401){{window.location.replace("/expired");}}
+  if(s===401){{
+    if(document.querySelector('textarea[data-dirty="1"]')){{if(!window._sextantExpiredToast){{window._sextantExpiredToast=true;showToast('Your session expired: copy any unsaved editor text, then reload and sign in with ?key=','failed');}}return;}}  // typed text is never thrown away (AG45)
+    window.location.replace("/expired");
+  }}
 }});
+document.addEventListener('input',function(e){{if(e.target&&e.target.tagName==='TEXTAREA')e.target.dataset.dirty='1';}});
 const es=new EventSource("/events");
 es.onopen=()=>document.getElementById("conn").textContent="live";
 es.onerror=()=>document.getElementById("conn").textContent="off";
@@ -5490,7 +5537,7 @@ es.onmessage=(e)=>{{
 // ---- WebSocket chat ----
 let ws=null;
 function cwS(){{
-  ws=new WebSocket("ws://"+location.host+"/ws/chat/"+SID);
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+"/ws/chat/"+SID);  // behind TLS the page's CSP refuses ws:// (AG47)
   ws.onmessage=(e)=>{{
     const m=JSON.parse(e.data),b=document.getElementById("chat-messages");
     if(m.type==="thinking"){{
@@ -5694,10 +5741,11 @@ async function createTicket(){{
   const priority=document.getElementById("tk-priority").value;
   const assignee=document.getElementById("tk-assignee").value;
   const body=document.getElementById("tk-body").value.trim();
+  const requires=(document.getElementById("tk-requires")||{{}}).value||"";const verified=(document.getElementById("tk-verified")||{{}}).value||"";const effort=(document.getElementById("tk-effort")||{{}}).value||"";
   try{{
     const resp=await fetch("/api/tickets/create",{{method:"POST",
       headers:{{"Content-Type":"application/json"}},
-      body:JSON.stringify({{title,project,priority,assignee,body}})}});
+      body:JSON.stringify(Object.assign({{title,project,priority,assignee,body}},requires.trim()?{{requires:requires.trim()}}:{{}},verified.trim()?{{verified:verified.trim()}}:{{}},effort?{{effort}}:{{}}))}});
     const data=await resp.json();
     if(!resp.ok){{document.getElementById("tk-result").textContent="not created: "+(data.detail||resp.status);return;}}
     document.getElementById("tk-result").textContent="created: "+data.id;
@@ -6055,6 +6103,7 @@ async function jsonOrThrow(resp){{
 // ---- Toast notifications ----
 function showToast(msg,type){{
   if(window._sextantStopped)return;  // the stopped page has no toast element (MN34)
+  if(typeof msg==='string'&&(msg.startsWith('Saved')||msg.startsWith('No change')))document.querySelectorAll('textarea[data-dirty="1"]').forEach(t=>{{delete t.dataset.dirty;}});
   const t=document.createElement('div');
   t.className='toast toast-'+(type||'info');
   t.textContent=msg;

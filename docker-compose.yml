@@ -55,6 +55,7 @@ services:
     #   docker compose run --rm sync sextant-sync pair laptop
     command: sextant-sync serve --host 0.0.0.0
     environment:
+      ATLAS_MCP_TRUSTED_PEERS: ${ATLAS_MCP_TRUSTED_PEERS:-}   # the hub counts failures per forwarded device only when the proxy is listed here (AG47)
       <<: *sextant-env
       HEALTH_PORT: "8768"
       HEALTH_PATH: /sync/v1/health

@@ -624,6 +624,10 @@ def _archive_note(root: Path, rel: str) -> str:
     return dest.relative_to(root).as_posix()
 
 
+def _has_surrogates(s: str) -> bool:
+    return any("\udc80" <= ch <= "\udcff" for ch in s)
+
+
 def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool = False) -> dict:
     """Import a vault. The report is computed the same way with and without --yes: every note is
     classified (new, unchanged, edited, renamed) before any write, so the dry run says exactly
@@ -634,6 +638,12 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
         import sys as _sys
         print("note: this folder holds conversations.json (a ChatGPT or claude.ai export): pass that file, "
               f"`sextant import {vault / 'conversations.json'}`", file=_sys.stderr)  # MN36: the folder was read as a vault
+    if any(_has_surrogates(str(p.relative_to(vault))) for p in vault.rglob("*.md")):
+        import sys as _sys
+        print("Not imported: this locale is not UTF-8, so the vault's non-ASCII file names cannot be read "
+              "(they would land as new copies beside the notes already imported). Set PYTHONUTF8=1 or "
+              "LANG=C.UTF-8 and run the import again.", file=_sys.stderr)  # AG46: README_3.md and a second Korean note
+        raise SystemExit(2)
     _TRUNCATED.clear()
     _CURRENT_VAULT["id"] = _vault_id(vault)
     import hashlib

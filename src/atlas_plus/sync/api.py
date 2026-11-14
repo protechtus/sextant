@@ -93,15 +93,32 @@ AUTH_FAILURES = AuthFailureLog()
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
 
+def _sync_trusted():
+    import os as _os
+    from atlas_plus.auth import trusted_peer_matcher
+    return trusted_peer_matcher(_os.environ.get("ATLAS_SYNC_TRUSTED_PEERS") or _os.environ.get("ATLAS_MCP_TRUSTED_PEERS", ""))
+
+
+_LOCK_WARNED: dict[str, float] = {}
+
+
 def _source_ips(request: Request) -> tuple[str, str]:
     from atlas_plus.auth import forwarded_ip
     peer = request.client.host if request.client else ""
-    return peer, forwarded_ip(request.headers, peer)
+    return peer, forwarded_ip(request.headers, peer, trusted=_sync_trusted())  # a listed proxy names the real device (AG47: one bad client behind compose locked every device)
 
 
 async def _require_principal(request: Request) -> devices.Device:
     peer_ip, fwd_ip = _source_ips(request)
     if (fwd_ip or peer_ip not in _LOOPBACK) and AUTH_FAILURES.is_rate_limited(fwd_ip or peer_ip):
+        import logging as _logging
+        import time as _time
+        _src = fwd_ip or peer_ip
+        if _time.time() - _LOCK_WARNED.get(_src, 0.0) > AUTH_FAILURES.window_seconds:
+            _LOCK_WARNED[_src] = _time.time()
+            if len(_LOCK_WARNED) > 512:
+                _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))
+            _logging.getLogger("atlas_plus.sync.api").warning("sync hub: %s is locked out after repeated auth failures; refusing with 429", _src)  # the hub left no trace (AG44)
         raise HTTPException(
             status_code=429, detail="too many failed authentication attempts",
             headers={"Retry-After": str(int(AUTH_FAILURES.window_seconds))},
@@ -211,7 +228,7 @@ def create_app() -> FastAPI:
             base_sha = change.get("base_sha256")  # None = sender believes file is new
             try:
                 if device.kind == "peer":
-                    reason = policy.deny_reason(rel, principal, "write")
+                    reason = policy.deny_reason(rel, principal, "write", hub=True)
                     if reason is not None:
                         raise apply.SyncPolicyError(reason)
                     landed = apply.inbox(root, device.name, rel, raw, announced)
@@ -224,7 +241,7 @@ def create_app() -> FastAPI:
                     # conflict race the quarantine guarantee depends on.
                     # Policy BEFORE the hash check: a denied path must come back "denied", never
                     # "conflict", and must never park attacker bytes in the quarantine (W1, 2026-11-09).
-                    reason = policy.deny_reason(rel, principal, "write")
+                    reason = policy.deny_reason(rel, principal, "write", hub=True)
                     if reason is not None:
                         raise apply.SyncPolicyError(reason)
                     current = apply.current_sha256(root, rel)

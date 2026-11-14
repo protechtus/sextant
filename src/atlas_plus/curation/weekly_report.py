@@ -477,6 +477,7 @@ def generate_report(
     out_path = atlas_dir / f"curation-{today}.md"
 
     if not dry_run:
+        report = report.encode("utf-8", "surrogateescape").decode("utf-8", "replace")  # a C locale hands names over as surrogates; their bytes are UTF-8 (AG46)
         out_path.write_text(report, encoding="utf-8")
 
     return report, out_path

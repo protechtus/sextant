@@ -59,6 +59,9 @@ def cmd_search(
         return
     if not hits:
         console.print("[dim]no matches[/dim]")
+        import sys as _sys
+        if _sys.getfilesystemencoding().lower().replace("-", "") != "utf8":
+            console.print("[dim]Note: this locale is not UTF-8, so non-ASCII queries and names may not match; set PYTHONUTF8=1 or LANG=C.UTF-8.[/dim]")  # AG46
         return
     from rich.markup import escape as _esc  # a hit holding `[/` crashed the command (MN25)
     for h in hits:

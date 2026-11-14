@@ -148,11 +148,11 @@ class TestExtractCandidates:
         assert candidates == []
         assert rejected == 0
 
-    def test_malformed_json_returns_empty(self):
+    def test_malformed_json_is_a_failed_run(self):
+        import pytest as _pt
         with patch("atlas_plus.summarizer.providers.complete", return_value=("not json at all", "ollama")):
-            candidates, rejected = _extract_candidates("some transcript")
-        assert candidates == []
-        assert rejected == 0
+            with _pt.raises(RuntimeError):  # a junk reply must not mark the session done (AG43)
+                _extract_candidates("some transcript")
 
     def test_missing_fact_or_scope_filtered(self):
         llm_out = self._make_llm_response([

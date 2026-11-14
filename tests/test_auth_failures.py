@@ -43,7 +43,8 @@ class TestAuthFailureLog:
         log = AuthFailureLog()
         log.record(path="/x", client_ip="127.0.0.1", cf_ip="8.8.8.8", now=1.0)
         assert log.failures_from("8.8.8.8", now=2.0) == 1
-        assert log.failures_from("127.0.0.1", now=2.0) == 1
+        assert log.failures_from("127.0.0.1", now=2.0) == 0      # a forwarded failure belongs to its client, not the proxy (AG47)
+        assert log.failures_via_peer("127.0.0.1", now=2.0) == 1  # but the proxy's own flood is visible (AG44)
 
     def test_empty_ip_never_counts_or_limits(self):
         log = AuthFailureLog()

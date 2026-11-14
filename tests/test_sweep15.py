@@ -516,7 +516,7 @@ def test_redaction_is_linear_exact_and_covers_more_shapes():
     assert "s3cretPass" not in redact("DATABASE_URL=postgres://admin:s3cretPass@db.internal:5432/app")
     assert "django-abcdef" not in redact("SECRET_KEY = r'django-abcdefghijk'")
     out = redact("?access_token=abcdefgh12345&x=1")
-    assert "abcdefgh12345" not in out and "&x=1" in out
+    assert "abcdefgh12345" not in out  # the value runs to whitespace since sweep 16 (a `&` inside a password leaked its tail)
     assert "[REDACTED:private-key]" in redact("-----BEGIN PGP " + "PRIVATE KEY BLOCK-----\nabc\n-----END PGP " + "PRIVATE KEY BLOCK-----")
     assert "[REDACTED:private-key]" in redact("-----BEGIN OPENSSH " + "PRIVATE KEY-----\nb3BlbnNz cut off")
     assert "glpat-" + "x" * 24 not in redact("token glpat-" + "x" * 24)
@@ -637,7 +637,7 @@ def test_trusted_peer_matcher_and_sync_hub_config_is_not_pushable():
     assert trusted_peer_matcher("")("192.168.96.1") is False
     import inspect
     src = inspect.getsource(policy)
-    assert 'direction == "write":' in src and "hub configuration (edit it on the hub)" in src
+    assert 'direction == "write" and hub:' in src and "hub configuration (edit it on the hub)" in src
 
 
 def test_bigram_fallback_is_valid_fts5_for_mixed_script():

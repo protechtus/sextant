@@ -83,10 +83,12 @@ Two things about keys that only show up later:
   precedence). If `ATLAS_MCP_TOKEN` is exported in your profile, the container
   gets that one, not the file's: every client that reads the file then gets
   `401` and `claude mcp list` says Failed, with no warning from compose.
-  `docker compose config | grep TOKEN | sha256sum` against `grep TOKEN .env | sha256sum` shows
-  which won without printing the secrets; the server's startup log also prints its token's
-  fingerprint (sha256 prefix), and a 401 body repeats it. `unset ATLAS_MCP_TOKEN` (or a fresh
-  shell) before `up` fixes it.
+  The server's startup log prints its token's fingerprint (the first eight hex digits of its
+  sha256); compare it with your `.env` value's,
+  `printf %s "$(grep '^ATLAS_MCP_TOKEN=' .env | cut -d= -f2- | tr -d '\r')" | sha256sum | cut -c1-8`,
+  without printing either secret. `unset ATLAS_MCP_TOKEN` (or a fresh shell) before `up` fixes it.
+  (The 401 body no longer carries the fingerprint: for a short human-chosen token it was an
+  offline oracle. Generate tokens with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.)
 - The doctor's Services rows mean little under compose: each container probes
   its own loopback, so the MCP row is up and every other service reads down
   even when it is running. Use `docker compose ps` and the curls for liveness,
@@ -97,9 +99,17 @@ Two things about keys that only show up later:
 - One stale client (an old registration with a wrong token) locks every client behind the
   same address out for five minutes after ten failures: set `ATLAS_MCP_TRUSTED_PEERS` to the
   compose gateway (`docker network inspect <project>_default`) in `.env`. Compose passes it to
-  the dashboard too (one bad browser otherwise locks the operator out of the dashboard for a
-  minute at a time). Restoring into a fresh stack: `docker volume create <project>_sextant-data`
-  before the tar, or compose warns that the volume "was not created by Docker Compose".
+  the dashboard and the sync hub too. Know what it does and does not do: Docker's published
+  port is a NAT, not a proxy. It adds no header, so every client that reaches the published port
+  directly still looks like the gateway and shares one failure counter (ten bad keys from one
+  browser on your LAN lock the dashboard for everyone on the published port for a minute). The
+  list helps when a reverse proxy that sets `Cf-Connecting-Ip` (Caddy, cloudflared) sits in
+  front: then each forwarded client has its own counter, a forwarded value that is not an IP
+  address is ignored, and a flood through one proxy locks the proxy itself after ten times the
+  per-client limit. The published ports bind `127.0.0.1` on purpose. Restoring into a fresh
+  stack: `docker compose up --no-start mcp` first (it creates the labelled volume), then the
+  tar; a volume made with `docker volume create` draws the warning "was not created by Docker
+  Compose".
 
 Wire your MCP client at `http://127.0.0.1:8765/mcp` with the bearer token.
 For Claude Code that is one command; the token must come from the file, since

@@ -43,20 +43,34 @@ def _console_output_encoding() -> str:
         return "utf-8"
 
 
-def write_text_out(text: str) -> None:
-    """Write a block of text to stdout: UTF-8 when piped (hooks, redirects), the console's code
-    page when a Windows console is attached (MN36: `sextant context` printed raw UTF-8 bytes on a
-    cp932 console while `search` followed the console)."""
-    data = text.encode("utf-8")
-    if os.name == "nt":
+def write_text_out(text: str, *, hook: bool | None = None) -> None:
+    """Write a block of text to stdout.
+
+    A console gets the text through ``sys.stdout``: a Windows console stream decodes UTF-8 itself,
+    so code-page bytes written to its buffer showed replacement characters (AG46, after MN36 was
+    "fixed" the wrong way). A pipe gets UTF-8 for a hook (the editor reads UTF-8; a hook has its
+    payload on stdin, so stdin is not a terminal) and the console's code page otherwise, like
+    every other command (MN36: `sextant context | Out-String` on cp932 was mojibake)."""
+    try:
+        tty = sys.stdout is not None and sys.stdout.isatty()
+    except Exception:  # noqa: BLE001
+        tty = False
+    if tty:
         try:
-            if sys.stdout is not None and sys.stdout.isatty():
-                enc = _console_output_encoding() or "utf-8"
-                if enc.lower().replace("-", "") != "utf8":
-                    data = text.encode(enc, errors="replace")
+            sys.stdout.write(text + "\n")
+            sys.stdout.flush()
+            return
         except Exception:  # noqa: BLE001
             pass
-    sys.stdout.buffer.write(data)
+    if hook is None:
+        try:
+            hook = not sys.stdin.isatty()
+        except Exception:  # noqa: BLE001
+            hook = True
+    enc = "utf-8"
+    if not hook and os.name == "nt":
+        enc = _console_output_encoding() or "utf-8"
+    sys.stdout.buffer.write(text.encode(enc, errors="replace"))
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
 

@@ -346,8 +346,9 @@ class SyncClient:
                     continue
                 apply.apply_change(root, rel, content, announced or None, local_policy)
                 report.pulled.append(rel)
-            except apply.SyncPolicyError:
+            except apply.SyncPolicyError as exc:
                 report.denied.append(rel)
+                report.errors.append(f"{rel}: denied ({exc})")  # `denied 1` named nothing (AG47)
                 unresolved.add(rel)
             except (apply.SyncIntegrityError, SyncClientError, OSError) as exc:
                 report.errors.append(f"{rel}: {exc}")

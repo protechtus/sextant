@@ -181,14 +181,14 @@ def _extract_candidates(
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1:
-        return [], 0
+        raise RuntimeError("model reply was not a JSON list of facts")  # a junk reply is a failed run, not a completed one (AG43: it marked the session done)
     try:
         candidates = json.loads(text[start:end + 1])
-    except json.JSONDecodeError:
-        return [], 0
+    except json.JSONDecodeError as e:
+        raise RuntimeError("model reply was not a JSON list of facts") from e
 
     if not isinstance(candidates, list):
-        return [], 0
+        raise RuntimeError("model reply was not a JSON list of facts")
 
     # Filter and normalize
     valid = []
@@ -283,7 +283,11 @@ def _find_similar(fact_text: str, corpus: list[tuple[str, set[str]]]) -> list[tu
 # ---------------------------------------------------------------------------
 
 def _norm_fact(text: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9\u3040-\u30ff\u3400-\u9fff ]+", " ", text.lower()).split())
+    """Case, punctuation and provenance comments folded; letters of EVERY script, digits and the
+    signs that change a fact's meaning (`-5`, `C++`, `€` vs `$`) kept (AG44: the Latin-only rule
+    treated every Cyrillic or Korean fact sharing a digit as a duplicate)."""
+    text = re.sub(r"<!--.*?-->", " ", text)
+    return " ".join(re.sub(r"[^\w+\-$€£¥%]+", " ", text.lower()).split())
 
 
 def _redact_text(text: str) -> str:
@@ -304,11 +308,56 @@ def _min_new_turns() -> int:
 _CURRENT_SESSION: dict[str, str] = {"id": ""}  # the session being processed, for the review queue
 
 
+def _acquire_facts_lock(conversation_id: str, stale_s: float = 900.0):
+    """One facts run per session at a time (the summarizer's sibling lock). Returns a release
+    callable, or None when another run holds the lock."""
+    import time as _time
+    safe = "".join(ch for ch in conversation_id if ch.isalnum() or ch in "-_.")[:80]
+    try:
+        lock = atlas_paths.state_dir() / "suggest-facts" / f"s-{safe or 'anon'}.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if _time.time() - lock.stat().st_mtime > stale_s:
+                lock.unlink()
+        except OSError:
+            pass
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        return None
+    except OSError:
+        return lambda: None
+
+    def _release():
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+    return _release
+
+
 def _queue_for_review(cand: dict, conversation_id: str | None) -> None:
-    """<state>/suggest-facts/review.ndjson plus an activity event: a held fact is kept, not dropped."""
+    """<state>/suggest-facts/review.ndjson plus an activity event: a held fact is kept, not dropped.
+    One line per (scope, fact); the queue is capped at 2,000 lines (AG44: unbounded, re-queued per Stop)."""
     try:
         q = atlas_paths.state_dir() / "suggest-facts" / "review.ndjson"
         q.parent.mkdir(parents=True, exist_ok=True)
+        existing: list[str] = []
+        try:
+            if q.exists() and q.stat().st_size < 4 * 1024 * 1024:
+                existing = [ln for ln in q.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        except OSError:
+            existing = []
+        key = (str(cand.get("scope")), str(cand.get("fact")))
+        for ln in existing:
+            try:
+                row = json.loads(ln)
+            except ValueError:
+                continue
+            if (str(row.get("scope")), str(row.get("fact"))) == key:
+                return
+        if len(existing) >= 2000:
+            q.write_text("\n".join(existing[-1500:]) + "\n", encoding="utf-8")
         with q.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"scope": cand.get("scope"), "fact": cand.get("fact"), "confidence": cand.get("confidence"),
                                  "session": conversation_id or "", "reason": "identity facts need a human"}, ensure_ascii=False) + "\n")
@@ -587,7 +636,29 @@ def main() -> None:
     app()
 
 
-def suggest_facts(
+def suggest_facts(*args, **kwargs) -> dict:
+    """``_suggest_facts_run`` under a per-session lock: four simultaneous Stops wrote a fact four
+    times (AG43). The lock is released when the run returns or raises."""
+    import inspect as _inspect
+    try:
+        bound = _inspect.signature(_suggest_facts_run).bind_partial(*args, **kwargs).arguments
+    except TypeError:
+        bound = {}
+    conversation_id = bound.get("conversation_id")
+    release = None
+    if conversation_id and not bound.get("dry_run", False):
+        release = _acquire_facts_lock(conversation_id)
+        if release is None:
+            print(f"Another suggest-facts run for session {conversation_id} is in progress; nothing to do.")
+            return {"approved": 0, "skipped": 0, "written": 0, "already_done": True}
+    try:
+        return _suggest_facts_run(*args, **kwargs)
+    finally:
+        if release is not None:
+            release()
+
+
+def _suggest_facts_run(
     since: str = "today",
     conversation_id: str | None = None,
     source: str = "claude-code",

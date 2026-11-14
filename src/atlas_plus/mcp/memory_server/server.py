@@ -1315,7 +1315,7 @@ def _make_auth_middleware(token: str):
                 if not _trusted_local:
                     _record_auth_failure(ip, request.url.path)
                 return Response(
-                    f"Unauthorized. Provide: Authorization: Bearer <ATLAS_MCP_TOKEN> (this server's token fingerprint: {_token_fingerprint()}; a shell-exported ATLAS_MCP_TOKEN overrides a .env value)",
+                    "Unauthorized. Provide: Authorization: Bearer <ATLAS_MCP_TOKEN> (the server printed its token's fingerprint at startup; a shell-exported ATLAS_MCP_TOKEN overrides a .env value)",  # the fingerprint itself is an offline oracle for a weak token (AG44)
                     status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )

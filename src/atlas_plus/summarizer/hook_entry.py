@@ -197,6 +197,15 @@ def main() -> int:
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
     if not is_session_autonomous():
+        _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "")
+        if _raw:
+            # `--env ATLAS_SESSION_AUTONOMOUS=yes` was a silent no-op (AG43): only on/1/true opens the gate
+            _sys.stderr.write(f"Sextant: ATLAS_SESSION_AUTONOMOUS={_raw!r} is not one of on/1/true; the Stop hook wrote nothing.\n")
+            try:
+                from atlas_plus import activity as _act
+                _act.record("hook", "summarizer_skipped", reason=f"gate value {_raw!r} is not on/1/true")
+            except Exception:  # noqa: BLE001
+                pass
         return 0
 
     # The hook payload names the transcript that just ended; its projects root is where the

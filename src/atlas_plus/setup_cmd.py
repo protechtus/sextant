@@ -404,14 +404,14 @@ def render(info: dict, client: str = "all") -> str:
         _hint = ("   The session-start hook prints the corpus it read; the Stop hook writes "
                  "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
                  "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command; "
-                 "in the Windows-to-WSL form below, put `ATLAS_SESSION_AUTONOMOUS=on` right after `env` instead.")
+                 "in the Windows-to-WSL form (`sextant setup` with no --client prints it), put `ATLAS_SESSION_AUTONOMOUS=on` right after `env` instead.")
         if client == "all":
             lines.append(_hint)
         else:
             print(_hint.strip(), file=sys.stderr)  # stdout stays the JSON block (MN32/MN33: `> hooks.json` was not JSON)
         if info.get("settings_json"):
             lines += [json.dumps(info["settings_json"], indent=2), ""]
-        if info.get("hooks_from_windows"):
+        if info.get("hooks_from_windows") and client != "hooks":  # `--client hooks > h.json` stays one JSON document (AG43)
             lines += ["   Windows Claude Code with this WSL install: use these hook commands instead "
                       "(the block above is Linux-only; these carry the registration's variables):",
                       json.dumps(info["hooks_from_windows"], indent=2), ""]

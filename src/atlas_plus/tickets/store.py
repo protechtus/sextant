@@ -417,7 +417,7 @@ def create_ticket(
     from atlas_plus.autonomous import require_write
     require_write("ticket_create", interactive=interactive)
     if not _is_safe_project(project):
-        raise ValueError(f"Invalid project name {project!r}: only ASCII letters, digits, dots, hyphens, underscores, plus allowed "
+        raise ValueError(f"Invalid project name '{project}': only ASCII letters, digits, dots, hyphens, underscores, plus allowed "
                          f"(no leading underscore or dot, no trailing dot, not a Windows device name).")
     from atlas_plus.mcp.memory_server.routing import _scrub_controls as _scrub
     title = _scrub(str(title or "")); body = _scrub(str(body or ""))   # ESC/BEL in a title (FN6)
@@ -435,7 +435,8 @@ def create_ticket(
         raise ValueError(f"Invalid effort {effort!r}. Valid: {sorted(VALID_EFFORTS)}")
     if len(body) > 10_000:
         raise ValueError("Ticket body must be 10,000 characters or fewer.")
-    if requires and not re.match(r'^[A-Z]{1,8}-\d+$', requires):
+    requires = requires.strip() if isinstance(requires, str) else requires
+    if requires and not re.fullmatch(r'[A-Z]{1,8}-\d+', requires):  # `$` let a trailing newline through (AG44)
         raise ValueError(f"Invalid requires value {requires!r}. Expected format: ATL-001")
     if verified and not re.match(r'^\d{4}-\d{2}-\d{2}$', verified):
         raise ValueError(f"Invalid verified value {verified!r}. Expected an ISO date: 2026-10-08")

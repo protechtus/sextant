@@ -12,6 +12,9 @@ from rich.table import Table
 
 import re as _re
 
+from atlas_plus._console import utf8_stdout_when_piped as _utf8_piped  # a Korean title died in a Git Bash pipe (AG46)
+_utf8_piped()
+
 _CTRL = _re.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]")
 
 
@@ -119,7 +122,7 @@ def cmd_create(
         effort=effort,
         requires=requires,
     )
-    console.print(f"[green]Created:[/green] {t.id} — {t.title}")
+    console.print(f"[green]Created:[/green] {t.id} - {t.title}")
     console.print(f"[dim]{t.path}[/dim]")
 
 

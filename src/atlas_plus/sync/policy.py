@@ -207,6 +207,7 @@ def deny_reason(
     rel: str,
     principal: Principal | None = None,
     direction: str = "read",
+    hub: bool = False,
 ) -> str | None:
     """Return a human-readable denial reason, or None when the path may cross.
 
@@ -230,9 +231,11 @@ def deny_reason(
     # (self-hoster pass 2026-11-10: an archived parked copy was pushed to the hub).
     if norm_parts[0] == "_atlas" and len(norm_parts) > 2:
         return "sync-internal path"
-    if norm_parts[0] == "_atlas" and direction == "write":
+    if norm_parts[0] == "_atlas" and direction == "write" and hub:
         # a device pushing _atlas/routing.yaml rewrote every route on the hub at once (MN35): the hub's
-        # configuration flows hub -> devices only; edit it on the hub
+        # configuration flows hub -> devices only; edit it on the hub. ``hub`` is set by the hub's push
+        # handler alone: a device applying a PULL is a write too, and the rule locked devices out of the
+        # file for good (AG47)
         return "hub configuration (edit it on the hub)"
     if _matches_secret(rel):
         return "secret (tier 3) never syncs"

@@ -19,6 +19,15 @@ public tree.
 
 ## [Unreleased]
 
+### Sweep 16, agentic wave (2026-11-13 evening)
+
+- Redaction: camelCase and long-prefixed key names (`dbPassword`, `MY_APP_PROD_EU_WEST_DB_PASSWORD`), `SECRET_KEY_BASE`, `*_HASH`, `*_v2`, `bearer`, `csrftoken`, `credentials`, Korean and Chinese key names, quoted values with spaces, CLI flags (`--token`), `Authorization: Basic`, passwords holding `@` in URLs; full-width folding touches only the masked value; a placeholder like `********` is left alone.
+- The dashboard and the sync hub count an auth failure against the forwarded client only (the proxy's other clients no longer inherit it), ignore a forwarded value that is not an IP address, and lock a listed proxy after ten times the per-client limit when its clients rotate names; the sync hub reads `ATLAS_SYNC_TRUSTED_PEERS` and logs a lockout; compose passes the list to it. The MCP 401 body no longer carries the token fingerprint (the startup log does).
+- Sync: devices pull `_atlas/routing.yaml` again (only the hub refuses a push of it); the client prints why a file was denied.
+- Stop hook: the summary is refreshed in `updates.txt` too and across local midnight (one entry per session); a plain-text model reply is a failed run, not an entry; the facts stage has its own per-session lock and treats a non-JSON reply as a failed run (no `.done`); a mistyped gate value is reported; the review queue is deduplicated and capped; the exact-dedupe rule keeps letters of every script and sign characters (`-5`, `C++`, `€`).
+- Console: text to a Windows console goes through the console stream again (the code-page bytes of the previous build showed replacement characters); pipes get the code page, hooks UTF-8. `review report` and `import` survive a C locale (the import refuses, with the reason, instead of writing duplicates); doctor names the locale instead of the files; `atlas-tickets` output is pipe-safe and a bad project name is one sentence with its characters; `alpha:beta` is two search words.
+- Dashboard: every ticket action carries `project/ID` (two projects with the same id acted on the wrong ticket); the form sets `requires`, `verified` and `effort`; a browser opening `/` with a dead session sees the expired page; an expired session never discards typed editor text; a lone-CR note is a no-op save; Brain Chat uses `wss://` behind TLS; the services cache clears after an action; detail panes stack on a phone.
+
 ### Contributor entries
 
 (one bullet per change: what changed, for whom, PR number)

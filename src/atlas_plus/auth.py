@@ -179,8 +179,18 @@ class AuthFailureLog:
             return sum(
                 1
                 for r in self._records
-                if r.ts >= cutoff and ip in (r.cf_ip, r.client_ip) and r.reason != "locked_out"  # informational rows never extend a lockout (MN29)
+                if r.ts >= cutoff and (r.cf_ip or r.client_ip) == ip and r.reason != "locked_out"  # a failure belongs to its forwarded client only: the proxy's other clients inherited it (AG47); informational rows never extend a lockout (MN29)
             )
+
+    def failures_via_peer(self, peer: str, *, now: float | None = None) -> int:
+        """Failures that arrived through ``peer`` whatever client it named: a trusted proxy whose
+        clients rotate forged identities is itself the source (AG44: unlimited guessing)."""
+        if not peer:
+            return 0
+        now = time.time() if now is None else now
+        cutoff = now - self.window_seconds
+        with self._lock:
+            return sum(1 for r in self._records if r.ts >= cutoff and r.client_ip == peer and r.reason != "locked_out")
 
     def is_rate_limited(self, ip: str, *, now: float | None = None) -> bool:
         """True once ``ip`` has reached the failure threshold within the window."""
@@ -227,7 +237,9 @@ def trusted_peer_matcher(raw: str):
             return False
         import ipaddress
         try:
-            addr = ipaddress.ip_address(peer)
+            addr = ipaddress.ip_address(peer.split("%", 1)[0])  # fe80::1%eth0 (AG44)
+            if addr.version == 6 and addr.ipv4_mapped is not None:
+                addr = addr.ipv4_mapped  # ::ffff:172.17.0.1 on a dual-stack bind (AG44)
         except ValueError:
             return False
         for entry in entries:
@@ -262,12 +274,22 @@ def forwarded_ip(headers, peer: str, trusted=None) -> str:
         return ""
     value = (headers.get(name) or "").strip()
     if value:
-        return value.split(",")[0].strip()
+        return _valid_ip(value.split(",")[0].strip())
     xff = (headers.get("X-Forwarded-For") or "").strip()
     if not xff:
         return ""
     hops = [h.strip() for h in xff.split(",") if h.strip()]
     for hop in reversed(hops):
         if hop not in LOOPBACK_PEERS:
-            return hop
+            return _valid_ip(hop)
     return ""
+
+
+def _valid_ip(value: str) -> str:
+    """The value as a normalised IP address, or '' for anything else (AG44: a 5,000-character
+    header value was accepted as a client identity and counted as one)."""
+    import ipaddress
+    try:
+        return str(ipaddress.ip_address(value.split("%", 1)[0]))
+    except ValueError:
+        return ""

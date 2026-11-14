@@ -64,7 +64,7 @@ def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
     import time as _time
     try:
         from atlas_plus import paths as _paths
-        lock = _paths.state_dir() / "summarizer" / f"{safe_id}.lock"
+        lock = _paths.state_dir() / "summarizer" / f"s-{safe_id or 'anon'}.lock"  # `CON`/`nul` never locked on Windows (AG44)
         lock.parent.mkdir(parents=True, exist_ok=True)
         try:
             if _time.time() - lock.stat().st_mtime > stale_s:
@@ -88,7 +88,7 @@ def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
 
 
 def _looks_like_summary(summary) -> bool:
-    if not isinstance(summary, dict):
+    if not isinstance(summary, dict) or summary.get("_fallback"):
         return False
     title = summary.get("title")
     if not isinstance(title, str) or not title.strip() or len(title) > 160 or "\n" in title or "JSON" in title:
@@ -115,6 +115,7 @@ def _parse_json_response(text: str) -> dict:
             except json.JSONDecodeError:
                 pass
         return {
+            "_fallback": True,  # plain text is not a summary (AG43: a junk reply became the session's entry)
             "title": "session summary",
             "worked_on": [],
             "completed": [text[:500]],
@@ -236,6 +237,8 @@ def main(
         # grown session replaces its entry (MN28, MN33)
         head, _, rest = session_log_text.partition("\n")
         session_log_text = head + "\n" + marker + "\n" + rest
+        uhead, _, urest = updates_text.partition("\n")
+        updates_text = uhead + "\n" + marker + "\n" + urest  # the updates entry is found and replaced by its marker too (AG43)
 
     # --- 6. Review ---
     if auto_commit or dry_run:

@@ -243,8 +243,8 @@ imported vault: `--scope reference:obsidian/README`.
   `$PWD.Path` in PowerShell); do not copy
   the `_note` key; sanity-check the result with
   `python -m json.tool ~/.claude/settings.json` (on Windows save the file as
-  UTF-8 without a BOM; PowerShell 5.1's `Set-Content -Encoding utf8` adds one and so does its `>` redirect, so use `sextant setup --client hooks --out hooks.json` instead
-  and the check then fails). Or simply ask your
+  UTF-8 without a BOM; PowerShell 5.1's `Set-Content -Encoding utf8` adds one and so does its `>` redirect, so use `sextant setup --client hooks --out hooks.json` instead;
+  a BOM makes that check fail). Or simply ask your
   assistant to do the merge -- paste the snippet file and say which
   settings file to put it in.
   - `session_start_hook*` (priming): injects memory highlights,
@@ -451,8 +451,10 @@ A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and t
 activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`
 or `summarizer_skipped`) say what happened; `sextant doctor` has a "Stop hook" block with the
 model, the endpoint and the newest summary. Claude Code fires Stop after every reply, not
-only at the end: the session's entry is written once and then refreshed in place each time
-the session has grown by `ATLAS_SUMMARIZER_MIN_NEW_TURNS` turns (default 6); a Stop with
+only at the end: the session's entry is written once and then refreshed in place (in the
+day's log and in `updates.txt`; across midnight it moves to the new day) each time
+the session has grown by `ATLAS_SUMMARIZER_MIN_NEW_TURNS` turns (default 6; a turn is one
+user or assistant record, tool calls included, so that is about three exchanges); a Stop with
 nothing new calls no model. The gate variable also covers the facts stage; facts proposed
 for `identity` are never written unreviewed, they wait in
 `<state>/suggest-facts/review.ndjson`. With Claude Code on Windows and Sextant in WSL, the

@@ -21,7 +21,7 @@ console = Console()
 @app.command("duplicates")
 def cmd_duplicates(
     threshold: float = typer.Option(0.40, "--threshold", "-t", help="Jaccard similarity floor (0-1)"),
-    scope: str = typer.Option("", "--scope", "-s", help="Subdirectory to restrict search"),
+    scope: str = typer.Option("", "--scope", "-s", help="Top-level corpus folder to restrict to (reference, projects, identity, preference, or a sub-folder path like reference/obsidian); a `topic:name` route belongs to remember, not here"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     facts: bool = typer.Option(False, "--facts", "-f",
                                help="repeated FACTS across notes (exact and near), not similar files"),
@@ -75,7 +75,7 @@ def cmd_duplicates(
 @app.command("stale")
 def cmd_stale(
     months: int = typer.Option(6, "--months", "-m", help="Flag files older than N months"),
-    scope: str = typer.Option("", "--scope", "-s", help="Subdirectory to restrict search"),
+    scope: str = typer.Option("", "--scope", "-s", help="Top-level corpus folder to restrict to (reference, projects, identity, preference, or a sub-folder path like reference/obsidian); a `topic:name` route belongs to remember, not here"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Find files with stale 'updated:' frontmatter."""
@@ -414,7 +414,7 @@ def cmd_gaps(
 def cmd_decay(
     threshold: int = typer.Option(0, "--threshold", "-t",
         help="Default half-life days for files without a half_life: field. 0 = only explicit fields."),
-    scope: str = typer.Option("", "--scope", "-s", help="Subdirectory to restrict scan."),
+    scope: str = typer.Option("", "--scope", "-s", help="Top-level corpus folder to restrict to (reference, projects, identity, preference, or a sub-folder path); a `topic:name` route belongs to remember, not here"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ):
     """Find memory files past their half-life review threshold.
@@ -624,7 +624,7 @@ def cmd_age_stats(
 def cmd_rederive(
     threshold: float = typer.Option(0.30, "--threshold", "-t",
         help="Jaccard similarity floor to flag a file as re-derivable (0-1)."),
-    scope: str = typer.Option("", "--scope", "-s", help="Subdirectory to restrict scan."),
+    scope: str = typer.Option("", "--scope", "-s", help="Top-level corpus folder to restrict to (reference, projects, identity, preference, or a sub-folder path); a `topic:name` route belongs to remember, not here"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ):
     """Find .memory/ facts that duplicate information in project docs.

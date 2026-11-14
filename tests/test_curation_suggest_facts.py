@@ -214,11 +214,11 @@ class TestExtractCandidates:
 
     def test_handles_invalid_json_gracefully(self):
         from atlas_plus.curation.suggest_facts import _extract_candidates
+        import pytest as _pt
         with patch("atlas_plus.summarizer.providers.complete",
                    return_value=("not valid json at all", {})):
-            candidates, rejected = _extract_candidates("some transcript text")
-        assert candidates == []
-        assert rejected == 0
+            with _pt.raises(RuntimeError):  # a junk reply is a failed run, not an empty one (AG43: it marked the session done)
+                _extract_candidates("some transcript text")
 
     def test_handles_provider_error(self):
         from atlas_plus.curation.suggest_facts import _extract_candidates

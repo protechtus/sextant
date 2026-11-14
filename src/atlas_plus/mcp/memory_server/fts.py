@@ -149,6 +149,7 @@ def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
     q = unicodedata.normalize("NFKC", query).replace(_SENTINEL, " ")
+    q = re.sub(r"(?<=\S):(?=\S)", " ", q)  # `alpha:beta` is two words, not an FTS5 column filter (AG46: a silent miss)
     if not _CJK_RE.search(q):
         return q
     q = _CJK_RUN_OR_CHAR_RE.sub(lambda m: ' "' + _CJK_SEP.join(m.group(0)) + '" ', q)

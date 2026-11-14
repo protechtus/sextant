@@ -337,7 +337,7 @@ def check_stop_hook() -> dict:
         from atlas_plus import activity as _act
         for ev in reversed(_act.tail(limit=200)):  # tail is oldest-first: the NEWEST event is the one that matters (MN33)
             if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped"):
-                result["last_event"] = f"{ev.get('event')} {str(ev.get('ts') or ev.get('time') or '')[:16]} {str(ev.get('reason') or '')[:80]}".strip()
+                result["last_event"] = f"{ev.get('event')} at {str(ev.get('ts') or ev.get('time') or '')[:16]} UTC {' '.join(str(ev.get('reason') or '').split())[:80]}".strip()  # one line, labelled (AG43)
                 break
     except Exception:  # noqa: BLE001
         pass
@@ -713,8 +713,14 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
     bad_names = [f.rel for f in files if f.bad_name]
     if bad_names:
         result["bad_names"] = bad_names[:10]
-        result["bad_names_hint"] = (f"{len(bad_names)} file name(s) are not valid UTF-8 (a legacy-encoded "
-                                    "name): search skips them; rename them: " + ", ".join(bad_names[:5]))
+        import sys as _sys_loc
+        if _sys_loc.getfilesystemencoding().lower().replace("-", "") != "utf8":
+            # the names are fine; this locale cannot read them (AG46: a C-locale doctor said to rename valid Korean names)
+            result["bad_names_hint"] = (f"{len(bad_names)} file name(s) cannot be read in this locale (it is not UTF-8): "
+                                        "set PYTHONUTF8=1 or LANG=C.UTF-8 and run again; the names themselves are fine")
+        else:
+            result["bad_names_hint"] = (f"{len(bad_names)} file name(s) are not valid UTF-8 (a legacy-encoded "
+                                        "name): search skips them; rename them: " + ", ".join(bad_names[:5]))
     # One set lookup per candidate: the pairwise form took 54 s on 8,000 `entry_<i>.md` notes
     # and quadrupled with every doubling (AG23, sweep 12).
     rels = {f.rel for f in files}
@@ -724,8 +730,9 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
     if copies:
         result["import_copies"] = len(copies)
         result["import_copies_hint"] = (f"{len(copies)} note(s) are `_N` copies beside an older note of the same "
-                                        "name (an edited import lands as a new copy): `sextant import ... "
-                                        "--archive-stale` moves the stale ones to archive/")
+                                        "name: an edited import landed as a new copy (`sextant import <vault> --archive-stale` "
+                                        "moves the older one to archive/), or two vaults share a file name (both copies are "
+                                        "legitimate; rename one in its vault if you want one note)")  # AG46: the advice did nothing for a cross-vault pair
     bad = [f.rel for f in files if f.not_utf8 and not f.bad_name]
     if bad:
         # A cp932-saved note primed as mojibake and refused writes with an unnamed error (AG17).

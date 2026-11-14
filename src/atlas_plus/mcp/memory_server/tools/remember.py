@@ -293,6 +293,12 @@ def memory_confirm(path: str, source: str = "agent", interactive: bool = False) 
     if target is None:
         return {"ok": False, "path": path, "confirmed": None, "error": "invalid path"}
     try:
+        from ..routing import has_conflict_markers as _hcm
+        if target.exists() and _hcm(target.read_text(encoding="utf-8", errors="replace")):
+            return {"ok": False, "path": path, "confirmed": None, "error": f"{path} holds git conflict markers (<<<<<<< / >>>>>>>): resolve the merge first"}  # the sibling of remember's refusal (AG47)
+    except OSError:
+        pass
+    try:
         # Version copy before the frontmatter rewrite, like memory_remember.
         # The target is resolved, so the corpus root must be too.
         if target.exists():
