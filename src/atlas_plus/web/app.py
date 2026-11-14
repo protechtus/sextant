@@ -621,8 +621,8 @@ async def auth_failures_panel(request: Request, limit: int = 25):
         return HTMLResponse('<p class="text-green-600">No auth failures recorded.</p>')
     cells = "".join(
         "<tr>"
-        f"<td class='px-2'>{_html_mod.escape(d['iso'])}</td>"
         f"<td class='px-2'>{_html_mod.escape(d['source_ip'])}</td>"
+        f"<td class='px-2'>{_html_mod.escape(str(d['iso'])[11:19] or str(d['iso']))}</td>"
         f"<td class='px-2'>{_html_mod.escape(d['path'])}</td>"
         f"<td class='px-2'>{_html_mod.escape(d['reason'])}</td>"
         "</tr>"
@@ -634,7 +634,7 @@ async def auth_failures_panel(request: Request, limit: int = 25):
         f"{stats['total']} total recorded.</p>"
         + _locked_out_html(stats)
         + "<div style='overflow-x:auto;max-width:100%;min-width:0'><table class='text-xs' style='white-space:nowrap'><thead><tr>"  # the 684 px table spilled out of its 230 px card (MN50, AG65)
-        "<th class='px-2 text-left'>time (UTC)</th><th class='px-2 text-left'>source</th>"
+        "<th class='px-2 text-left'>source</th><th class='px-2 text-left'>time (UTC)</th>"
         "<th class='px-2 text-left'>path</th><th class='px-2 text-left'>reason</th>"
         "</tr></thead><tbody>" + cells + "</tbody></table></div>"
     )
@@ -3926,6 +3926,10 @@ async def operator_complete(ticket_id: str, request: Request):
     ticket_id = _norm_ref(ticket_id)
     t = get_ticket(ticket_id)
     if t is None:
+        from atlas_plus.tickets import store as _tstore
+        if _tstore.ambiguous_hint():
+            raise HTTPException(status_code=409, detail=_tstore.ambiguous_hint())  # MN56: a bare id acted on an arbitrary folder ticket
+    if t is None:
         raise HTTPException(status_code=404, detail=f"No ticket {ticket_id!r}.")
     if t.assignee != "human":
         raise HTTPException(
@@ -4696,7 +4700,7 @@ async def ws_chat(websocket: WebSocket, session_id: str):
                 except Exception as exc:
                     # httpx's timeout errors carry an empty message: the chat said just "Error: "
                     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-                        _detail = f"Brain not running or not reachable at {BRAIN_URL}: start it, or set ATLAS_BRAIN_URL."
+                        _detail = f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), or set ATLAS_BRAIN_URL."  # the panels name the command; the chat did not (MN56)
                     else:
                         _detail = str(exc) or f"{type(exc).__name__} (Brain at {BRAIN_URL} did not answer in time)"
                     try:
@@ -4876,6 +4880,9 @@ div:has(> #mem-q){{flex-wrap:wrap}}
   #tab-map>.flex-1{{flex-direction:column;overflow-y:auto}}
   #tab-map>.flex-1>.flex-1{{flex:0 0 18rem}}
   #tab-map .w-80{{flex:0 0 9rem}}
+}}
+@media(max-width:411px){{
+  #map-status{{display:none}}  /* the refreshed stamp spilled past the viewport at 375 (MN56) */
 }}
 /* phone (AG45): the ticket, task and inbox detail panes were 320 px fixed beside a 0 px list;
    the tab bar scrolled sideways with no sign of it */
@@ -6858,6 +6865,10 @@ def main() -> None:
 
     from atlas_plus import __version__ as _pkg_version
     from atlas_plus.branding import product as _product
+    if not _port_free(WEB_HOST, WEB_PORT):
+        print(f"Port {WEB_PORT} is already in use on {WEB_HOST}: another dashboard, or another program. Set ATLAS_WEB_PORT to a free port "
+              f"(GETTING-STARTED, Troubleshooting: port already in use).", file=sys.stderr)  # the raw uvicorn bind error named nothing (MN54)
+        raise SystemExit(3)
     log.info("%s web dashboard %s on %s:%d", _product(), _pkg_version, WEB_HOST, WEB_PORT)
     # access_log=False: uvicorn's access log records the path WITH its query
     # string, which put the ?key= bootstrap into service logs (audit
@@ -6865,10 +6876,6 @@ def main() -> None:
     # The app OBJECT, not an import string: `python -m atlas_plus.web.app --no-auth` imports
     # a second module instance whose _ALLOW_NO_AUTH is still False and every route 503s
     # (wave-2 2026-11-09, SEC-02). The console script and this path serve the same instance.
-    if not _port_free(WEB_HOST, WEB_PORT):
-        print(f"Port {WEB_PORT} is already in use on {WEB_HOST}: another dashboard, or another program. Set ATLAS_WEB_PORT to a free port "
-              f"(GETTING-STARTED, Troubleshooting: port already in use).", file=sys.stderr)  # the raw uvicorn bind error named nothing (MN54)
-        raise SystemExit(3)
     uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, reload=False, access_log=False, proxy_headers=False)
 
 

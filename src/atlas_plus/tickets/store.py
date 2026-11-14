@@ -364,12 +364,23 @@ def list_tickets(
     return results
 
 
+LAST_AMBIGUOUS: dict = {}  # set by get_ticket when a bare id matched several folder tickets (MN56)
+
+
+def ambiguous_hint() -> str:
+    """The sentence for a lookup that returned None because the bare id was ambiguous, else ''."""
+    if not LAST_AMBIGUOUS.get("choices"):
+        return ""
+    return f"ticket id {LAST_AMBIGUOUS['id']!r} names several tickets: use one of " + ", ".join(LAST_AMBIGUOUS["choices"])
+
+
 def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[Ticket]:
     """Return a Ticket by ID (e.g. 'ATL-007'), or None if not found.
 
     Does a recursive glob under TICKETS_ROOT so project subdirectories are transparent
     to the caller.
     """
+    LAST_AMBIGUOUS.clear()
     root = tickets_root or TICKETS_ROOT
     if "/" in ticket_id:
         # `project/ID` names one ticket when two projects minted the same id (MN29)
@@ -384,6 +395,7 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
         t = _parse_ticket(direct)
         if t and t.id == ticket_id:
             return t  # a bare id names the ROOT-level ticket first when a folder holds the same id (AG49)
+    _found: list = []
     for f in _walk_live_ticket_files(root):
         # The file name must agree with the frontmatter id: a spoofed `id:` in some other
         # file must not become the ticket a status change rewrites (round-B 2026-11-09, N-O).
@@ -391,8 +403,14 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
             continue
         t = _parse_ticket(f)
         if t and t.id == ticket_id:
-            return t
-    return None
+            _found.append(t)
+    if len(_found) > 1 and "/" not in ticket_id:
+        # a bare id that names a ticket in several project folders would act on whichever the walk met first
+        # (MN56: a status change rewrote an arbitrary one); the caller gets the qualified ids to choose from
+        LAST_AMBIGUOUS["id"] = ticket_id
+        LAST_AMBIGUOUS["choices"] = sorted(f"{getattr(t, 'project', '') or '?'}/{t.id}" for t in _found)
+        return None
+    return _found[0] if _found else None
 
 
 VALID_PRIORITIES = {"critical", "high", "normal", "low"}

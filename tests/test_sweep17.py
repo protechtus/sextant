@@ -1003,3 +1003,17 @@ def test_bom_payload_refused_path_and_pipe_question_marks(monkeypatch, tmp_path)
     assert hook_entry._transcript_root_from_payload() == "" and hook_entry._PAYLOAD["refused"]
     assert cli._stdin_looks_mangled("pipe1b caf? na?ve") and not cli._stdin_looks_mangled("is it done? yes")
 
+
+# ---------------------------------------------------------------- MN56
+def test_ambiguous_bare_ticket_id_is_refused(tmp_path, monkeypatch):
+    from atlas_plus.tickets import store
+
+    root = tmp_path / "tickets"
+    for proj in ("alpha", "alps"):
+        (root / proj).mkdir(parents=True)
+        (root / proj / "ALP-001.md").write_text(f"---\nid: ALP-001\nproject: {proj}\ntitle: {proj} copy\nstatus: todo\npriority: normal\n---\nbody\n", encoding="utf-8")
+    monkeypatch.setattr(store, "TICKETS_ROOT", root, raising=False)
+    assert store.get_ticket("ALP-001", root) is None and "alpha/ALP-001" in store.ambiguous_hint() and "alps/ALP-001" in store.ambiguous_hint()
+    t = store.get_ticket("alpha/ALP-001", root)
+    assert t is not None and store.ambiguous_hint() == ""
+
