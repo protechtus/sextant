@@ -203,7 +203,7 @@ def _transcript_root_from_payload() -> str:
             return ""
         import json as _json
         try:
-            payload = _json.loads(raw)
+            payload = _json.loads(raw.lstrip("\ufeff"))  # a BOM from a Windows pipe is not mangled quotes (MN57)
         except ValueError:
             _PAYLOAD["seen"] = True  # something arrived on stdin that is not a payload: refuse, never summarise the whole day (MN45: PowerShell 5.1 mangles the quoted JSON)
             _PAYLOAD["garbled"] = True
@@ -218,6 +218,7 @@ def _transcript_root_from_payload() -> str:
         _p = _Path(_posix_path_for(str(tp))).resolve()
         root = _p.parents[1]
         if not _p.is_file() or not root.name.endswith("projects"):
+            _PAYLOAD["refused"] = str(_p)[:200]  # named below, never a silent fallback to a full scan (MN57)
             return ""  # a payload must not choose the scanned tree: the transcript must exist and sit under a .../projects root (AG64: a nonexistent path outside the root made the hook scan its parent tree)
         if _p.is_file():
             _PAYLOAD["transcript_file"] = str(_p)
@@ -244,6 +245,7 @@ def main() -> int:
     _PAYLOAD["garbled"] = False
     _PAYLOAD["empty"] = False
     _PAYLOAD["transcript_file"] = ""
+    _PAYLOAD["refused"] = ""
 
     if not is_session_autonomous():
         _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
@@ -263,6 +265,14 @@ def main() -> int:
     # 2026-11-10).
     _child_env = dict(os.environ)
     root = _transcript_root_from_payload()  # always read: it carries the session id (MN25/MN28: with the
+    if _PAYLOAD.get("refused") and not os.environ.get("ATLAS_CLAUDE_CODE_ROOT"):
+        _sys.stderr.write(f"Sextant: the Stop payload's transcript_path {_PAYLOAD['refused']!r} does not exist or does not sit under a .../projects folder; nothing summarised (set ATLAS_CLAUDE_CODE_ROOT to the transcripts root if the path form differs).\n")
+        try:
+            from atlas_plus import activity as _act
+            _act.record("hook", "summarizer_skipped", reason="transcript path refused", path=_PAYLOAD["refused"])
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
     if not _SESSION.get("id") and _payload_seen():
         # a payload without a session id would summarise the whole day on every Stop, one more entry each
         # time (AG50); Claude Code always sends session_id, so a missing one is a broken payload

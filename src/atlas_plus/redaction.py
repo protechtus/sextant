@@ -45,7 +45,7 @@ _SECRET_ENV_VARS = (
     "RCLONE_CONFIG_PASS",
 )
 
-_BEARER_RE = re.compile(r"(?i)(Bearer[ \t]+)([A-Za-z0-9\-_.=]{12,})")  # `[ \t]`: `bearer\ntoken.expiry.seconds=900` lost the next line (AG62)
+_BEARER_RE = re.compile(r"(?i)(Bearer[ \t]*(?:\r?\n[ \t]+)?)([A-Za-z0-9\-_.=]{12,})")  # `[ \t]`: `bearer\ntoken.expiry.seconds=900` lost the next line (AG62); a folded header continues on an indented line (MN55)
 
 
 def _bearer_ok(v: str) -> bool:
@@ -136,7 +136,9 @@ def _kv_quote(v: str) -> str:
 
 
 _ENVREF_RE = re.compile(r"^\$[A-Z_][A-Z0-9_]*$|^!!?[A-Za-z][A-Za-z/_.-]*$")
-_STATUS_RE = re.compile(r"(?i)[\[(<]?(?:required|optional|expired|missing|invalid|hidden|redacted|undefined|string|str|secretstr|unset|empty|none|null|incorrect|wrong|rejected|refreshing|n/a)[\])>]?[;,.]*")
+_STATUS_RE = re.compile(r"(?i)[\[(<]?(?:required|optional|expired|missing|invalid|hidden|redacted|undefined|string|str|secretstr|unset|empty|none|null|incorrect|wrong|rejected|refreshing|n/a"
+                        r"|abgelaufen|ungültig|fehlt|erforderlich|falsch|leer|expiré|expirée|invalide|manquant|requis|incorrect|vide|expirada|expirado|caducada|caducado|inválida|inválido|obrigatória|requerida|incorreta|incorrecta|vazia|vacía"
+                        r"|истёк|истек|истекла|неверный|неверно|недействителен|отсутствует|обязателен|пустой|süresi[ \t]doldu|geçersiz|boş)[\])>]?[;,.]*")  # the status words of the other Latin and Cyrillic languages too (MN58)
 _WORDISH_RE = re.compile(r"[^\d\s!-/:-@\[-`{-~]+[,.;:!?]?")
 _DOC_WORDS = frozenset({"password", "pass", "passwd", "pwd", "secret", "token", "user", "username", "yourpassword", "your_password", "changeme", "arg", "args", "file", "env", "fd", "stdin", "anonymous", "guest", "x-oauth-basic"})
 
@@ -146,10 +148,11 @@ def _doc_value(v: str) -> bool:
     v = v.strip("\"'")
     if not v:
         return True
-    return bool(_PLACEHOLDER_RE.match(v) or re.fullmatch(r"\$[A-Za-z_]\w*|\$\{.*|[A-Z][A-Z_]*[\])>]*", v) or v.lower() in _DOC_WORDS)
+    _meta = re.fullmatch(r"([A-Z][A-Z_]*)[\])>]*", v)
+    return bool(_PLACEHOLDER_RE.match(v) or re.fullmatch(r"\$[A-Za-z_]\w*|\$\{.*", v) or (_meta and ("_" in _meta.group(1) or len(_meta.group(1)) <= 5 or _meta.group(1).lower() in _DOC_WORDS)) or v.lower() in _DOC_WORDS)  # `TOKEN`, `API_KEY]`, `PASSWORD]` are metavariables; `HUNTERTWOXYZ` is a secret (MN55)
 
 
-_PLACEHOLDER_RE = re.compile(r"<[^<>\n]{0,60}(?:>|$)|\{\{|\$\{|%[A-Za-z_]+%|\[REDACTED|[xX]{4,}$|\.{3,}$")  # `XXXX` is a placeholder too (AG61)
+_PLACEHOLDER_RE = re.compile(r"<[^<>\n]{0,60}(?:>|$)|\{\{|\$\{|%[A-Za-z_]+%|\[REDACTED|^[xX]{4,}$|\.{3,}$")  # a value that is only x/X (AG61); a real key ending in XXXX is a key (MN55)
 _PROSE_WORD_RE = re.compile(r"(?:ing|ed|ion|ly|ness|able|ible|ment|ful|less|ous)$|^(?:invalid|missing|required|incorrect|expired|empty|unknown|wrong|rejected|changed|secret|hidden|default|optional|pending|redacted)$")
 _PASS_WORDS = frozenset({
     "bypass", "compass", "encompass", "surpass", "trespass", "overpass", "underpass", "impasse", "passe", "multipass", "repass",
@@ -181,15 +184,15 @@ def _kv_skip(name: str, v: str, sep: str = "=", text: str | None = None, start: 
         return True  # AG62: `token: expired`, `password: required`, `token: string;`, `password: (hidden)`: a status or a type, not a value
     if _ENVREF_RE.match(vq):
         return True  # AG62: `api_key: $API_KEY`, a YAML tag `password: !vault |`
-    if sep.startswith("]") and not (text is not None and start > 0 and text[start - 1] == ":"):
+    if sep.startswith("]") and not (text is not None and start > 0 and text[start - 1] == ":") and re.fullmatch(r"[A-Za-z_][A-Za-z_]*", v):  # only an identifier without digits is code (`cache[token] = value_from_somewhere`); `creds[password]=S3cr3t-Pa55w0rd` is a secret (MN55)
         return True  # AG62: `cache[token] = value` is code; only a quoted key or a Ruby symbol (`params[:password]`) counts
     if text is not None and start >= 3 and text[start - 3:start] == "://":
         return True  # AG62: `https://token:x@host/` is URL userinfo, masked by the URL rule without eating the host
     if " " in sep and "=" in sep and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", v) and not re.search(r"\d", v):
         return True  # AG62: `secret = config.secret`, `api_key = settings.API_KEY` (attribute access in code)
-    if v[0] not in "\"'" and len(v) >= 3 and not v.isascii() and not re.search(r"[A-Za-z]", v):
+    if v[0] not in "\"'" and len(v) >= 3 and not v.isascii() and not re.search(r"[A-Za-z]", v) and not (re.search(r"\d", v) and re.search(r"[\u0370-\u03ff\u0400-\u04ff\u0530-\u058f]", v)):  # a label sentence in CJK/Thai/Hindi is prose (AG62); a Cyrillic/Greek/Armenian word with a digit is a secret: `Тайна2024секрет` (MN55)
         return True  # AG62: `密码：必须至少包含八个字符` (CJK, Thai, Hindi label sentences); a secret holds ASCII
-    if "=" not in sep and text is not None and end is not None and _WORDISH_RE.fullmatch(v) and re.match(r"[ \t]+[^\d\s!-/:-@\[-`{-~]{2,}", text[end:end + 40]):
+    if "=" not in sep and text is not None and end is not None and v.islower() and _WORDISH_RE.fullmatch(v) and re.match(r"[ \t]+[^\d\s!-/:-@\[-`{-~]{2,}", text[end:end + 40]):  # a lowercase word only: `password: Dragonfly for both boxes` is a secret (MN55)
         return True  # AG62: `password: expired yesterday`, `Passwort: falsch, bitte erneut versuchen`: more words follow, so it is prose
     low = name.lower()
     if low == "pass" and "=" not in sep:
@@ -246,7 +249,7 @@ _PROVIDER_KEY_RE = re.compile(
 _PEM_RE = re.compile(r"-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----(?:.*?-----END [A-Z ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----|.*\Z)", re.S)
 _PEM_BEGIN_RE = re.compile(r"-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
 _PEM_END_RE = re.compile(r"-----END [A-Z ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----")
-_PEM_BODY_RE = re.compile(r"\s*(?:[A-Za-z0-9+/=]{8,}|Proc-Type:|DEK-Info:|Version:)")
+_PEM_BODY_RE = re.compile(r"\s*(?:[A-Za-z0-9+/=]{8,}|[A-Za-z-]+: )")  # any armor header line counts: `Comment:`, `Hash:` (MN55: a cut-off GPGTools key leaked)
 
 
 def _pem_redact(out: str) -> str:
@@ -307,7 +310,7 @@ _COOKIE_ATTRS = frozenset({"path", "domain", "expires", "max-age", "samesite", "
 _COOKIE_PAIR_RE = re.compile(r"(?<![^\s;])([A-Za-z0-9_.%-]{1,64}=)([^\s;]{6,})")
 _WEBHOOK_RE = re.compile(r"(hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9]{6,}/[A-Za-z0-9]{6,}/)([A-Za-z0-9]{12,})|(discord(?:app)?\.com/api/webhooks/\d{6,}/)([A-Za-z0-9_-]{20,})")
 _AZURE_RE = re.compile(r"(?i)\b((?:AccountKey|SharedAccessKey|SharedAccessSignature|client_secret)=)([A-Za-z0-9+/%=_.-]{16,})|([?&;]sig=)([A-Za-z0-9%+/=_-]{16,})")
-_MYSQL_P_RE = re.compile(r"((?<![\w./'\"\\-])(?:sudo[ \t]+)?(?:mysql|mysqldump|mysqladmin|mariadb|mysqlsh)\b[^\n|;&]{0,200}?[ \t]-p)([^\s\-][^\s]{2,})", re.M)  # the command word itself (not `*.mysql` in a find: MN49), wherever it stands: `RUN mysql`, `run: mysql`, `- mysql` (AG61)
+_MYSQL_P_RE = re.compile(r"((?<![\w.-])(?:sudo[ \t]+)?(?:mysql|mysqldump|mysqladmin|mariadb|mysqlsh)\b[^\n|;&]{0,200}?[ \t]-p)([^\s\-][^\s]{2,})", re.M)  # the command word itself (not `*.mysql` in a find: MN49) after anything but a word, dot or dash: `RUN mysql`, `/usr/bin/mysql`, `"mysql ...`, `C:\\mysql\\bin\\mysql` (AG61, MN55)
 _DOCKER_P_RE = re.compile(r"(\b(?:docker|podman|nerdctl)[ \t]+login\b[^\n|;&]{0,200}?[ \t](?:-p|--password)[ =]+)([^\s\-]\S*)")
 _SSHPASS_RE = re.compile(r"(\bsshpass[ \t]+(?:-\w+[ \t]+)*-p[ \t]*)(?!-)(\S+)")
 _TOKEN_SHAPES_RE = re.compile(r"\b(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|ya29\.[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|whsec_[A-Za-z0-9]{20,}|rk_live_[A-Za-z0-9]{10,}|shp(?:at|ss|ca)_[a-f0-9]{32})")
@@ -316,16 +319,26 @@ _PROSE_RE = re.compile(r"(?i)\b((?:(?:my|your|the|his|her|their|our|new|old|temp
 
 
 # the same sentence in Russian, German, French, Spanish, Portuguese, Turkish, Persian, Japanese, Korean, Chinese (`mein Passwort ist V`, `パスワードは V`)
+_QUALIFIED_RE = re.compile(
+    r"(?i)("
+    r"(?:\b(?:the|das|die|le|la|el|a|o|das|наш|мой)[ \t]+)?"
+    r"(?:password|passwort|kennwort|mot[ \t]de[ \t]passe|contraseña|contrasena|senha|пароль|şifre|" + _marked("كلمة", _AR_MARKS) + r"[ \t](?:" + _marked("السر", _AR_MARKS) + "|" + _marked("المرور", _AR_MARKS) + r")|رمز[\u200c \t]عبور|گذرواژه|ה?" + _marked("סיסמ", _HE_MARKS) + r"[אה]|รหัสผ่าน|पासवर्ड)"
+    r"[ \t]*(?:for|of|to|für|du|de|del|della|do|da|от|для|к|сервер\w*|سرور|الجديدة|جدید|לשרת|החדשה|ใหม่|เซิร์ฟเวอร์|का|के)[^\n:=\"'“]{0,40}?"   # a qualifier: for the server, du serveur, الجديدة, ใหม่ ...
+    r"[ \t]*(?:is|ist|est|es|é|هي|היא|คือ|है|это|[:=：])[ \t]*[\"'“]?"
+    r")([!-~]{8,})"
+)
 _PROSE_I18N2_RE = re.compile(
     r"(?i)("
-    r"(?:รหัสผ่าน|โทเคน)(?:ของ(?:ฉัน|เรา|ผม))?คือ[ \t]*"                                        # Thai: my password is
+    r"(?:รหัสผ่าน|โทเคน)(?:ของ(?:ฉัน|เรา|ผม|คุณ|เขา|ท่าน|ดิฉัน))?คือ[ \t]*"                                        # Thai: my password is
     r"|(?:मेरा|हमारा|मेरी)?[ \t]*(?:पासवर्ड|टोकन|कूटशब्द)[ \t]+(?:है[ \t]+)?"                     # Hindi: mera password (hai) V (hai)
-    r"|" + _marked("كلمة", _AR_MARKS) + r"[ \t]" + _marked("السر", _AR_MARKS) + r"(?:[ \t]" + _marked("الخاصة", _AR_MARKS) + r"[ \t]" + _marked("بي", _AR_MARKS) + r")?[ \t]" + _marked("هي", _AR_MARKS) + r"[ \t]*"
+    r"|" + _marked("كلمة", _AR_MARKS) + r"[ \t](?:" + _marked("السر", _AR_MARKS) + "|" + _marked("المرور", _AR_MARKS) + "|" + _marked("سري", _AR_MARKS) + r")(?:[ \t]" + _marked("الخاصة", _AR_MARKS) + r"[ \t]" + _marked("بي", _AR_MARKS) + r")?[ \t]" + _marked("هي", _AR_MARKS) + r"[ \t]*[\"“]?"  # MN58: `كلمة المرور هي V`
     r"|ה?" + _marked("סיסמ", _HE_MARKS) + r"[אה][\u0591-\u05c7]*(?:[ \t]שלי)?[ \t]היא[ \t]*"                 # Hebrew: ha-sisma sheli hi V
-    r"|(?:رمز[\u200c \t]عبور|گذرواژه|توکن)(?:[ \t](?:من|شما|ما|او|تو))?[ \t]+"                                  # Persian: ramz-e obur(-e man) V ast
-    r"|(?:мой[ \t]+|наш[ \t]+)?(?:пароль|токен)[ \t]+"                                        # Russian without a dash: moy parol V
-    r"|(?:mein|das|unser)[ \t]+passwort[ \t]+(?:lautet|ist)[ \t]+"                            # German: mein Passwort lautet V
-    r"|(?:meu|minha|o|a)[ \t]+(?:token|senha|chave)[ \t]+(?:é[ \t]+)?"                        # Portuguese: meu token V
+    r"|(?:رمز[\u200c \t]عبور|گذرواژه|توکن)(?:م|ت|ش|مان|تان|شان)?(?:[ \t](?:من|شما|ما|او|تو))?[ \t]*[:：]?[ \t]+"   # Persian: ramz-e obur(-am | -e man | -e shoma)(:) V (ast) (MN58)
+    r"|(?:(?:mein|das|unser|dein|ihr)[ \t]+)?(?:passwort|kennwort|token)[ \t]+(?:lautet|ist)[ \t]+[\"„]?"   # German: (mein) Passwort lautet V, das Token ist V (MN58)
+    r"|(?:mon|le|ton|votre)[ \t]+(?:mot[ \t]de[ \t]passe|jeton)[ \t]+(?:c'est|est)[ \t]+"              # French: mon mot de passe c'est V, le jeton est V
+    r"|(?:mi|el|tu|su)[ \t]+(?:contraseña|contrasena|token|clave[ \t]de[ \t]acceso)[ \t]+es[ \t]+"      # Spanish: mi token es V
+    r"|ה?(?:טוקן|סיסמ[אה])(?:[ \t]של(?:י|ך|נו))?[ \t]הוא[ \t]*"                                        # Hebrew: ha-token sheli hu V
+    r"|(?:我的|你的|您的)?(?:密码|令牌|口令)是[ \t]*[“\"]?"                                                  # Chinese: wo de lingpai shi V, with curly quotes
     r")([!-~]{8,})"
 )
 _PROSE_I18N_RE = re.compile(r"(?i)((?:пароль|токен|passwort|kennwort|mot[ \t]de[ \t]passe|contraseña|contrasena|senha|şifre|رمز[ \t]عبور|パスワード|비밀번호|密码)(?:[ \t]+(?:мой|моя|mein|mon|mi|minha|من|my))?(?:[ \t]+(?:is|est|ist|es|é|-|—|است|:)|[はがは는은是:：])[ \t]*)([!-~]{8,})")
@@ -433,7 +446,8 @@ def _extra_redact(out: str) -> str:
     out = _ag62(out)
     out = _sub_value(_PROSE_RE, out, 2, ok=_secretish)
     out = _sub_value(_PROSE_I18N_RE, out, 2, ok=_secretish)
-    out = _sub_value(_PROSE_I18N2_RE, out, 2, ok=_secretish)  # the word orders of Thai, Hindi, Arabic, Hebrew, Persian, bare Russian, German `lautet`, Portuguese (MN52)
+    out = _sub_value(_PROSE_I18N2_RE, out, 2, ok=_secretish)
+    out = _sub_value(_QUALIFIED_RE, out, 2, ok=_secretish)  # `the password for the server is V` (MN58)  # the word orders of Thai, Hindi, Arabic, Hebrew, Persian, bare Russian, German `lautet`, Portuguese (MN52)
     return out
 
 

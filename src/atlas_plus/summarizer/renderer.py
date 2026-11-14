@@ -108,7 +108,8 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     _sid = marker_prefix.split("session:", 1)[1] if "session:" in marker_prefix else ""
     if _sid:
         _em = _re.compile(r"^<!-- end session:" + _re.escape(_sid) + r" -->[ \t]*\n?", _re.M)
-        _m2 = _em.search(text, m.end())  # the end marker wins over a quoted `## ` line inside the body (AG64: the body's heading cut the entry short and left an orphan tail)
+        _nm = _re.search(r"\n## [^\n]*\n<!-- session:", text[m.end():])  # the next SESSION heading bounds the search (MN55: unbounded, it reached a later duplicate and deleted the entry between)
+        _m2 = _em.search(text, m.end(), (m.end() + _nm.start() + 1) if _nm else len(text))  # a quoted `## ` line inside the body does not end the entry (AG64)
         if _m2:
             end = _m2.end()
     return (text[:start] + text[end:]).lstrip("\n")
@@ -231,6 +232,40 @@ def partial_count(sessions_dir: Path, safe_id: str, days: int = 3) -> int:
     return 0
 
 
+def _pid_alive(pid: int) -> bool:
+    """True when a process with this pid exists (MN57: a lock owned by a dead pid blocked every Stop for up to 120 s)."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                return code.value == 259  # STILL_ACTIVE
+            return True
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _lock_owner_dead(lock: Path) -> bool:
+    try:
+        txt = lock.read_text(encoding="ascii", errors="replace").strip()
+    except OSError:
+        return False
+    return txt.isdigit() and not _pid_alive(int(txt))
+
+
 def _write_lock(timeout: float = 60.0, stale: float = 120.0):
     """AG58: one writer at a time across SESSIONS (`<state>/summarizer/write.lock`). Four sessions stopping
     together each read the day's log, prepended and replaced it: one died on a Windows PermissionError with its
@@ -255,7 +290,7 @@ def _write_lock(timeout: float = 60.0, stale: float = 120.0):
                     break
                 except FileExistsError:
                     try:
-                        if _time.time() - lock.stat().st_mtime > stale:
+                        if _time.time() - lock.stat().st_mtime > stale or _lock_owner_dead(lock):  # stale by age, or the owner is gone (MN57)
                             lock.unlink()
                             continue
                     except OSError:
@@ -268,9 +303,25 @@ def _write_lock(timeout: float = 60.0, stale: float = 120.0):
                     _time.sleep(0.05 + random.random() * 0.1)
         except OSError:
             pass
+        _beat = None
+        if held:
+            import threading as _th
+            _stop = _th.Event()
+
+            def _heartbeat():  # the owner refreshes the lock's mtime while it writes: a 130 s hold was broken as stale at 120 s and lost an entry (MN57)
+                while not _stop.wait(15.0):
+                    try:
+                        os.utime(lock, None)
+                    except OSError:
+                        return
+
+            _beat = (_th.Thread(target=_heartbeat, daemon=True), _stop)
+            _beat[0].start()
         try:
             yield
         finally:
+            if _beat:
+                _beat[1].set()
             if held:
                 try:
                     if lock.read_text(encoding="ascii", errors="replace").strip() in ("", str(os.getpid())):
@@ -309,21 +360,23 @@ def write_outputs(
         result["updates_txt"] = str(UPDATES_TXT)
         return result
 
-    _prev = session_file.read_text(encoding="utf-8", errors="replace") if session_file.exists() else None
-    try:
-        with _write_lock():
-            return _write_locked(session_file, session_log_text, updates_text, replace_session, result)
-    except Exception:
-        # the day log and updates.txt move together: a failed updates write had left the day-log entry in place, so the
-        # next Stop found the session "done" and the updates entry stayed missing (AG64)
+    with _write_lock():  # a lock timeout raises here: nothing was read or written, nothing to roll back (MN55: the old rollback
+        # read the day log BEFORE the lock and wrote that stale copy back after a timeout, erasing the live writer's entry)
+        _prev = session_file.read_text(encoding="utf-8", errors="replace") if session_file.exists() else None
+        _prev_upd = UPDATES_TXT.read_text(encoding="utf-8", errors="replace") if UPDATES_TXT.exists() else None
         try:
-            if _prev is None:
-                session_file.unlink(missing_ok=True)
-            elif session_file.read_text(encoding="utf-8", errors="replace") != _prev:
-                _atomic_write(session_file, _prev)
-        except Exception:  # noqa: BLE001
-            pass
-        raise
+            return _write_locked(session_file, session_log_text, updates_text, replace_session, result)
+        except Exception:
+            # the day log and updates.txt move together (AG64): both go back to what this run found, under the lock
+            for _path, _was in ((session_file, _prev), (UPDATES_TXT, _prev_upd)):
+                try:
+                    if _was is None:
+                        _path.unlink(missing_ok=True)
+                    elif _path.read_text(encoding="utf-8", errors="replace") != _was:
+                        _atomic_write(_path, _was)
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
 
 
 def _write_locked(session_file, session_log_text, updates_text, replace_session, result):
@@ -345,6 +398,8 @@ def _write_locked(session_file, session_log_text, updates_text, replace_session,
             # when it grew (MN33: the first summary froze and every later Stop was skipped)
             existing = remove_session_entry(existing, replace_session)
             _remove_entry_elsewhere(session_file, replace_session)
+        import re as _re2
+        existing = _re2.sub(r"\n{3,}", "\n\n", existing)  # the removed entry's blank lines had piled up, three per refresh (MN57)
         _atomic_write(session_file, session_log_text + ("\n\n" + existing if existing.strip() else "\n"))
     else:
         if replace_session:

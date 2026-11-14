@@ -64,7 +64,7 @@ def _repo_exec_keys(cwd: Path | str | None, timeout: float) -> list[str]:
     try:
         r = subprocess.run(
             ["git", *_BASE, "config", "--list", "--name-only"],
-            cwd=str(cwd) if cwd else None, capture_output=True, text=True,
+            cwd=str(cwd) if cwd else None, stdin=subprocess.DEVNULL, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout, env=_env(),
         )
     except (OSError, subprocess.SubprocessError):
@@ -98,7 +98,7 @@ def argv(args: Sequence[str], cwd: Path | str | None = None, *, timeout: float =
     return ["git", *_BASE, *extra, *args]
 
 
-def run(args: Sequence[str], cwd: Path | str | None = None, *, timeout: float = 10,
+def run(args: Sequence[str], cwd: Path | str | None = None, *, timeout: float = 10,  # noqa: D417
         **kwargs) -> subprocess.CompletedProcess:
     """subprocess.run for git with every config-driven exec path neutralized."""
     kwargs.setdefault("capture_output", True)

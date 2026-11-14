@@ -193,8 +193,16 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
             _s = str(exc)
             if "WRONG_VERSION_NUMBER" in _s or "record layer failure" in _s:  # OpenSSL words differ per build (MN53: Windows says record layer failure)
                 raise RuntimeError(f"{method}: {url} answered plain HTTP to a TLS handshake: use http:// for this server, or put it behind a TLS proxy") from exc  # AG56
+            if isinstance(exc, (FileNotFoundError, PermissionError, IsADirectoryError)) or "NO_CERTIFICATE_OR_CRL_FOUND" in _s or "PEM lib" in _s:
+                _cf = os.environ.get("SSL_CERT_FILE", "")
+                raise RuntimeError(f"{method}: the certificate bundle {_cf!r} (SSL_CERT_FILE) cannot be read as a PEM certificate file ({type(exc).__name__}): point it at the hub's CA certificate, or unset it") from exc  # MN59: a missing bundle was called an untrusted certificate
+            if "UNEXPECTED_EOF" in _s or "EOF occurred" in _s:
+                raise RuntimeError(f"{method}: {url} closed the connection during the TLS handshake: the port may not speak TLS at all (a plain-HTTP server or a proxy without TLS on that port), or it is the wrong port") from exc  # MN55: an EOF is not an alert
             if "[SSL" in _s and "CERTIFICATE" not in _s.upper():
-                raise RuntimeError(f"{method}: {url} refused the TLS handshake with an alert ({_s[:80]}): use the host name the server's certificate names, not its IP address") from exc  # AG65: an alert was called plain HTTP
+                from urllib.parse import urlsplit as _us
+                _host = _us(url).hostname or ""
+                _advice = "use the host name the server's certificate names, not its IP address" if _host.replace(".", "").replace(":", "").isdigit() or ":" in _host else "the server refused this client's handshake: check the host name against the certificate and the TLS versions it allows"
+                raise RuntimeError(f"{method}: {url} refused the TLS handshake with an alert ({_s.splitlines()[0][:100]}): {_advice}") from exc  # AG65: an alert was called plain HTTP; MN55: IP advice only for an IP
             if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower():
                 raise RuntimeError(f"{method}: {url} presented a certificate this client does not trust (a private CA or `tls internal`): point SSL_CERT_FILE at the CA certificate") from exc
             raise RuntimeError(f"{method}: could not reach {url}: {exc} (is the server running there? in a container it must "

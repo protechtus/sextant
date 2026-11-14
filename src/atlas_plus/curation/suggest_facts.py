@@ -396,9 +396,10 @@ def _fact_tokens(text: str) -> set[str]:
 _FUNCTION_WORDS = frozenset({
     # articles, pronouns and connectives only: tense (is/was), modality (must/may), quantity (all), direction (over/under)
     # and disjunction (and/or) carry meaning, and a correction that changes one was dropped as a rewording (AG61)
-    "the", "a", "an", "of", "to", "in", "it", "that", "this", "for", "with", "on", "at", "by", "from", "as", "but",
-    "our", "we", "us", "its", "their", "they", "them", "there", "here", "also", "just", "very", "so", "then", "about", "which", "who", "whom",
-    "der", "die", "das", "dem", "den", "des", "und", "le", "la", "les", "et", "el", "los", "las", "y", "и", "в", "на", "و",
+    # articles and connectives only: prepositions of place and direction (to/from/in/on/at/by/for/with) and the personal pronouns
+    # carry meaning (MN55: `to Postgres from MySQL` and `they` for `we` had been dropped as rewordings)
+    "the", "a", "an", "of", "that", "this", "as", "but", "there", "here", "also", "just", "very", "so", "then", "about", "which", "who", "whom",
+    "der", "die", "das", "dem", "den", "des", "le", "la", "les", "el", "los", "las",
     "の", "は", "が", "を", "に", "と", "で", "も", "은", "는", "이", "가", "을", "를", "的", "了", "是", "在", "和",
 })
 _NEGATIONS = {"not", "no", "never", "dont", "doesnt", "isnt", "cannot", "cant", "without", "stop", "avoid", "disable", "disabled", "off", "instead", "replaced", "replaces"}
@@ -445,6 +446,40 @@ def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return False
+
+
+def _facts_failure_file(conversation_id: str | None):
+    if not conversation_id:
+        return None
+    safe = "".join(ch for ch in conversation_id if ch.isalnum() or ch in "-_.")[:80]
+    return atlas_paths.state_dir() / "suggest-facts" / f"failed-{safe}.json" if safe else None
+
+
+def _note_facts_failure(conversation_id: str | None, n_lines: int) -> None:
+    """Count a failed facts run at this transcript length (MN55: the summarizer gave up after three failures, the facts stage kept calling the model)."""
+    import json as _json
+    f = _facts_failure_file(conversation_id)
+    if not f:
+        return
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        prev = _json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        count = int(prev.get("count", 0)) + 1 if prev.get("lines") == n_lines else 1
+        f.write_text(_json.dumps({"lines": n_lines, "count": count}), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _facts_gave_up(conversation_id: str | None, n_lines: int) -> bool:
+    import json as _json
+    f = _facts_failure_file(conversation_id)
+    try:
+        if not f or not f.exists():
+            return False
+        prev = _json.loads(f.read_text(encoding="utf-8"))
+        return prev.get("lines") == n_lines and int(prev.get("count", 0)) >= 3
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _session_done_marker(conversation_id: str | None):
@@ -711,6 +746,7 @@ def suggest_facts(*args, **kwargs) -> dict:
         try:
             from atlas_plus import activity as _act
             _act.record("hook", "suggest_facts_failed", reason=str(exc)[:200], conversation_id=conversation_id or "")  # doctor shows it (MN39: a failed facts stage left no trace)
+            _note_facts_failure(conversation_id, locals().get("_n_lines", 0))  # MN55: the facts stage gives up like the summarizer
         except Exception:  # noqa: BLE001
             pass
         raise
@@ -751,6 +787,14 @@ def _suggest_facts_run(
     print(f"Loading transcript since '{since}'...", flush=True)
     transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
     _n_lines = transcript_text.count("\n") + (1 if transcript_text.strip() else 0)
+    if _facts_gave_up(conversation_id, _n_lines):
+        print("The facts stage failed three times at this length; waiting for the session to grow.", flush=True)
+        try:
+            from atlas_plus import activity as _act
+            _act.record("suggest_facts", "suggest_facts_skipped", reason="gave up until the session grows", conversation_id=conversation_id or "")
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
     if _prior_lines is not None and _n_lines - _prior_lines < _min_new_turns():
         # Claude Code fires Stop after every reply: facts are re-extracted when the session grew
         # (MN33); the marker is written only after the model answered (MN31: a failed first run

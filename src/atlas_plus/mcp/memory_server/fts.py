@@ -122,11 +122,18 @@ _MARK_CLASS = "".join(chr(a) + "-" + chr(b) if a != b else chr(a) for a, b in _M
 _WORD_RE = re.compile("[\\w" + _MARK_CLASS + "]+")  # a word of any script with its marks attached (AG60)
 
 
+_INDIC_JOINER_RE = re.compile("(?<=[\u0900-\u0dff])[\u200c\u200d]+(?=[\u0900-\u0dff])")
+
+
 def _recompose(text: str) -> str:
     """NFKC decomposes Thai sara am (U+0E33) into nikhahit + sara aa and Lao am (U+0EB3) likewise; the index and
     the snippets then showed `ทํา` for `ทำ` and `น้ำ` met `นา` (MN52). Put them back."""
     if "\u0e4d\u0e32" in text or "\u0ecd\u0eb2" in text:
         text = text.replace("\u0e4d\u0e32", "\u0e33").replace("\u0ecd\u0eb2", "\u0eb3")
+    if "\u200c" in text or "\u200d" in text:
+        text = _INDIC_JOINER_RE.sub("", text)  # ZWJ/ZWNJ between Indic letters are typed or not by keyboard: `राम` must meet `रा\u200dम` (MN55); between Persian letters the ZWNJ stays a separator
+    if "\u0451" in text or "\u0401" in text or "\u00df" in text:
+        text = text.replace("\u0451", "\u0435").replace("\u0401", "\u0415").replace("\u00df", "ss")  # ё is typed as е and ß as ss (MN58: `елка` missed `ёлка`, `Strasse` missed `Straße`)
     return text
 
 

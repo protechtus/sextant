@@ -1554,7 +1554,7 @@ async def session_expired_page():
     return HTMLResponse(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sextant: session expired</title>"
         "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#cbd5e1;padding:3rem;max-width:40rem}"
-        "code{color:#67e8f9}</style></head><body><h1>Session expired</h1>"
+        "code{color:#67e8f9}</style></head><body><h1>Sign in</h1>"  # MN60: a first visit is not an expired session; the body explains both
         "<p>You have not signed in from this browser yet, or the dashboard restarted, its key was rotated, or the session reached its 12-hour limit.</p>"
         "<p>Open it again with your key: <code>http://&lt;host&gt;:&lt;port&gt;/?key=&lt;ATLAS_WEB_API_KEY&gt;</code></p>"
         "<p>Sessions are held in memory on purpose. Saved notes and tickets are untouched; text typed in the editor but not saved is gone with the page.</p></body></html>"
@@ -6817,6 +6817,9 @@ def main() -> None:
     )
 
     from atlas_plus.branding import product
+    if any(a == "--port" or a.startswith("--port=") or a == "--host" or a.startswith("--host=") for a in sys.argv[1:]):
+        print("--port and --host are not options here: set ATLAS_WEB_PORT=<n> and ATLAS_WEB_HOST=<addr> in the environment (GETTING-STARTED, Troubleshooting).", file=sys.stderr)  # MN60
+        raise SystemExit(2)
     parser = argparse.ArgumentParser(description=f"{product()} Web UI (Helm dashboard)")
     parser.add_argument("--no-auth", action="store_true", help="Local dev, loopback only")
     args = parser.parse_args()

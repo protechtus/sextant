@@ -133,11 +133,13 @@ def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
         lock = _paths.state_dir() / "summarizer" / f"s-{safe_id or 'anon'}.lock"  # `CON`/`nul` never locked on Windows (AG44)
         lock.parent.mkdir(parents=True, exist_ok=True)
         try:
-            if _time.time() - lock.stat().st_mtime > stale_s:
+            from atlas_plus.summarizer.renderer import _lock_owner_dead as _dead
+            if _time.time() - lock.stat().st_mtime > stale_s or _dead(lock):  # a killed child's lock blocked its session for 15 minutes (MN57)
                 lock.unlink()
         except OSError:
             pass
         fd = _os.open(str(lock), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
+        _os.write(fd, str(_os.getpid()).encode())
         _os.close(fd)
     except FileExistsError:
         return False
@@ -337,6 +339,7 @@ def main(
             since = None  # the session is the unit: a session across midnight lost its first hour (AG40)
         if not dry_run and not _acquire_session_lock(safe_id):
             console.print(f"[yellow]Another summarizer run for session {conversation_id} is in progress; nothing to do.[/yellow]")
+            _event("summarizer_skipped", reason="another run for this session is in progress", conversation_id=conversation_id or "")  # it left no trace (MN57)
             raise typer.Exit(0)  # four Stops in one second each paid for the model (MN33)
 
     # --- 1. Load ---
@@ -417,7 +420,8 @@ def main(
     if rejected and len(rejected) == len(chunks):
         console.print("[red]Every chunk reply was unusable; nothing written.[/red]")
         _event("summarizer_failed", reason=f"all {len(chunks)} chunk replies were unusable (not summaries); see summarizer_chunk_rejected", conversation_id=conversation_id or "")
-        _note_failure(safe_id, len(turns))
+        if not dry_run:
+            _note_failure(safe_id, len(turns))
         raise typer.Exit(1)
     if reused:
         console.print(f"[dim]{reused} of {len(chunks)} chunk summaries reused from the last run.[/dim]")
@@ -451,7 +455,8 @@ def main(
         _why = _reject_reason(summary)
         console.print(f"[red]The model's reply was not a usable summary: {_why}; nothing written. It is retried at the next Stop; if it keeps happening, try a larger model (ATLAS_SUMMARIZER_MODEL).[/red]")
         _event("summarizer_failed", reason=f"model reply was not a summary: {_why}", conversation_id=conversation_id or "")
-        _note_failure(safe_id, len(turns))
+        if not dry_run:
+            _note_failure(safe_id, len(turns))  # a dry run changes no state (MN57)
         raise typer.Exit(1)
 
     if rejected:
@@ -469,7 +474,7 @@ def main(
     # --- 5. Render ---
     for _k in ("worked_on", "completed", "pending", "decisions", "files_touched", "lessons"):  # lessons too (AG61: a newline inside a lesson left orphaned headings and end markers)
         if isinstance(summary.get(_k), list):
-            summary[_k] = [__import__("re").sub(r"^#+\s*", "", " ".join(str(x).split())) for x in summary[_k] if str(x).strip()]  # one line per item (AG49); no item starts a heading (AG64)
+            summary[_k] = [__import__("re").sub(r"^#+\s+", "", " ".join(str(x).split())) for x in summary[_k] if str(x).strip()]  # one line per item (AG49); no item starts a heading (AG64); `#1 priority` keeps its hash (MN55)
     if isinstance(summary.get("title"), str):
         summary["title"] = " ".join(summary["title"].split())
     session_log_text = _redact(render_session_log(summary, date))

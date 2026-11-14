@@ -738,7 +738,7 @@ def test_sara_am_recomposed_and_more_key_names():
     for s in (f"API-Schlüssel={v}", f"Geheimnis: {v}", f"คีย์ API={v}", f"एपीआई कुंजी: {v}", f"कूटशब्द={v}", f"מפתח API: {v}", f"קוד גישה={v}",
               f"توکن: {v}", f"کلید API={v}", f"رمز\u200cعبور={v}", f"رمز: {v}", f"سرّ={v}",
               f"รหัสผ่านของฉันคือ {v}", f"मेरा पासवर्ड {v} है", f"मेरा पासवर्ड है {v}", f"كلمة السر الخاصة بي هي {v}", f"הסיסמה שלי היא {v}",
-              f"رمز عبور من {v} است", f"мой пароль {v}", f"Mein Passwort lautet {v}", f"meu token {v}"):
+              f"رمز عبور من {v} است", f"Mein Passwort lautet {v}"):  # bare `мой пароль V` and `meu token V` were dropped on purpose (AG61: they masked identifiers)
         assert v not in redact(s), s
     for s in ("รหัสผ่านของฉันคือ ความลับ", "मेरा पासवर्ड गलत है", "мой пароль неверный", "Mein Passwort lautet geheim", "meu token expirou"):
         assert redact(s) == s, s
@@ -815,12 +815,12 @@ def test_lessons_are_one_line_and_lock_is_owned(tmp_path, monkeypatch):
     monkeypatch.setattr(renderer.atlas_paths, "state_dir", lambda: tmp_path)
     lock = tmp_path / "summarizer" / "write.lock"
     lock.parent.mkdir(parents=True)
-    lock.write_text("999999", encoding="ascii")                                                                                            # another process's live lock
+    lock.write_text(str(os.getpid()), encoding="ascii")                                                                                   # a live owner (this process); a dead pid is broken at once since MN57
     os.utime(lock, None)
     with pytest.raises(RuntimeError):
         with renderer._write_lock(timeout=0.3, stale=120.0):
             pass
-    assert lock.exists() and lock.read_text(encoding="ascii") == "999999"                                                                 # a live lock is never broken or stolen (AG64)
+    assert lock.exists() and lock.read_text(encoding="ascii") == str(os.getpid())                                                         # a live lock is never broken or stolen (AG64)
     lock.unlink()
     with renderer._write_lock(timeout=0.3, stale=120.0):
         assert lock.read_text(encoding="ascii") == str(os.getpid())
@@ -868,4 +868,138 @@ def test_verify_alert_wording_and_hub_names_each_client():
     assert "refused the TLS handshake with an alert" in src and 'if detail.strip() else ""' in src
     assert "more than 5 clients via %s are locked out this window" in inspect.getsource(sync_api)
     assert "<div style='overflow-x:auto;max-width:100%;min-width:0'><table class='text-xs'" in inspect.getsource(web)
+
+
+# ---------------------------------------------------------------- MN58
+def test_qualified_password_forms_and_status_words():
+    from atlas_plus.redaction import redact
+    from atlas_plus.mcp.memory_server import fts
+
+    v = "Zk9#mQ2vL8xP"
+    for s in (f"The password for the server is {v}", f"password for the server: {v}", f"Passwort für den Server: {v}",
+              f"mot de passe du serveur : {v}", f"contraseña del servidor: {v}", f"senha do banco: {v}", f"пароль от почты: {v}",
+              f"رمز عبور سرور: {v}", f"הסיסמה לשרת: {v}", f"รหัสผ่านเซิร์ฟเวอร์: {v}", f"كلمة المرور الجديدة: {v}", f"รหัสผ่านใหม่: {v}",
+              f"كلمة المرور هي {v}", f"رمز عبورم {v} است", f"รหัสผ่านของคุณคือ {v}", f"Passwort lautet {v}", f"das Token ist {v}",
+              f"mon mot de passe c'est {v}", f"le jeton est {v}", f"mi token es {v}", f"הטוקן שלי הוא {v}", f"我的令牌是 {v}", f"密码是“{v}”"):
+        assert v not in redact(s), s
+    for s in ("Passwort: abgelaufen", "Token: abgelaufen", "mot de passe : expiré", "senha: expirada", "contraseña: caducada", "пароль: истёк",
+              "The password for the server is required", "мой пароль надёжный", "o token Windows10Pro expirou"):
+        assert redact(s) == s, s
+    assert fts._recompose("\u0451\u043b\u043a\u0430") == "\u0435\u043b\u043a\u0430" and fts._recompose("Stra\u00dfe") == "Strasse"
+
+
+# ---------------------------------------------------------------- MN55
+def test_lock_timeout_writes_nothing_and_end_marker_is_bounded(tmp_path, monkeypatch):
+    import functools
+    import os
+    from atlas_plus.summarizer import renderer
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(renderer, "MEMORY_SESSIONS_DIR", sessions)
+    monkeypatch.setattr(renderer, "UPDATES_TXT", tmp_path / "updates.txt")
+    monkeypatch.setattr(renderer.atlas_paths, "state_dir", lambda: tmp_path)
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    lock = tmp_path / "summarizer" / "write.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(str(os.getpid()), encoding="ascii")                                                  # a live writer (this process; a dead pid is broken at once since MN57)
+    os.utime(lock, None)
+    day = sessions / "2026-11-14.md"
+    day.write_text("## holder\n<!-- session:holder turns:4 -->\nHOLDER WORK\n<!-- end session:holder -->\n", encoding="utf-8")
+    monkeypatch.setattr(renderer, "_write_lock", functools.partial(renderer._write_lock, timeout=0.3, stale=120.0))
+    with pytest.raises(RuntimeError):
+        renderer.write_outputs("## w\n<!-- session:w turns:2 -->\nbody\n", "x", "2026-11-14", session_marker="<!-- session:w", replace_session="<!-- session:w")
+    assert "HOLDER WORK" in day.read_text(encoding="utf-8") and not (tmp_path / "updates.txt").exists()   # MN55: the stale rollback erased it
+    x_old = "## X old\n<!-- session:x turns:1 -->\nold body\n"
+    y = "## Y\n<!-- session:y turns:1 -->\ny body\n<!-- end session:y -->\n"
+    x_new = "## X new\n<!-- session:x turns:2 -->\nnew body\n<!-- end session:x -->\n"
+    out = renderer.remove_session_entry(x_old + y + x_new + "## Z\n<!-- session:z turns:1 -->\nz\n", "<!-- session:x")
+    assert "y body" in out and "## Z" in out                                                               # the bounded search spares Y
+
+
+def test_mn55_redaction_regressions_and_joiners(tmp_path, monkeypatch):
+    from atlas_plus.redaction import redact
+    from atlas_plus.mcp.memory_server import fts
+
+    v = "S3cretPw9Zq"
+    pgp = "-----BEGIN " + "PGP PRIVATE KEY BLOCK-----\nComment: GPGTools - https://gpgtools.org\n\nlQdGBF4abcdefghijklmnop"
+    assert "lQdGBF4" not in redact(pgp)
+    assert "Dragonfly" not in redact("the staging password: Dragonfly for both boxes")
+    assert redact("password: expired yesterday") == "password: expired yesterday"
+    for s in (f"/usr/bin/mysql -u root -p{v}", f"./mysql -u root -p{v}", f'sh -c "mysql -u root -p{v}"', f"C:\\mysql\\bin\\mysql -p{v}",
+              "mytool --password HUNTERTWOXYZ", "curl -u " + "admin:SECRET" + "PASSWORD9 https://h/", f"Authorization: Bearer\n  eyJab{v}cdefgh",
+              "AccountKey=" + "Zm9vYmFyYmF6" + "cXV1eHh4eXp6enXXXX", f"creds[password]={v}", "password = Тайна2024секрет", f"รหัสผ่านของคุณคือ {v}"):
+        out = redact(s)
+        assert "[REDACTED" in out, s
+    assert redact("usage: tool [--token TOKEN] [--password <password>]") == "usage: tool [--token TOKEN] [--password <password>]"
+    assert redact("cache[token] = value_from_somewhere") == "cache[token] = value_from_somewhere"
+    assert fts._recompose("\u0930\u093e\u200d\u092e") == "\u0930\u093e\u092e"                       # ZWJ dropped between Devanagari letters
+    assert fts._recompose("\u06a9\u062a\u0627\u0628\u200c\u0647\u0627") == "\u06a9\u062a\u0627\u0628\u200c\u0647\u0627"   # Persian ZWNJ kept
+
+
+def test_direction_and_pronoun_changes_are_corrections_and_facts_give_up(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus import paths as atlas_paths
+    from atlas_plus.curation import suggest_facts as sf
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    memory_remember("reference:ops2", "we copy the vault data from s3 to nas01 every night", source="agent")
+    assert not sf._fact_already_there("reference:ops2", "we copy the vault data to s3 from nas01 every night", 0.8)
+    assert not sf._fact_already_there("reference:ops2", "they copy the vault data from s3 to nas01 every night", 0.8)
+    assert sf._fact_already_there("reference:ops2", "we copy the vault data from s3 to the nas01 every night", 0.8)
+    monkeypatch.setattr(atlas_paths, "state_dir", lambda: tmp_path)
+    for _ in range(3):
+        sf._note_facts_failure("sess-1", 40)
+    assert sf._facts_gave_up("sess-1", 40) and not sf._facts_gave_up("sess-1", 46)
+
+
+# ---------------------------------------------------------------- MN59
+def test_gitsafe_probe_never_inherits_stdin(monkeypatch, tmp_path):
+    import subprocess
+    from atlas_plus import gitsafe
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(kwargs.get("stdin"))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    gitsafe.run(["status"], tmp_path)
+    assert calls and all(s == subprocess.DEVNULL for s in calls), calls                                   # MN59: the config probe had none
+
+
+# ---------------------------------------------------------------- MN57, MN60
+def test_dead_owner_lock_is_broken_and_heartbeat_touches(tmp_path, monkeypatch):
+    import os
+    import time
+    from atlas_plus.summarizer import renderer
+
+    monkeypatch.setattr(renderer.atlas_paths, "state_dir", lambda: tmp_path)
+    lock = tmp_path / "summarizer" / "write.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("999999", encoding="ascii")                                                      # no such process
+    os.utime(lock, None)
+    t0 = time.perf_counter()
+    with renderer._write_lock(timeout=5.0, stale=120.0):
+        assert lock.read_text(encoding="ascii") == str(os.getpid())                                  # broken at once, not after 60 s
+    assert time.perf_counter() - t0 < 3.0 and not lock.exists()
+    assert renderer._pid_alive(os.getpid()) and not renderer._pid_alive(999999)
+
+
+def test_bom_payload_refused_path_and_pipe_question_marks(monkeypatch, tmp_path):
+    import io
+    from atlas_plus.summarizer import hook_entry
+    from atlas_plus import cli
+
+    good = tmp_path / ".claude" / "projects" / "slug" / "s.jsonl"
+    good.parent.mkdir(parents=True)
+    good.write_text("", encoding="utf-8")
+    hook_entry._PAYLOAD.update(seen=False, empty=False, garbled=False, transcript_file="", refused="")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\ufeff" + '{"session_id": "x", "transcript_path": "%s"}' % str(good).replace("\\", "/")))
+    assert hook_entry._transcript_root_from_payload().endswith("projects") and not hook_entry._PAYLOAD["garbled"]
+    hook_entry._PAYLOAD.update(seen=False, refused="", transcript_file="")
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"session_id": "x", "transcript_path": "%s"}' % str(tmp_path / "nowhere" / "a" / "b.jsonl").replace("\\", "/")))
+    assert hook_entry._transcript_root_from_payload() == "" and hook_entry._PAYLOAD["refused"]
+    assert cli._stdin_looks_mangled("pipe1b caf? na?ve") and not cli._stdin_looks_mangled("is it done? yes")
 

@@ -368,6 +368,8 @@ def _fact_is_blank(fact: str) -> bool:
 
 
 def _stdin_looks_mangled(text: str) -> bool:
+    if re.search(r"[A-Za-z]\?[A-Za-z]", text):
+        return True  # a `?` between letters: `caf? na?ve` is an accent lost in an ASCII pipe (MN60: two accents slipped through)
     if "\ufffd" in text:
         return True
     visible = [c for c in text if not c.isspace()]
