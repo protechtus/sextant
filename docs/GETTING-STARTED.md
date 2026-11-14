@@ -214,7 +214,9 @@ semantic index with `sextant-embed-index` to enable semantic search
 (`ollama pull nomic-embed-text` once, then searches understand meaning,
 not just keywords; without it, keyword search works exactly as before).
 
-Each vault gets its own `--scope` (for example `--scope reference/work-vault`): `--archive-stale` judges staleness per vault (notes carry an `import_vault` stamp), and notes a different vault imported into the same scope by an older build look stale to it until they are re-imported once. A note over 4,000,000 characters is cut there with a marker at its end and listed under `truncated` in the report. A ChatGPT or Claude conversation that gained turns since the last import is updated in place (a version copy is kept). Notion exports: unzip first and point at the folder (HTML pages are not imported); Hugo and Jekyll content folders import as plain Markdown. Restore a backup with `rclone copy <remote>:<root>/memory <new-workspace>/.memory`.
+Each vault gets its own `--scope` (for example `--scope reference/work-vault`): `--archive-stale` judges staleness per vault (notes carry an `import_vault` stamp; a note
+moved with its vault is re-claimed on the next import, but a note deleted from a vault that
+has moved is not reported, since its old stamp names the old path), and notes a different vault imported into the same scope by an older build look stale to it until they are re-imported once. A note over 4,000,000 characters is cut there with a marker at its end and listed under `truncated` in the report. A ChatGPT or Claude conversation that gained turns since the last import is updated in place (a version copy is kept). Notion exports: unzip first and point at the folder (HTML pages are not imported); Hugo and Jekyll content folders import as plain Markdown. Restore a backup with `rclone copy <remote>:<root>/memory <new-workspace>/.memory`.
 
 Facts from the shell: a line that starts with `---` is refused (it would
 close the note's frontmatter); dashes mid-sentence are fine. In PowerShell
@@ -302,8 +304,10 @@ write locks and the search index. Two people on one corpus through git is
 workable for two or three trusted people, and it means hand merges: facts go
 in at the top of the day's section, so a note both wrote the same day
 conflicts on every pull (delete the three marker lines and keep both blocks;
-`sextant remember` refuses to write into a note that still holds markers, and
-`sextant doctor` names them). Set `core.autocrlf=false` on Windows (init
+in the frontmatter keep ONE of each key, the last one wins silently; `sextant remember`
+refuses to write into a note that still holds markers, and `sextant doctor` names them;
+a modify/delete conflict (`UD` in `git status`) has no markers, so resolve it in git
+before writing). Set `core.autocrlf=false` on Windows (init
 writes a `.gitattributes` that keeps the corpus LF) and leave
 `ATLAS_MEMORY_AUTOCOMMIT` off while a merge is open. Three more things to know: `identity/user.md` is one file, so a
 shared corpus primes everyone with the same identity (set `ATLAS_USER_NAME`
@@ -444,8 +448,11 @@ echo '{"session_id":"test-1","transcript_path":"/path/to/.claude/projects/<slug>
 ```
 
 A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
-activity log (`<state>/activity.ndjson`, events `summary_written` or `summarizer_failed`)
-say what happened. A re-fired Stop for the same session writes nothing twice.
+activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`
+or `summarizer_skipped`) say what happened; `sextant doctor` has a "Stop hook" block with the
+model, the endpoint and the newest summary. A re-fired Stop for the same session writes
+nothing twice (summary and facts), and never calls the model again. The gate variable also
+covers the facts stage; facts proposed for `identity` are never written unreviewed.
 
 ## Updating Sextant
 

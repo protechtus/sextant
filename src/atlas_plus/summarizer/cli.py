@@ -98,6 +98,25 @@ def main(
         os.environ["ATLAS_SUMMARIZER_MODEL"] = model
 
     date = datetime.now().astimezone().strftime("%Y-%m-%d")  # the user's day (MN28)
+    if not dry_run:
+        from atlas_plus.autonomous import is_session_autonomous as _gate
+        if not _gate():
+            # the gate used to run AFTER the model call: the transcript went out, then a traceback (AG38)
+            console.print("[yellow]Session summaries are off: ATLAS_SESSION_AUTONOMOUS=on (or ATLAS_AUTONOMOUS=on) must reach this process (the Stop hook's --env flag).[/yellow]")
+            _event("summarizer_skipped", reason="ATLAS_SESSION_AUTONOMOUS is off", conversation_id=conversation_id or "")
+            raise typer.Exit(2)
+    if conversation_id:
+        from atlas_plus.summarizer.renderer import MEMORY_SESSIONS_DIR as _sdir
+        _marker = f"<!-- session:{''.join(ch for ch in conversation_id if ch.isalnum() or ch in '-_.')[:80]} -->"
+        _sfile = _sdir / f"{date}.md"
+        try:
+            if _sfile.exists() and _marker in _sfile.read_text(encoding="utf-8", errors="replace"):
+                console.print(f"[yellow]Session {conversation_id} is already summarised in {_sfile.name}; nothing to do.[/yellow]")
+                raise typer.Exit(0)  # before any model call (AG40: every re-fire paid for the map and reduce)
+        except OSError:
+            pass
+        if since == "today":
+            since = None  # the session is the unit: a session across midnight lost its first hour (AG40)
 
     # --- 1. Load ---
     console.print(f"Loading turns (source={source}, since={since})...")

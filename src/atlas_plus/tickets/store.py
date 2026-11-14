@@ -229,8 +229,8 @@ def _is_safe_project(project: str) -> bool:
     """
     if not isinstance(project, str) or not re.match(r'^[a-zA-Z0-9_.+-]+$', project):
         return False
-    if project.startswith(".") or project.endswith("."):
-        return False
+    if project.startswith((".", "_")) or project.endswith("."):
+        return False  # `_archive` and friends are internal folders: a ticket filed there was never listed (AG38)
     return project.split(".", 1)[0].casefold() not in _RESERVED_PROJECT_NAMES
 
 
@@ -370,8 +370,8 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
     if "/" in ticket_id:
         # `project/ID` names one ticket when two projects minted the same id (MN29)
         proj, _, ticket_id = ticket_id.partition("/")
-        if not proj or proj.startswith((".", "_")) or ".." in proj or "\\" in proj or "/" in proj:
-            return None
+        if not proj or not _is_safe_project(proj):
+            return None  # `C:` escaped the tickets root on Windows (AG38): the one project rule everywhere
         root = root / proj
     if not root.exists():
         return None

@@ -492,10 +492,11 @@ def main() -> None:
             history_file = dated[-1]
     if history_file.exists():
         text = history_file.read_text(encoding="utf-8-sig", errors="replace")
-        # Find the first ## entry
-        idx = text.find("\n## ")
+        # Find the first ## entry (the Stop hook's log starts with it on its first line: AG40)
+        idx = 0 if text.startswith("## ") else text.find("\n## ")
         if idx != -1:
             entry = text[idx:idx + 600].strip()
+            entry = "\n".join(ln for ln in entry.splitlines() if not ln.startswith("<!-- session:"))
             lines += ["## Last session", _q(entry), ""]
 
     lines.append("=== END ATLAS CONTEXT ===")

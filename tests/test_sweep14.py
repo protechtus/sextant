@@ -578,3 +578,25 @@ def test_import_claims_unchanged_notes_so_stale_is_per_vault(tmp_path, monkeypat
     assert any("b1" in u for u in report["unclaimed_not_judged"])
     report2 = import_cmd.import_obsidian(v1, "reference/shared", execute=True)
     assert report2["claimed"] == 1 and "import_vault" in note.read_text(encoding="utf-8")
+
+
+def test_slow_panels_are_cached_on_the_corpus_signature(tmp_path, monkeypatch):
+    from atlas_plus.web import app as web
+
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    (root / "reference" / "a.md").write_text("---\nid: a\n---\nfact\n", encoding="utf-8")
+    monkeypatch.setattr(web, "MEMORY_ROOT", root)
+    monkeypatch.setenv("ATLAS_WEB_PANEL_CACHE", "on")
+    web._PANEL_CACHE.clear()
+    calls = []
+    assert web._cached_panel("t", lambda: calls.append(1) or "one") == "one"
+    assert web._cached_panel("t", lambda: calls.append(1) or "two") == "one"   # same corpus: cached
+    assert len(calls) == 1
+    import os
+    import time
+    (root / "reference" / "b.md").write_text("---\nid: b\n---\nfact\n", encoding="utf-8")
+    os.utime(root / "reference" / "b.md", (time.time() + 5, time.time() + 5))
+    assert web._cached_panel("t", lambda: calls.append(1) or "three") == "three"  # a note changed: rebuilt
+    monkeypatch.setenv("ATLAS_WEB_PANEL_CACHE", "off")
+    assert web._cached_panel("t", lambda: "four") == "four"

@@ -35,6 +35,18 @@ for _var, _sub in (("ATLAS_WORKSPACE_ROOT", ""), ("ATLAS_MEMORY_ROOT", ".memory"
 
 
 @pytest.fixture(autouse=True)
+def _reset_web_panel_cache(monkeypatch):
+    """The dashboard caches slow panels on the corpus signature (sweep 15 harden pass); tests
+    swap roots and monkeypatch the finders mid-test, so the cache is off and cleared per test."""
+    import sys as _sys
+    monkeypatch.setenv("ATLAS_WEB_PANEL_CACHE", "off")
+    mod = _sys.modules.get("atlas_plus.web.app")
+    if mod is not None and hasattr(mod, "_PANEL_CACHE"):
+        mod._PANEL_CACHE.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _enable_autonomous_writes(monkeypatch):
     monkeypatch.setenv("ATLAS_AUTONOMOUS", "on")
 

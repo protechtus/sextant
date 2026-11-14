@@ -76,11 +76,11 @@ def tickets_create(
         return {"error": str(e)}
 
 
-def tickets_update_status(ticket_id: str, status: str, tickets_root=None) -> dict:
+def tickets_update_status(ticket_id: str, status: str, tickets_root=None, interactive: bool = False) -> dict:
     """Update a ticket's status. Returns updated ticket metadata."""
-    from atlas_plus.autonomous import require_autonomous_writes
+    from atlas_plus.autonomous import require_write
     try:
-        require_autonomous_writes("tickets_status")
+        require_write("tickets_status", interactive=interactive)
     except RuntimeError as e:
         return {"error": str(e)}
     try:

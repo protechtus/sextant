@@ -448,8 +448,15 @@ def memory_remember_tool_v2(
 
     Returns {ok, file, version_copy, error, possible_duplicate, duplicate_hint}.
     """
+    written_source = _agent_source(source)
+    if written_source == "agent" and confidence is not None:
+        try:
+            # high confidence is the operator's: an agent-sourced 0.99 landed as `confidence: high` (AG38)
+            confidence = min(float(confidence), 0.84)
+        except (TypeError, ValueError):
+            confidence = None
     return memory_remember(
-        scope=scope, fact=fact, source=_agent_source(source), confidence=confidence,
+        scope=scope, fact=fact, source=written_source, confidence=confidence,
         session_id=session_id or None, task_id=task_id or None, interactive=True,
     )
 
@@ -662,7 +669,7 @@ def tickets_status_tool(ticket_id: str, status: str) -> dict:
 
     Returns updated ticket dict, or {error: ...} if not found.
     """
-    return tickets_update_status(ticket_id, status)
+    return tickets_update_status(ticket_id, status, interactive=True)  # the operator's agent, like create (AG39)
 
 
 @mcp.tool()
@@ -768,6 +775,18 @@ def memory_health() -> dict:
         "memory_root_exists": exists,
         "memory_root": str(MEMORY_ROOT),
     }
+    try:
+        from atlas_plus import paths as _paths
+        _state = _paths.state_dir()
+        if _state.exists() and not _state.is_dir():
+            health["status"] = "degraded"
+            health["hint"] = f"state directory {_state} is a file, not a directory; move it aside (writes cannot be indexed)"  # AG39
+        from .fts import last_connect_error as _lce
+        if _lce():
+            health["status"] = "degraded"
+            health["index_error"] = f"Search index unavailable: {_lce()}"
+    except Exception:  # noqa: BLE001
+        pass
     if not exists:
         health["hint"] = (
             "memory root does not exist -- run sextant-init, or check that "
@@ -1200,6 +1219,14 @@ class _HostHintMiddleware:
         if scope.get("type") != "http":
             return await self.app(scope, receive, send)
         host = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"host"), "")
+        # the SDK compares the Host header as sent: fold case and a trailing dot here so the
+        # documented list matches `SEXTANT.EXAMPLE.COM` and `sextant.example.com.` too (AG38)
+        folded = host.lower()
+        if folded.endswith(".") or (":" in folded and folded.rsplit(":", 1)[0].endswith(".")):
+            name, _, port = folded.rpartition(":") if folded.count(":") == 1 else (folded, "", "")
+            folded = (name.rstrip(".") + (":" + port if port else "")) if name else folded.rstrip(".")
+        if folded != host:
+            scope = {**scope, "headers": [(k, (folded.encode("latin-1") if k == b"host" else v)) for k, v in scope.get("headers", [])]}
         state = {"status": 0}
 
         async def send_wrapped(message):
@@ -1342,7 +1369,7 @@ def _run_http_with_auth(token: str) -> None:
 
 
 def main() -> None:
-    """Entry point: parse --stdio / --no-auth flags and start the Atlas MCP memory server."""
+    """Entry point: parse --stdio / --no-auth flags and start the Sextant MCP memory server."""
     # Load the heavy optional imports on the MAIN thread before serving. The first search
     # used to import numpy lazily inside a tool worker thread, which can deadlock the C
     # extension import on some interpreters (seen on CPython 3.14, 2026-11-09).

@@ -73,8 +73,11 @@ plus `sextant-doctor` show the pending count. The hub parks a copy too when a
 push arrives against a file it changed meanwhile (its `status` counts it the
 same way, and your side parks the hub's copy in the same sync, so one run
 shows both). Resolving means making your canonical file agree with the other
-side (edit it, or copy the parked copy over it); the parked copy is only a
-copy. Archive or delete it afterwards so `status` stops counting it; anything
+side, byte for byte (edit it, or copy the parked copy over it); to KEEP both
+sides' facts, write the union into your file AND into the hub's live file (a
+union on one side alone stays a conflict on every sync, and copying the parked
+copy over yours drops your own new facts unless you saved them first). The
+parked copy is only a copy. Archive or delete it afterwards so `status` stops counting it; anything
 under a subdirectory of `_atlas/` never syncs, so archiving it there is safe.
 The `sync` output names the parked path.
 

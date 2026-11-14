@@ -70,10 +70,13 @@ def require_write(source: str, interactive: bool = False) -> None:
 def require_autonomous_writes(operation: str = "write") -> None:
     """Raise RuntimeError unless autonomous writes are EXPLICITLY enabled (fail-closed)."""
     value = os.environ.get("ATLAS_AUTONOMOUS", "off").lower()
+    if os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip().lower() in _ENABLED_VALUES:
+        return  # the Stop hook's scoped override (rule 1 above): suggest-facts wrote nothing under it (AG40)
     if value not in _ENABLED_VALUES:
         raise RuntimeError(
-            f"Atlas autonomous {operation} blocked: ATLAS_AUTONOMOUS={value!r}. "
-            "Set ATLAS_AUTONOMOUS=on to enable writes."
+            f"Sextant autonomous {operation} blocked: ATLAS_AUTONOMOUS={value!r}. "
+            "Set ATLAS_AUTONOMOUS=on in the writer's own environment (an MCP registration's env block, "
+            "a hook command's --env flag) to enable unattended writes."
         )
 
 

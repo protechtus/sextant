@@ -297,6 +297,47 @@ def check_temporal() -> dict:
         return {}
 
 
+def check_stop_hook() -> dict:
+    """What the Stop hook's summarizer would use and what it last did: model, endpoint, whether
+    the model is pulled, the newest session log, the last summarizer event (MN28: doctor was
+    blind to all of it while every Stop failed silently)."""
+    import json as _json
+    import os as _os
+    result: dict = {}
+    try:
+        from atlas_plus.summarizer import providers as _prov
+        result["model"] = _prov.OLLAMA_MODEL
+        result["url"] = _prov.OLLAMA_URL
+    except Exception:  # noqa: BLE001
+        return result
+    result["gate"] = (_os.environ.get("ATLAS_SESSION_AUTONOMOUS") or _os.environ.get("ATLAS_AUTONOMOUS") or "off").strip().lower() in ("on", "1", "true")
+    try:
+        import urllib.request as _ur
+        with _ur.urlopen(f"{result['url']}/api/tags", timeout=1.0) as resp:
+            names = [str(m.get("name") or "") for m in (_json.loads(resp.read(200_000).decode("utf-8", "replace")) or {}).get("models", [])]
+        result["reachable"] = True
+        want = result["model"]
+        result["model_pulled"] = any(n == want or n.split(":")[0] == want.split(":")[0] for n in names)
+    except Exception:  # noqa: BLE001
+        result["reachable"] = False
+    try:
+        from atlas_plus import paths as _paths
+        sessions = _paths.memory_root() / "sessions"
+        dated = sorted(sessions.glob("20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md")) if sessions.is_dir() else []
+        result["last_summary"] = dated[-1].stem if dated else None
+    except Exception:  # noqa: BLE001
+        result["last_summary"] = None
+    try:
+        from atlas_plus import activity as _act
+        for ev in _act.tail(limit=200):
+            if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped"):
+                result["last_event"] = f"{ev.get('event')} {str(ev.get('ts') or ev.get('time') or '')[:16]} {str(ev.get('reason') or '')[:80]}".strip()
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
 def check_tickets() -> dict:
     """Return ticket counts and flag tickets with high reopen counts.
 
@@ -656,8 +697,8 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         "md_files": len(files),
         "identity_present": identity_present,
     }
-    conflicted = [f.rel for f in files if f.text and ("\n<<<<<<< " in f.text or f.text.startswith("<<<<<<< ")
-                                                      or "\n>>>>>>> " in f.text)]
+    from atlas_plus.mcp.memory_server.routing import has_conflict_markers as _hcm  # one rule with the writer (AG38)
+    conflicted = [f.rel for f in files if f.text and _hcm(f.text)]
     if conflicted:
         # A half-merged git pull left markers inside notes and doctor said ok (AG19, sweep 12).
         result["conflict_markers"] = conflicted[:10]
@@ -1712,6 +1753,22 @@ def render_text(data: dict) -> str:
         lines.append(f"  Entities: {tg.get('entities', 0)}  Facts: {tg.get('facts_active', 0)}{stale_note}")
         lines.append("")
 
+    # Stop hook (session summaries)
+    sh = data.get("stop_hook", {})
+    if sh.get("model"):
+        lines.append("\033[1mStop hook (session summaries)\033[0m")
+        gate = "on" if sh.get("gate") else "off in this shell (the hook needs --env ATLAS_SESSION_AUTONOMOUS=on on its command)"
+        if not sh.get("reachable"):
+            model_note = f"\033[33mno Ollama at {sh.get('url')}\033[0m"
+        elif sh.get("model_pulled"):
+            model_note = f"model {sh.get('model')} pulled at {sh.get('url')}"
+        else:
+            model_note = f"\033[33mmodel {sh.get('model')} NOT pulled at {sh.get('url')} (ollama pull {sh.get('model')}, or set ATLAS_SUMMARIZER_MODEL)\033[0m"
+        lines.append(f"  Gate: {gate}")
+        lines.append(f"  Model: {model_note}")
+        lines.append(f"  Last summary: {sh.get('last_summary') or 'none written yet'}" + (f"  Last event: {sh['last_event']}" if sh.get('last_event') else ""))
+        lines.append("")
+
     # Nightly jobs
     nightly = data.get("nightly", {})
     if nightly:
@@ -2136,6 +2193,7 @@ def collect() -> dict:
         ("autonomous",        check_autonomous),
         ("disk",              check_disk),
         ("temporal",          check_temporal),
+        ("stop_hook",         check_stop_hook),
         ("tickets",           check_tickets),
         ("dispatcher",        check_dispatcher),
         *([("tunnel", check_tunnel)] if _tunnel_check_relevant() else []),

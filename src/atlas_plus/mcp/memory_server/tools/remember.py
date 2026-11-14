@@ -29,7 +29,13 @@ def _has_conflict_markers(path: Path) -> bool:
         head = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return head.startswith("<<<<<<< ") or "\n<<<<<<< " in head
+    from ..routing import has_conflict_markers
+    return has_conflict_markers(head)
+
+
+def _routing_root():
+    from .. import routing as _routing
+    return _routing.MEMORY_ROOT
 
 
 def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT) -> None:
@@ -175,6 +181,12 @@ def memory_remember(
     """
     if not _scrub_controls(fact or "").replace("\u200b", "").replace("\ufeff", "").strip():
         return {"ok": False, "error": "empty fact: nothing to remember (give some words)"}
+    from ..routing import has_conflict_markers as _hcm
+    if _hcm(fact or ""):
+        # the guard checked the note, not the fact: a fact about resolving merges bricked its own
+        # note for every later write (AG39, sweep 15)
+        return {"ok": False, "file": None, "version_copy": None,
+                "error": "a fact may not start a line with <<<<<<< or >>>>>>> (git conflict markers would make the note unwritable): indent those lines, or describe the merge in words"}
     # interactive=True = a user-invoked MCP tool call (explicit consent; see
     # atlas_plus.autonomous). Background callers (Brain, telegram, promotion)
     # never set it and stay behind the ATLAS_AUTONOMOUS kill switch.
@@ -188,8 +200,12 @@ def memory_remember(
     if target.exists() and _has_conflict_markers(target):
         # a git merge left markers in this note: writing into it grows a half-resolved note
         # and search would index the markers (MN27, sweep 14)
+        try:
+            _rel = target.resolve().relative_to(Path(_routing_root()).resolve()).as_posix()
+        except Exception:  # noqa: BLE001
+            _rel = target.name
         return {"ok": False, "file": None, "version_copy": None,
-                "error": f"{target.name} holds git conflict markers (<<<<<<< / >>>>>>>): resolve the merge first; sextant doctor names such notes"}
+                "error": f"{_rel} holds git conflict markers (<<<<<<< / >>>>>>>): resolve the merge first; sextant doctor names such notes"}
 
     # A corpus that was never initialised is not written into: the write used to succeed by
     # creating a stray `.memory` under the home default whenever the client's env never
@@ -218,7 +234,7 @@ def memory_remember(
         )
     except Exception as e:
         vp = _vh["path"]
-        return {"ok": False, "file": str(target), "version_copy": str(vp) if vp else None, "error": str(e)}
+        return {"ok": False, "file": (str(target) if target.exists() else None), "version_copy": str(vp) if vp else None, "error": str(e)}
     version_path = _vh["path"]
 
     # Optional git autocommit (non-blocking, controlled by ATLAS_MEMORY_AUTOCOMMIT)

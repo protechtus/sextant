@@ -106,7 +106,7 @@ Key SQLite tables in `state.sqlite`:
 Epistemic provenance fields on every fact file (Angle 5, v0.3-C):
 - `first_observed: YYYY-MM-DD` -- set once at creation
 - `last_confirmed: YYYY-MM-DD` -- updated on every write or explicit confirm call
-- `source: agent|suggest-facts|human-direct|telegram`
+- `source: agent|suggest-facts|human-direct|telegram` (the writers Sextant ships; an MCP caller's own label is stored as given, except the human ones, which become `agent`; it is a claim, not an identity)
 - `confidence: high|medium|low`
 - `contradictions: [path1, path2]` -- detected by nightly contradiction check
 

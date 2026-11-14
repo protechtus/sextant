@@ -59,6 +59,7 @@ registration reaches only the MCP server process, not the hooks.
 | `ATLAS_MCP_HOST` / `ATLAS_MCP_PORT` | `127.0.0.1` / `8765` | MCP memory server (HTTP mode). In a container set `ATLAS_MCP_HOST=0.0.0.0` and publish the port on the host's loopback only (`-p 127.0.0.1:8765:8765`); the default bind is unreachable through a port publish. |
 | `ATLAS_MCP_ALLOWED_HOSTS` | unset | Comma-separated Host names the HTTP MCP server accepts besides loopback (`sextant.example.com`, `192.168.1.5`, `[2001:db8::5]`). Each entry matches the bare name (what a client on 80/443 sends) and `name:<any port>`; an entry with its own port (`host:8765`) matches that port only; names are case-insensitive. Needed behind a reverse proxy, a tunnel or on a LAN: the server otherwise answers 421 Invalid Host header (DNS-rebinding guard; the body and the log name this setting). With `ATLAS_MCP_HOST` set beyond loopback and no list, the Host check is off and the bearer token is the guard. Cannot be combined with `--no-auth`. |
 | `ATLAS_VERSION_MIN_INTERVAL_SECONDS` | `0` | Coalescing window for history copies: when set, a write within this many seconds of the note's newest copy makes no new copy (the previous one already holds the pre-burst state). `0` keeps a copy on every write. 1,000 appends to one 1.2 MB note made 1.1 GB of copies; `sextant versions --prune` reclaims them. |
+| `ATLAS_WEB_PANEL_CACHE` | `on` | The dashboard caches its slow panels (topics, next actions, the curation report) per corpus signature (note count + newest mtime) for up to five minutes; `off` recomputes on every load. |
 | `ATLAS_MCP_LOG_LEVEL` | `WARNING` | Log level of the MCP server (`DEBUG`, `INFO`, ...). `INFO` shows one line per request on stderr, which some clients display as noise. |
 | `ATLAS_CLAUDE_PROJECT_DIR` | the slug of the workspace root (`D:\Work\notes` -> `D--Work-notes`), matched case-insensitively under the Claude Code projects root | The Claude Code project folder whose transcripts the Stop hook's mining stage indexes. Set it when your corpus lives elsewhere than the project you run Claude Code in. |
 | `ATLAS_WEB_HOST` / `ATLAS_WEB_PORT` | `127.0.0.1` / `8766` | Web dashboard. |
@@ -97,7 +98,7 @@ the README before exposing anything.
 | --- | --- | --- |
 | `ATLAS_INTERACTIVE_WRITES` | `on` | Interactive writes: you asking your assistant to remember something. `off` makes memory tools effectively read-only. |
 | `ATLAS_AUTONOMOUS` | `off` | Background writes: nightly jobs editing memory unattended. Fail-closed allowlist; leave off until you trust the loop. |
-| `ATLAS_SESSION_AUTONOMOUS` | `off` | Session-scoped autonomous override for a single supervised run. |
+| `ATLAS_SESSION_AUTONOMOUS` | `off` | Session-scoped autonomous override: `on` lets the Stop hook's summarizer AND its suggest-facts stage write, without `ATLAS_AUTONOMOUS`. Put it on the hook command as `--env ATLAS_SESSION_AUTONOMOUS=on` (hooks run outside your shell). |
 | `ATLAS_MEMORY_AUTOCOMMIT` | `off` | Git-commit the corpus after each interactive write (corpus must be a git repo). |
 
 ## Search and embeddings

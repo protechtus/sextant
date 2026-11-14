@@ -88,7 +88,13 @@ Two things about keys that only show up later:
 - The doctor's Services rows mean little under compose: each container probes
   its own loopback, so the MCP row is up and every other service reads down
   even when it is running. Use `docker compose ps` and the curls for liveness,
-  and do not script `sextant-doctor --strict` against a container.
+  and do not script `sextant-doctor --strict` against a container. The dashboard's status bar
+  has the same limit: it shows `mcp: down` while the MCP container is up.
+- Any restart of the `web` container rotates its sessions: an open dashboard tab lands on
+  "Session expired" and you open it again with `?key=`. Nothing is lost.
+- One stale client (an old registration with a wrong token) locks every client behind the
+  same address out for five minutes after ten failures: set `ATLAS_MCP_TRUSTED_PEERS` to the
+  compose gateway (`docker network inspect <project>_default`) in `.env`.
 
 Wire your MCP client at `http://127.0.0.1:8765/mcp` with the bearer token.
 For Claude Code that is one command; the token must come from the file, since

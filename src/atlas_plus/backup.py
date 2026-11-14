@@ -293,7 +293,8 @@ def now(
             "(a crypt remote for any cloud target: https://rclone.org/crypt/), then set "
             "ATLAS_RCLONE_REMOTE=<name> and optionally ATLAS_RCLONE_ROOT=<folder>. "
             "To back up without rclone, copy the corpus folder with any tool you trust "
-            "(docs/GETTING-STARTED.md, 'Backing up')."
+            "(docs/GETTING-STARTED.md, 'Backing up'). In a container, back up the data volume instead "
+            "(docs/HOWTO-docker.md, the busybox tar recipe)."
         )
         raise typer.Exit(1)
 

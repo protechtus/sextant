@@ -166,6 +166,14 @@ def _find_prior_note(prior: str, dest_root: Path) -> Path | None:
     return None
 
 
+def _strip_title(body: str) -> str:
+    """The body without its first `# title` line: a renamed conversation that also gained turns was
+    never updated because the heading changed (AG41)."""
+    if body.startswith("# "):
+        return body.partition("\n")[2].lstrip("\n")
+    return body
+
+
 def _grew(prior_path: Path, new_text: str) -> bool:
     """True when the newly rendered conversation holds more body than the stored note."""
     try:
@@ -174,8 +182,8 @@ def _grew(prior_path: Path, new_text: str) -> bool:
         return False
     if "[truncated by sextant import" in old:
         return False
-    old_body = _fm_body(old).replace("\r\n", "\n").strip()
-    new_body = _fm_body(new_text).replace("\r\n", "\n").strip()
+    old_body = _strip_title(_fm_body(old).replace("\r\n", "\n").strip())
+    new_body = _strip_title(_fm_body(new_text).replace("\r\n", "\n").strip())
     return len(new_body) > len(old_body) and new_body.startswith(old_body[:200])
 
 
@@ -668,7 +676,8 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
         # Line endings are not content: a CRLF vault was re-imported whole on every run (MN16).
         body_hash = hashlib.sha256(_fm_body(raw).replace("\r\n", "\n").strip()
                                    .encode("utf-8", errors="replace")).hexdigest()
-        entries = by_origin.get(rel_src) or by_origin.get(str(src)) or []
+        entries = [e for e in (by_origin.get(rel_src) or by_origin.get(str(src)) or [])
+                   if not e.get("vault") or e["vault"] == _CURRENT_VAULT["id"]]  # another vault's README.md is not ours to call edited (AG41)
         if entries:
             latest = max(entries, key=lambda e: (e.get("imported_at") or "", e["n"] if e["n"] < 1000 else 0))
             # Unchanged when the corpus copy still holds this body, OR when the stamp says this
@@ -712,6 +721,9 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
 
     # Older copies of a note that was edited more than once, and notes whose vault file is gone.
     for origin, entries in by_origin.items():
+        entries = [e for e in entries if not e.get("vault") or e["vault"] == _CURRENT_VAULT["id"]]  # another vault's copy is not an older copy of ours (AG41)
+        if not entries:
+            continue
         if origin in vault_rels:
             if len(entries) > 1:
                 latest = max(entries, key=lambda e: (e.get("imported_at") or "", e["n"] if e["n"] < 1000 else 0))

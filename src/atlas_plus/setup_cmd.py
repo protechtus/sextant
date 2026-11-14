@@ -401,9 +401,9 @@ def render(info: dict, client: str = "all") -> str:
                              "baked-in variables as --env flags; nothing to set user-wide.")
             lines.append("   Claude Code runs hook commands through bash (Git Bash on Windows), "
                          "which these are written for.")
-            lines.append("   The session-start hook prints the corpus it read; the Stop hook writes "
-                         "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
-                         "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command.")
+        lines.append("   The session-start hook prints the corpus it read; the Stop hook writes "
+                     "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
+                     "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command.")  # printed for --client hooks too (AG39/AG40)
         if info.get("settings_json"):
             lines += [json.dumps(info["settings_json"], indent=2), ""]
         if info.get("hooks_from_windows"):
@@ -586,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
         if piece is not None:
             file_text = json.dumps(piece, indent=2)
         try:
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)  # ~/.config/opencode may not exist yet (AG39)
             _write_out(Path(args.out), file_text, piece)
         except OSError as exc:
             print(f"sextant setup: cannot write {args.out}: {exc}", file=sys.stderr)

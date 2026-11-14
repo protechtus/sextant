@@ -133,8 +133,11 @@ def _summarizer_unavailable_reason() -> str:
             except Exception:  # noqa: BLE001
                 return ""
             from atlas_plus.summarizer.providers import OLLAMA_MODEL as _want
-            have = {n for n in names} | {n.split(":")[0] for n in names}
-            if names and _want not in have and _want.split(":")[0] not in have:
+            # exact tag, or `name:latest` for a bare name: a pulled sibling tag (qwen3:4b for qwen3:8b)
+            # passed the probe and then every chat answered 404 (AG40)
+            have = set(names)
+            _want_full = _want if ":" in _want else _want + ":latest"
+            if names and _want not in have and _want_full not in have:
                 return (f"model {_want} is not pulled at {url} (`ollama pull {_want}`, or set ATLAS_SUMMARIZER_MODEL "
                         f"to one you have: {', '.join(names[:6])})")
             return ""

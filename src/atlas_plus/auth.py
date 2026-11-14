@@ -128,6 +128,9 @@ class AuthFailureLog:
         max_failures_per_window: int = DEFAULT_MAX_FAILURES_PER_WINDOW,
     ) -> None:
         self._records: deque[AuthFailure] = deque(maxlen=max_records)
+        # refusals while locked are counted per source here, never in the deque: a flood of
+        # them evicted the ten real failures and lifted the lock (AG38, sweep 15)
+        self._refused: dict[str, list] = {}
         self._lock = threading.Lock()
         self.window_seconds = window_seconds
         self.max_failures_per_window = max_failures_per_window
@@ -145,6 +148,18 @@ class AuthFailureLog:
         ts = time.time() if now is None else now
         rec = AuthFailure(ts=ts, path=path, client_ip=client_ip, cf_ip=cf_ip, reason=reason)
         with self._lock:
+            if reason == "locked_out":
+                key = cf_ip or client_ip or "unknown"
+                row = self._refused.get(key)
+                if row is None:
+                    if len(self._refused) >= 256:
+                        oldest = min(self._refused, key=lambda k: self._refused[k][1])
+                        self._refused.pop(oldest, None)
+                    self._refused[key] = [0, ts]
+                    row = self._refused[key]
+                row[0] += 1
+                row[1] = ts
+                return rec
             self._records.append(rec)
         return rec
 
@@ -187,6 +202,7 @@ class AuthFailureLog:
             "window_seconds": self.window_seconds,
             "distinct_sources_in_window": len(sources),
             "last_failure_iso": records[-1].as_dict()["iso"] if records else None,
+            "locked_out_refusals": {k: v[0] for k, v in sorted(self._refused.items(), key=lambda kv: -kv[1][1])[:20]},
         }
 
     def clear(self) -> None:

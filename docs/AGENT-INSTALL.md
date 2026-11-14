@@ -222,7 +222,9 @@ interpreter already in place (in a clone the same block ships as placeholders in
 pair for macOS **and** Linux). It goes into `~/.claude/settings.json`. **ASK** before editing
 settings, show the diff, and if a `hooks` key already exists add the entries rather than
 replacing the key. Hooks take effect in the next Claude Code session. The Stop hook writes
-nothing until the human sets `ATLAS_AUTONOMOUS=on`.
+nothing until `ATLAS_SESSION_AUTONOMOUS=on` reaches it: the human adds
+`--env ATLAS_SESSION_AUTONOMOUS=on` to the stop command (docs/GETTING-STARTED.md, "Switching the
+Stop hook on"); `sextant setup --client hooks` prints that hint.
 
 Hooks are separate processes: the `env` block of the MCP registration applies to the MCP
 server only, not to them. If you set `ATLAS_MEMORY_ROOT` / `ATLAS_STATE_DIR` /

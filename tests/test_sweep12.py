@@ -55,8 +55,8 @@ def test_setup_out_merges_into_an_existing_config_with_a_backup(tmp_path, capsys
     bad.write_text("{not json", encoding="utf-8")
     assert setup_main(["--client", "json", "--out", str(bad)]) == 1
     assert "not valid JSON" in capsys.readouterr().err
-    assert setup_main(["--client", "json", "--out", str(tmp_path / "nope" / "x.json")]) == 1
-    assert "cannot write" in capsys.readouterr().err
+    assert setup_main(["--client", "json", "--out", str(tmp_path / "nope" / "x.json")]) == 0  # sweep 15 (AG39): --out creates missing parents
+    assert (tmp_path / "nope" / "x.json").exists()
 
 
 def test_setup_client_with_json_prints_that_piece(capsys):

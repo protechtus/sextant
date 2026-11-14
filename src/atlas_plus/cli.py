@@ -533,7 +533,9 @@ def gather_components(probe_ports: bool = True) -> list[dict]:
 
     out: list[dict] = []
     mem = atlas_paths.memory_root()
-    corpus_files = sum(1 for _ in mem.rglob("*.md")) if mem.exists() else 0
+    corpus_files = (sum(1 for p in mem.rglob("*.md")
+                        if not {"versions", "_atlas", "archive", "_sync"} & set(p.relative_to(mem).parts))
+                    if mem.exists() else 0)  # the same count as doctor and the dashboard (MN29: 219 vs 24)
     out.append({
         "name": "Memory corpus",
         "what": f"your knowledge as plain markdown ({corpus_files} file(s) at {mem})",

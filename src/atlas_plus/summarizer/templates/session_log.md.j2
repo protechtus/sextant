@@ -1,3 +1,7 @@
 ## {{ date }} - {{ summary.title }}
 
 {{ summary.completed | join('. ') }}{% if summary.pending %} Pending: {{ summary.pending | join('; ') }}.{% endif %}
+{% if summary.worked_on %}Worked on: {{ summary.worked_on | join('; ') }}.
+{% endif %}{% if summary.lessons %}Lessons: {{ summary.lessons | join('; ') }}.
+{% endif %}{% if summary.files_touched %}Files: {{ summary.files_touched | join(', ') }}.
+{% endif %}

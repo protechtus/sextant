@@ -336,14 +336,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 
-# Browser hardening (MN4, pipeline sweep 2026-11-11): the two CDN scripts are pinned by
-# subresource integrity, only those two origins may run script, nothing may frame the page,
+# Browser hardening (MN4, pipeline sweep 2026-11-11): htmx is pinned by subresource integrity
+# (Tailwind cannot be: its CDN sends no CORS header, MN29), only those two origins may run script, nothing may frame the page,
 # and the referrer never leaves. 'unsafe-inline' stays for the page's own inline script and
 # Tailwind's generated styles.
 async def _json_object(request: Request, required: tuple[str, ...] = ()) -> dict:
     """The request body as a JSON object, or a 400 that says what is wrong (AG31: the ticket
     routes answered 500 and leaked KeyError text; the deep-JSON guard covered two routes)."""
     raw = await request.body()
+    if len(raw) > 2_097_152:
+        raise HTTPException(status_code=413, detail="Body larger than 2 MB")  # a 30 MB body was accepted (AG38)
     if _too_deep(raw):
         raise HTTPException(status_code=400, detail="Body too deeply nested")
     try:
@@ -355,11 +357,12 @@ async def _json_object(request: Request, required: tuple[str, ...] = ()) -> dict
     missing = [k for k in required if not body.get(k)]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing field(s): {', '.join(missing)}")
+    import math as _math
     for k, v in body.items():
         # these routes take flat strings and numbers; a list or object reached the store as a 500
-        # or a title of "['a']" (MN25)
-        if isinstance(v, (dict, list)):
-            raise HTTPException(status_code=400, detail=f"Field {k} must be a string or a number, not a list or object")
+        # or a title of "['a']" (MN25); true/Infinity landed in a ticket body as text (AG38)
+        if isinstance(v, (dict, list)) or (isinstance(v, float) and not _math.isfinite(v)):
+            raise HTTPException(status_code=400, detail=f"Field {k} must be a string, a boolean or a finite number")
     for k in required:
         if not isinstance(body[k], str):
             raise HTTPException(status_code=400, detail=f"Field {k} must be a string")
@@ -1442,7 +1445,13 @@ async def memory_file_read(request: Request, path: str = "", raw: str = ""):
         except UnicodeDecodeError:
             return PlainTextResponse("This note is not UTF-8; the editor would replace its bytes. Edit it in your editor.", status_code=415)  # MN29
         import hashlib as _hl
-        return PlainTextResponse(text_out, headers={"X-Sextant-Etag": _hl.sha256(data).hexdigest()})
+        return PlainTextResponse(text_out, headers={
+            "X-Sextant-Etag": _hl.sha256(data).hexdigest(),
+            # the textarea folds CRLF to LF and fetch().text() drops a BOM: the editor re-applies both
+            # on save, so a no-edit Save is a no-op and a real edit keeps the note's shape (AG41)
+            "X-Sextant-Eol": "crlf" if b"\r\n" in data else "lf",
+            "X-Sextant-Bom": "1" if data.startswith(b"\xef\xbb\xbf") else "0",
+        })
     full = target.read_text(encoding="utf-8", errors="replace")
     content = full[:8000]
     cut = (f'<div class="text-amber-400 text-xs mb-1">showing the first 8,000 of {len(full):,} characters; '
@@ -1465,7 +1474,9 @@ async def memory_file_write(request: Request):
     body = await _json_object(request, required=("path",))
     path = body.get("path", "")
     content = body.get("content", "")
-    if not isinstance(path, str) or not isinstance(content, str) or not path or ".." in path:
+    if not isinstance(content, str):
+        raise HTTPException(status_code=400, detail="content must be a string")  # it said "Invalid path" (AG38)
+    if not isinstance(path, str) or not path or ".." in path:
         raise HTTPException(status_code=400, detail="Invalid path")
     safe_path = path.replace("\\", "/").lstrip("/")
     # Same confinement as the MCP read path (audit 2026-11-09, row 14):
@@ -1937,10 +1948,10 @@ async def pending_facts_panel(request: Request):
             r = await client.get(f"{BRAIN_URL}/pending-facts?status=pending&limit=20", headers=_brain_headers)
         r.raise_for_status()
         facts = r.json().get("facts", [])
-    except httpx.ConnectError:
-        return HTMLResponse('<div class="text-red-400 text-xs">Brain not running.</div>')
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return HTMLResponse('<div class="text-slate-500 text-xs">Brain not reachable (optional: this panel fills when the Brain runs).</div>')  # a bare `Error:` under compose (AG37)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc))}</div>')
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc) or exc.__class__.__name__)}</div>')
 
     if not facts:
         return HTMLResponse('<div class="text-slate-500 text-xs">No pending fact candidates. Candidates appear here after substantial Brain tasks complete.</div>')
@@ -2278,7 +2289,7 @@ async def memory_next_actions(request: Request, limit: int = 5):
         return result
 
     try:
-        data = await asyncio.to_thread(_gather)
+        data = await asyncio.to_thread(lambda: _cached_panel(f"next-actions:{limit}", _gather))
         return data
     except Exception as exc:
         return {"error": str(exc), "decayed": [], "orphans": [], "untagged": [], "gaps": []}
@@ -2299,8 +2310,8 @@ async def memory_next_actions_panel(request: Request):
         from atlas_plus.mcp.memory_server.config import MEMORY_ROOT
         from atlas_plus.curation.orphan import find_orphan_candidates
 
-        decayed = find_decayed_facts(threshold_days=0)
-        orphans = find_orphan_candidates(MEMORY_ROOT, min_age_days=90, max_health=0.5, limit=5)
+        decayed = _cached_panel("decayed", lambda: find_decayed_facts(threshold_days=0))
+        orphans = _cached_panel("orphans:5", lambda: find_orphan_candidates(MEMORY_ROOT, min_age_days=90, max_health=0.5, limit=5))
         gaps = top_miss_queries(since_hours=168, limit=5)
         return {"decayed": decayed, "orphans": orphans, "gaps": gaps}
 
@@ -2541,7 +2552,7 @@ async def memory_curation_report_panel(request: Request):
     def _get_counts() -> dict:
         import re as _re
         from atlas_plus.curation.weekly_report import generate_report
-        report_text, _ = generate_report(dry_run=True)
+        report_text, _ = _cached_panel("curation-report", lambda: generate_report(dry_run=True))
 
         from atlas_plus.curation.weekly_report import curation_counts
         counts = curation_counts(report_text)
@@ -2584,6 +2595,56 @@ async def memory_curation_report_panel(request: Request):
 # ---------------------------------------------------------------------------
 # Memory topic index (tag cloud)
 # ---------------------------------------------------------------------------
+
+_PANEL_CACHE: dict[str, tuple[str, float, object]] = {}
+_PANEL_LOCKS: dict[str, object] = {}
+_PANEL_TTL = 300.0
+
+
+def _corpus_signature() -> str:
+    """Note count and newest mtime under the corpus (history copies and state excluded): one
+    directory walk, so a panel that costs seconds is recomputed only when a note changed."""
+    count = 0
+    newest = 0.0
+    skip = {"versions", "_atlas", ".git", "_sync", "__pycache__"}
+    try:
+        for dirpath, dirnames, filenames in os.walk(MEMORY_ROOT):
+            dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
+            for name in filenames:
+                if not name.endswith(".md"):
+                    continue
+                count += 1
+                try:
+                    m = os.stat(os.path.join(dirpath, name)).st_mtime
+                except OSError:
+                    continue
+                if m > newest:
+                    newest = m
+    except OSError:
+        pass
+    return f"{MEMORY_ROOT}|{count}:{newest:.3f}"  # two empty corpora are not the same corpus
+
+
+def _cached_panel(key: str, build, ttl: float = _PANEL_TTL):
+    """``build()`` once per corpus signature (and at most once per ``ttl``), one computation in
+    flight per key: repeated loads of a slow panel piled up threads (670 MB RSS at 5,000 notes)."""
+    import threading as _th
+    import time as _time
+    if os.environ.get("ATLAS_WEB_PANEL_CACHE", "on").strip().lower() in ("off", "0", "false"):
+        return build()
+    sig = _corpus_signature()
+    hit = _PANEL_CACHE.get(key)
+    if hit and hit[0] == sig and _time.monotonic() - hit[1] < ttl:
+        return hit[2]
+    lock = _PANEL_LOCKS.setdefault(key, _th.Lock())
+    with lock:
+        hit = _PANEL_CACHE.get(key)
+        if hit and hit[0] == sig and _time.monotonic() - hit[1] < ttl:
+            return hit[2]
+        value = build()
+        _PANEL_CACHE[key] = (sig, _time.monotonic(), value)
+        return value
+
 
 def _build_topic_index(memory_root) -> dict[str, list[str]]:
     """Scan .memory/ for frontmatter tags: fields. Return {tag: [path, ...]} sorted by count desc."""
@@ -2636,7 +2697,7 @@ async def memory_topics(request: Request):
     _check_auth(request)
 
     def _scan():
-        return _build_topic_index(MEMORY_ROOT)
+        return _cached_panel("topics", lambda: _build_topic_index(MEMORY_ROOT))
 
     try:
         index = await asyncio.to_thread(_scan)
@@ -2661,7 +2722,7 @@ async def memory_topics_html(request: Request):
     _check_auth(request)
 
     def _scan():
-        return _build_topic_index(MEMORY_ROOT)
+        return _cached_panel("topics", lambda: _build_topic_index(MEMORY_ROOT))
 
     try:
         index = await asyncio.to_thread(_scan)
@@ -3659,6 +3720,9 @@ async def create_ticket_endpoint(request: Request):
     if not MEMORY_ROOT.exists():
         raise HTTPException(status_code=400, detail=f"memory root does not exist: {MEMORY_ROOT} -- run sextant-init there")
     body = await _json_object(request, required=("title", "project"))
+    for _k in ("body", "assignee", "priority", "effort", "verified", "requires"):
+        if body.get(_k) is not None and not isinstance(body[_k], str):
+            raise HTTPException(status_code=400, detail=f"Field {_k} must be a string")  # `body: true` became the text True (AG38)
     from atlas_plus.tickets.store import create_ticket
     try:
         t = create_ticket(
@@ -3669,6 +3733,7 @@ async def create_ticket_endpoint(request: Request):
             priority=body.get("priority", "normal"),
             effort=body.get("effort", "M"),
             body=body.get("body", ""),
+            verified=(str(body.get("verified")).strip() or None) if body.get("verified") else None,  # READY needs it (MN29)
         )
         return t.as_dict()
     except Exception as exc:
@@ -6036,12 +6101,14 @@ async function browseMemory(){{
 // ---- Memory file editor ----
 let _mfEditPath='';
 let _mfBaseEtag='';
+let _mfEol='lf';
+let _mfBom='0';
 async function editMemoryFile(path){{
   _mfEditPath=path;
   const pre=document.getElementById('mf-content');
   if(!pre)return;
   let current=pre.textContent;
-  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
+  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
   catch(e){{showToast('Could not load the whole file: '+e.message,'failed');return;}}
   const r=document.getElementById('mem-results');
   // Static skeleton via innerHTML; the PATH lands via textContent -- a
@@ -6066,7 +6133,7 @@ async function saveMemoryFile(){{
   try{{
     const r=await fetch('/api/memory/file',{{method:'POST',
       headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify({{path:_mfEditPath,content:ta.value,base_etag:_mfBaseEtag}})}});
+      body:JSON.stringify({{path:_mfEditPath,content:(function(){{let v=ta.value;if(_mfEol==='crlf')v=v.replace(/\r?\n/g,'\r\n');if(_mfBom==='1'&&v.charCodeAt(0)!==0xFEFF)v='\uFEFF'+v;return v;}})(),base_etag:_mfBaseEtag}})}});
     const d=await r.json().catch(()=>({{}}));
     if(d.ok){{
       showToast((d.unchanged?'No change: ':'Saved: ')+_mfEditPath.split('/').pop(),'done');

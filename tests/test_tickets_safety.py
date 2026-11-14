@@ -144,7 +144,7 @@ def test_unsafe_project_rejected(tickets_root, bad):
     assert not list(tickets_root.parent.glob("*.md"))
 
 
-@pytest.mark.parametrize("good", ["app", "my.app", "my_app", "a+b", "v1.2-x", "_inbox"])
+@pytest.mark.parametrize("good", ["app", "my.app", "my_app", "a+b", "v1.2-x"])  # `_inbox` is an internal folder the ticket walker prunes (AG38, sweep 15)
 def test_ordinary_projects_still_accepted(tickets_root, good):
     t = create_ticket("x", good, tickets_root=tickets_root)
     assert t.path.parent == tickets_root / good

@@ -56,6 +56,11 @@ def _call_ollama(prompt: str) -> str:
             prompt, temperature=0.3, timeout=float(TIMEOUT)
         ).strip()
     except Exception as e:  # connect/timeout/HTTP -> a failure 'auto' can fall back from
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status == 404:
+            raise ProviderError(f"Ollama at {OLLAMA_URL} has no model {OLLAMA_MODEL} (`ollama pull {OLLAMA_MODEL}`, or set ATLAS_SUMMARIZER_MODEL to one you have)")
+        if status is not None:
+            raise ProviderError(f"Ollama at {OLLAMA_URL} answered HTTP {status} for model {OLLAMA_MODEL}")
         raise ProviderError(f"Ollama not reachable at {OLLAMA_URL}: {e}")
     if not text:
         raise ProviderError("Ollama returned empty response")

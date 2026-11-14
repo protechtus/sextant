@@ -908,6 +908,16 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
     return target, fm_template
 
 
+_CONFLICT_RE = _re.compile(r"(?m)^(?:<<<<<<<|>>>>>>>)(?:[ \t]|$)")
+
+
+def has_conflict_markers(text: str) -> bool:
+    """A line that starts with `<<<<<<<` or `>>>>>>>` (space, tab or end of line after it; a BOM
+    before it does not hide it). One rule for the writer, the MCP tool and doctor (AG38: they
+    disagreed; `=======` alone is a setext heading and never counts)."""
+    return bool(_CONFLICT_RE.search((text or "").lstrip("\ufeff")))
+
+
 def append_fact(
     target: Path,
     fact: str,
