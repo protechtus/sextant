@@ -380,6 +380,13 @@ def _queue_for_review(cand: dict, conversation_id: str | None) -> None:
         pass
 
 
+def _content_seq(text: str) -> list[str]:
+    """The content tokens of a fact in order (AG61: a reversal keeps the token set)."""
+    from atlas_plus.mcp.memory_server.fts import _WORD_RE as _w
+    import unicodedata as _ud
+    return [t for t in _w.findall((text if text.isascii() else _ud.normalize("NFC", text)).lower()) if t not in _FUNCTION_WORDS]
+
+
 def _fact_tokens(text: str) -> set[str]:
     from atlas_plus.mcp.memory_server.fts import _WORD_RE as _w
     import unicodedata as _ud
@@ -387,11 +394,11 @@ def _fact_tokens(text: str) -> set[str]:
 
 
 _FUNCTION_WORDS = frozenset({
-    "the", "a", "an", "and", "or", "of", "to", "in", "is", "it", "that", "this", "for", "be", "with", "on", "at", "by", "from",
-    "are", "was", "were", "as", "but", "all", "has", "have", "had", "do", "does", "did", "will", "would", "can", "could",
-    "should", "may", "might", "must", "shall", "our", "we", "us", "its", "their", "they", "them", "there", "here", "now",
-    "also", "just", "still", "very", "so", "then", "than", "into", "over", "under", "about", "which", "who", "whom",
-    "der", "die", "das", "und", "ist", "le", "la", "les", "et", "est", "el", "los", "las", "y", "es", "и", "в", "на",
+    # articles, pronouns and connectives only: tense (is/was), modality (must/may), quantity (all), direction (over/under)
+    # and disjunction (and/or) carry meaning, and a correction that changes one was dropped as a rewording (AG61)
+    "the", "a", "an", "of", "to", "in", "it", "that", "this", "for", "with", "on", "at", "by", "from", "as", "but",
+    "our", "we", "us", "its", "their", "they", "them", "there", "here", "also", "just", "very", "so", "then", "about", "which", "who", "whom",
+    "der", "die", "das", "dem", "den", "des", "und", "le", "la", "les", "et", "el", "los", "las", "y", "и", "в", "на", "و",
     "の", "は", "が", "を", "に", "と", "で", "も", "은", "는", "이", "가", "을", "를", "的", "了", "是", "在", "和",
 })
 _NEGATIONS = {"not", "no", "never", "dont", "doesnt", "isnt", "cannot", "cant", "without", "stop", "avoid", "disable", "disabled", "off", "instead", "replaced", "replaces"}
@@ -433,7 +440,7 @@ def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:
                 # MN31: a correction differs from its original by ONE token that carries the meaning (a digit,
                 # a negation): that line is not a duplicate however similar the rest is
                 diff = want ^ have
-                if not (diff - _FUNCTION_WORDS):  # only function words differ: a rewording (MN49: `room B` to `room C` had been dropped as a duplicate)
+                if not (diff - _FUNCTION_WORDS) and _content_seq(fact) == _content_seq(body):  # only function words differ AND the content words keep their order: a rewording (MN49; AG61: `from Postgres to MySQL` reversed had the same token set)
                     return True
     except Exception:  # noqa: BLE001
         return False

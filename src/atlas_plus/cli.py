@@ -722,11 +722,7 @@ def main() -> None:
         raise
 
 
-if __name__ == "__main__":
-    main()
-
-
-# ---------------------------------------------------------------- guessed command names redirect in one bounce (MN54: `install` suggested `uninstall`)
+# ---------------------------------------------------------------- guessed command names redirect in one bounce (MN54: `install` suggested `uninstall`; AG61: with arguments too)
 _REDIRECTS = {
     "install": "To set up: `sextant init`, then `sextant setup --client <name>`. To remove: `sextant uninstall`.",
     "save": "Did you mean `sextant remember \"<fact>\"`?",
@@ -735,13 +731,13 @@ _REDIRECTS = {
     "list": "Did you mean `sextant search <words>` (facts) or `sextant components` (what is installed)?",
     "forget": "Facts are plain Markdown: edit or delete the line in the note `sextant search` names. `sextant uninstall` removes the whole corpus.",
     "update": "Facts are plain Markdown: edit the line in the note `sextant search` names. To upgrade the package: `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`.",
-    "status": "Did you mean `sextant doctor` (health) or `sextant components` (what is installed)?",
 }
 
 
 def _make_redirect(name: str, sentence: str):
-    def _redirect() -> None:
-        console.print(f"[yellow]No such command '{name}'.[/yellow] {sentence}")
+    def _redirect(ctx: typer.Context) -> None:
+        _extra = " ".join(ctx.args)
+        console.print(f"[yellow]No such command '{name}'.[/yellow] {sentence}" + (f" (you typed: {name} {_extra[:80]})" if _extra else ""))
         raise typer.Exit(2)
     _redirect.__name__ = f"_redirect_{name}"
     _redirect.__doc__ = sentence
@@ -750,5 +746,8 @@ def _make_redirect(name: str, sentence: str):
 
 for _name, _sentence in _REDIRECTS.items():
     if _name not in {c.name for c in app.registered_commands}:
-        app.command(_name, hidden=True)(_make_redirect(_name, _sentence))
+        app.command(_name, hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []})(_make_redirect(_name, _sentence))
 
+
+if __name__ == "__main__":
+    main()

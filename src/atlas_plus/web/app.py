@@ -633,10 +633,10 @@ async def auth_failures_panel(request: Request, limit: int = 25):
         f"from {stats['distinct_sources_in_window']} source(s); "
         f"{stats['total']} total recorded.</p>"
         + _locked_out_html(stats)
-        + "<table class='text-xs'><thead><tr>"
+        + "<div style='overflow-x:auto;max-width:100%;min-width:0'><table class='text-xs' style='white-space:nowrap'><thead><tr>"  # the 684 px table spilled out of its 230 px card (MN50, AG65)
         "<th class='px-2 text-left'>time (UTC)</th><th class='px-2 text-left'>source</th>"
         "<th class='px-2 text-left'>path</th><th class='px-2 text-left'>reason</th>"
-        "</tr></thead><tbody>" + cells + "</tbody></table>"
+        "</tr></thead><tbody>" + cells + "</tbody></table></div>"
     )
     return HTMLResponse(body)
 
@@ -6790,7 +6790,8 @@ def _port_free(host: str, port: int) -> bool:
     import socket
     try:
         with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if os.name != "nt":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # on Windows the option binds beside a live listener (AG61)
             s.bind((host, port))
         return True
     except OSError:

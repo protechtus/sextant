@@ -188,11 +188,13 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
             elif exc.code >= 500 and "<html" in detail.lower():
                 hint = " (this does not look like an MCP server: the reply is an HTML page)"
                 detail = detail.split("\n", 1)[0][:80]
-            raise RuntimeError(f"{method}: HTTP {exc.code}{hint}: {detail}") from exc
+            raise RuntimeError(f"{method}: HTTP {exc.code}{hint}" + (f": {detail}" if detail.strip() else "")) from exc  # no dangling colon on an empty body (AG65)
         except (urllib.error.URLError, OSError) as exc:
             _s = str(exc)
-            if "WRONG_VERSION_NUMBER" in _s or "record layer failure" in _s or ("[SSL" in _s and "CERTIFICATE" not in _s.upper()):  # OpenSSL words differ per build (MN53: Windows says record layer failure)
+            if "WRONG_VERSION_NUMBER" in _s or "record layer failure" in _s:  # OpenSSL words differ per build (MN53: Windows says record layer failure)
                 raise RuntimeError(f"{method}: {url} answered plain HTTP to a TLS handshake: use http:// for this server, or put it behind a TLS proxy") from exc  # AG56
+            if "[SSL" in _s and "CERTIFICATE" not in _s.upper():
+                raise RuntimeError(f"{method}: {url} refused the TLS handshake with an alert ({_s[:80]}): use the host name the server's certificate names, not its IP address") from exc  # AG65: an alert was called plain HTTP
             if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower():
                 raise RuntimeError(f"{method}: {url} presented a certificate this client does not trust (a private CA or `tls internal`): point SSL_CERT_FILE at the CA certificate") from exc
             raise RuntimeError(f"{method}: could not reach {url}: {exc} (is the server running there? in a container it must "
@@ -351,7 +353,7 @@ def _main_lines(argv: list[str]) -> int:
 
     if args.url and not args.url.lower().startswith(("http://", "https://")):
         if "://" not in args.url:
-            print(f"verify: the URL has no scheme: use http://{args.url} (or https://)", file=sys.stderr)  # MN53
+            print(f"verify: the URL has no scheme: use https://{args.url} behind a TLS proxy, or http://{args.url} on a trusted network", file=sys.stderr)  # MN53, AG65
         else:
             print(f"verify: only http:// and https:// URLs are supported (got {args.url.split('://', 1)[0]}://)", file=sys.stderr)  # an ftp:// URL hung (AG56)
         return 2

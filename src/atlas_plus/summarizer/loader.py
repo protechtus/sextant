@@ -74,6 +74,14 @@ def _load_claude_code(
         return
 
     jsonl_files = sorted(CLAUDE_CODE_ROOT.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    _one = __import__("os").environ.get("ATLAS_TRANSCRIPT_FILE", "")
+    if _one:
+        try:
+            _p = Path(_one).resolve()
+            if _p.is_file() and _p.is_relative_to(CLAUDE_CODE_ROOT.resolve()):
+                jsonl_files = [_p]  # the Stop payload names the transcript: every Stop had parsed every transcript under the root (AG64: 200 MB, 70 s cold)
+        except Exception:  # noqa: BLE001
+            pass
 
     for path in jsonl_files:
         # Skip files not modified since our window

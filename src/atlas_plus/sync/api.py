@@ -115,12 +115,25 @@ async def _require_principal(request: Request) -> devices.Device:
         import logging as _logging
         import time as _time
         _src = fwd_ip or peer_ip
-        _wk = peer_ip if fwd_ip else _src  # one line per PEER per window, like the dashboard (AG49: 40 forged names, 40 lines)
-        if _time.time() - _LOCK_WARNED.get(_wk, 0.0) > AUTH_FAILURES.window_seconds:
-            _LOCK_WARNED[_wk] = _time.time()
+        # one line per locked CLIENT per window, at most five per peer, then one summary line per peer (AG65: behind one proxy only
+        # the first locked client was named, the dashboard's rule since AG59)
+        _now = _time.time()
+        _win = AUTH_FAILURES.window_seconds
+        if _now - _LOCK_WARNED.get(_src, 0.0) > _win:
+            _LOCK_WARNED[_src] = _now
+            _pk = f"peer:{peer_ip}"
+            _named = _LOCK_WARNED.get(_pk, 0)
+            if _now - _LOCK_WARNED.get(_pk + ":t", 0.0) > _win:
+                _named = 0
+                _LOCK_WARNED[_pk + ":t"] = _now
+            if _named < 5:
+                _LOCK_WARNED[_pk] = _named + 1
+                _logging.getLogger("atlas_plus.sync.api").warning("sync hub: %s is locked out after repeated auth failures%s; refusing with 429", _src, f" (via {peer_ip})" if fwd_ip else "")
+            elif _named == 5:
+                _LOCK_WARNED[_pk] = _named + 1
+                _logging.getLogger("atlas_plus.sync.api").warning("sync hub: more than 5 clients via %s are locked out this window; the rest are not named", peer_ip)
             if len(_LOCK_WARNED) > 512:
-                _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))
-            _logging.getLogger("atlas_plus.sync.api").warning("sync hub: %s is locked out after repeated auth failures; refusing with 429", _src)  # the hub left no trace (AG44)
+                _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))  # the hub left no trace (AG44)
         raise HTTPException(
             status_code=429, detail="too many failed authentication attempts",
             headers={"Retry-After": str(int(AUTH_FAILURES.window_seconds))},

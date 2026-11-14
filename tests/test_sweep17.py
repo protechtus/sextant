@@ -93,7 +93,7 @@ def test_doctor_text_shows_unmerged_and_hub_warns_per_peer_and_client_sanitises(
 
     assert '"unmerged_hint"' in inspect.getsource(doc)
     assert '"core.quotePath=false", "ls-files", "-u", "-z"' in inspect.getsource(doc)
-    assert "_wk = peer_ip if fwd_ip else _src" in inspect.getsource(api)
+    assert "more than 5 clients via %s are locked out this window" in inspect.getsource(api)
     assert "[:300]" in inspect.getsource(scli)
 
 
@@ -752,4 +752,120 @@ def test_memory_search_row_and_tablet_wrap_in_css():
     assert "div:has(> #mem-q){{flex-wrap:wrap}}\n#mem-q{{flex:1 1 100%!important;min-width:0}}\n@media(max-width:768px)" in src
     assert "@media (max-width: 768px) {{  /* through tablet portrait" in src
     assert "Routing stats unavailable: Brain not running or not reachable at" in src
+
+
+# ---------------------------------------------------------------- AG61, AG63
+def test_joiners_are_not_token_characters_and_sinhala_marks_are(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.mcp.memory_server import fts
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "search.sqlite", raising=False)
+    monkeypatch.setattr(fts, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    memory_remember("reference:fa", "\u06a9\u062a\u0627\u0628\u200c\u0647\u0627 \u062e\u0648\u0628 \u0627\u0633\u062a", source="agent")                   # کتاب‌ها (ZWNJ)
+    memory_remember("reference:si-lanka", "\u0dc1\u0dca\u200d\u0dbb\u0dd3 \u0dbd\u0d82\u0d9a\u0dcf", source="agent")                                      # ශ්‍රී ලංකා
+    memory_remember("reference:si-other", "\u0dbd \u0d9a\u0dcf \u0dc3\u0dd2 \u0dc4\u0dbd", source="agent")                                            # ල කා සි හල
+    fts.rebuild(force=True)
+    assert any("reference/fa" in r["path"] for r in fts.search("\u06a9\u062a\u0627\u0628", limit=5))                                       # کتاب finds کتاب‌ها (AG61)
+    hits = [r["path"] for r in fts.search("\u0dbd\u0d82\u0d9a\u0dcf", limit=5)]                                                            # ලංකා
+    assert any("si-lanka" in p for p in hits) and not any("si-other" in p for p in hits)                                                 # AG63
+
+
+def test_passphrases_and_dockerfile_mysql_mask_again():
+    from atlas_plus.redaction import redact
+
+    for s in ("my password is Tr0ub4dor&Rising", "my password is S3cure!Blessed", "the token is 9fK2xQ7LmZpWed",
+              "RUN mysql -u root -pZq8vT3pLmK9", "run: mysql -u root -pZq8vT3pLmK9", "- mysql -u root -pZq8vT3pLmK9"):
+        out = redact(s)
+        assert "[REDACTED]" in out, s
+    assert redact('the token is "expired"') == 'the token is "expired"'
+    assert redact("find /var/lib -name '*.mysql' -print") == "find /var/lib -name '*.mysql' -print"
+    assert redact("  login bob\n  password Zq8vT3pLmK9").startswith("  login bob\n  password [REDACTED]")                                # indentation kept (AG61)
+    assert redact("AccountKey=XXXXXXXXXXXXXXXXXXXXXXXX") == "AccountKey=XXXXXXXXXXXXXXXXXXXXXXXX"
+
+
+def test_redirects_take_arguments_and_status_is_components():
+    from typer.testing import CliRunner
+    from atlas_plus.cli import app
+
+    r = CliRunner()
+    res = r.invoke(app, ["save", "my", "fact", "here"])
+    assert res.exit_code == 2 and "remember" in res.output and "you typed" in res.output
+    res = r.invoke(app, ["install", "--client", "claude"])
+    assert res.exit_code == 2 and "sextant init" in res.output
+    assert "status" not in __import__("atlas_plus.cli", fromlist=["_REDIRECTS"])._REDIRECTS
+
+
+def test_meaning_words_and_order_make_a_correction(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.curation import suggest_facts as sf
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    memory_remember("reference:ops", "The migration must finish in under two hours and runs from Postgres to MySQL", source="agent")
+    assert not sf._fact_already_there("reference:ops", "The migration must finish in over two hours and runs from Postgres to MySQL", 0.8)     # under -> over
+    assert not sf._fact_already_there("reference:ops", "The migration may finish in under two hours and runs from Postgres to MySQL", 0.8)      # must -> may
+    assert not sf._fact_already_there("reference:ops", "The migration must finish in under two hours and runs from MySQL to Postgres", 0.8)     # reversed
+    assert sf._fact_already_there("reference:ops", "Migration must finish in under two hours and runs from the Postgres to MySQL", 0.8)         # articles only
+
+
+def test_lessons_are_one_line_and_lock_is_owned(tmp_path, monkeypatch):
+    import os
+    from atlas_plus.summarizer import renderer
+
+    monkeypatch.setattr(renderer.atlas_paths, "state_dir", lambda: tmp_path)
+    lock = tmp_path / "summarizer" / "write.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("999999", encoding="ascii")                                                                                            # another process's live lock
+    os.utime(lock, None)
+    with pytest.raises(RuntimeError):
+        with renderer._write_lock(timeout=0.3, stale=120.0):
+            pass
+    assert lock.exists() and lock.read_text(encoding="ascii") == "999999"                                                                 # a live lock is never broken or stolen (AG64)
+    lock.unlink()
+    with renderer._write_lock(timeout=0.3, stale=120.0):
+        assert lock.read_text(encoding="ascii") == str(os.getpid())
+    assert not lock.exists()
+    from atlas_plus.summarizer import cli as scli
+    assert '"files_touched", "lessons"' in inspect.getsource(scli)
+
+
+# ---------------------------------------------------------------- AG64
+def test_gave_up_counter_and_quoted_heading_and_root_shape(tmp_path, monkeypatch):
+    import io
+    from atlas_plus.summarizer import cli as scli, hook_entry, renderer
+    from atlas_plus import paths as atlas_paths
+
+    monkeypatch.setattr(atlas_paths, "state_dir", lambda: tmp_path)
+    assert not scli._gave_up("s1", 12)
+    for _ in range(3):
+        scli._note_failure("s1", 12)
+    assert scli._gave_up("s1", 12) and not scli._gave_up("s1", 18)                                   # new turns lift it
+    entry = "## 2026-11-14 - work\n<!-- session:q turns:3 -->\n## Quoted heading from the model. Worked on: x\n<!-- end session:q -->\n"
+    out = renderer.remove_session_entry(entry + "MINE\n", "<!-- session:q")
+    assert out == "MINE\n"                                                                           # the end marker wins over the body's heading
+    hook_entry._PAYLOAD.update(seen=False, empty=False, garbled=False, transcript_file="")
+    outside = tmp_path / "outside" / "a" / "b.jsonl"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"session_id": "x", "transcript_path": "%s"}' % str(outside).replace("\\", "/")))
+    assert hook_entry._transcript_root_from_payload() == ""                                          # not .claude/projects: refused
+    good = tmp_path / ".claude" / "projects" / "slug" / "s.jsonl"
+    good.parent.mkdir(parents=True)
+    good.write_text("", encoding="utf-8")
+    hook_entry._PAYLOAD.update(seen=False, transcript_file="")
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"session_id": "x", "transcript_path": "%s"}' % str(good).replace("\\", "/")))
+    assert hook_entry._transcript_root_from_payload().endswith("projects") and hook_entry._PAYLOAD["transcript_file"]
+    assert '"--skip-similar", "0.8"' not in inspect.getsource(hook_entry)
+
+
+# ---------------------------------------------------------------- AG65
+def test_verify_alert_wording_and_hub_names_each_client():
+    from atlas_plus import roundtrip
+    from atlas_plus.sync import api as sync_api
+    from atlas_plus.web import app as web
+
+    src = inspect.getsource(roundtrip)
+    assert "refused the TLS handshake with an alert" in src and 'if detail.strip() else ""' in src
+    assert "more than 5 clients via %s are locked out this window" in inspect.getsource(sync_api)
+    assert "<div style='overflow-x:auto;max-width:100%;min-width:0'><table class='text-xs'" in inspect.getsource(web)
 

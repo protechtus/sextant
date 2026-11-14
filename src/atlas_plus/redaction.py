@@ -45,7 +45,12 @@ _SECRET_ENV_VARS = (
     "RCLONE_CONFIG_PASS",
 )
 
-_BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9\-_.=]{12,}", re.IGNORECASE)
+_BEARER_RE = re.compile(r"(?i)(Bearer[ \t]+)([A-Za-z0-9\-_.=]{12,})")  # `[ \t]`: `bearer\ntoken.expiry.seconds=900` lost the next line (AG62)
+
+
+def _bearer_ok(v: str) -> bool:
+    """`Use Bearer authentication`, `Bearer YOUR_API_TOKEN_HERE`, `Bearer your_access_token` are prose or placeholders (AG62)."""
+    return not re.fullmatch(r"[A-Za-z]+(?:[_-][A-Za-z]+)*", v) or not (v.islower() or v.isupper() or (v[0].isupper() and v[1:].islower()))
 _TELEGRAM_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
 # Optional quotes around the key name's close and the value's open ("api_key": "v", token='v')
 # so JSON and quoted assignments redact too; the trailing quote is left in place, preserving
@@ -72,6 +77,7 @@ _MARKED_NAMES = "|" + "|".join([
 ])
 _KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|client[_-]?secret|private[_-]?key"
              r"|access[_-]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
+             r"|(?:master|encryption|decryption|signing|hmac|jwt|license)[_-]?key"  # AG62: RAILS_MASTER_KEY=V leaked
              r"|パスワード|トークン|シークレット|秘密鍵|秘密|鍵|APIキー"
              r"|비밀번호|비밀|비밀키|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰|暗証番号"
              r"|รหัสผ่าน|รหัสลับ|โทเคน|คีย์[ _]API|กุญแจ[ _]API|पासवर्ड|टोकन|गुप्त[ _]कुंजी|एपीआई[ _]कुंजी|कूटशब्द"
@@ -91,7 +97,7 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 _KV_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_-])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
     r"(?![A-Za-z0-9])"
-    r"(['\"]?\s*[=:：＝]\s*(?:r(?=['\"]))?)"
+    r"(['\"]?\]?\s*[=:：＝]\s*(?:r(?=['\"]))?)"  # AG62: the environ-subscript assignment `environ['DB_PASS...'] = 'V'` and `params[:password] = V` leaked
     r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[\"']?[^\s'\"]{6,})"
 )
 _CLI_SECRET_RE = re.compile(r"(?i)(--(?:[a-z]+-){0,3}(?:token|password|passwd|api[_-]?key|secret|passphrase|client[_-]?secret)[= ])(\S{6,})")  # --db-password, --api-token (MN37)
@@ -129,7 +135,21 @@ def _kv_quote(v: str) -> str:
     return v[0] if v and v[0] in "\"'" and len(v) > 1 and v[-1] == v[0] else ""
 
 
-_PLACEHOLDER_RE = re.compile(r"<[^<>\n]{0,60}(?:>|$)|\{\{|\$\{|%[A-Za-z_]+%|\[REDACTED|x{4,}$|\.{3,}$")
+_ENVREF_RE = re.compile(r"^\$[A-Z_][A-Z0-9_]*$|^!!?[A-Za-z][A-Za-z/_.-]*$")
+_STATUS_RE = re.compile(r"(?i)[\[(<]?(?:required|optional|expired|missing|invalid|hidden|redacted|undefined|string|str|secretstr|unset|empty|none|null|incorrect|wrong|rejected|refreshing|n/a)[\])>]?[;,.]*")
+_WORDISH_RE = re.compile(r"[^\d\s!-/:-@\[-`{-~]+[,.;:!?]?")
+_DOC_WORDS = frozenset({"password", "pass", "passwd", "pwd", "secret", "token", "user", "username", "yourpassword", "your_password", "changeme", "arg", "args", "file", "env", "fd", "stdin", "anonymous", "guest", "x-oauth-basic"})
+
+
+def _doc_value(v: str) -> bool:
+    """A documentation placeholder after a flag, a `user:` or a `Basic`: `<password>`, `${PW}`, `$PASS`, `TOKEN]`, `password` (AG62)."""
+    v = v.strip("\"'")
+    if not v:
+        return True
+    return bool(_PLACEHOLDER_RE.match(v) or re.fullmatch(r"\$[A-Za-z_]\w*|\$\{.*|[A-Z][A-Z_]*[\])>]*", v) or v.lower() in _DOC_WORDS)
+
+
+_PLACEHOLDER_RE = re.compile(r"<[^<>\n]{0,60}(?:>|$)|\{\{|\$\{|%[A-Za-z_]+%|\[REDACTED|[xX]{4,}$|\.{3,}$")  # `XXXX` is a placeholder too (AG61)
 _PROSE_WORD_RE = re.compile(r"(?:ing|ed|ion|ly|ness|able|ible|ment|ful|less|ous)$|^(?:invalid|missing|required|incorrect|expired|empty|unknown|wrong|rejected|changed|secret|hidden|default|optional|pending|redacted)$")
 _PASS_WORDS = frozenset({
     "bypass", "compass", "encompass", "surpass", "trespass", "overpass", "underpass", "impasse", "passe", "multipass", "repass",
@@ -149,6 +169,28 @@ def _kv_skip(name: str, v: str, sep: str = "=", text: str | None = None, start: 
         return True  # `password: ********` is a placeholder, not a secret
     if _PLACEHOLDER_RE.match(v):
         return True  # `password: <your-password>`, `{{ db_password }}`, `%PASSWORD%` (AG55)
+    vq = v.strip("\"'")
+    if vq != v and (_PLACEHOLDER_RE.match(vq) or _CODE_VALUE_RE.match(vq)):
+        return True  # AG62: the quotes hid the placeholder: `password: "${DB_PASS...}"`, `token: "{{ t }}"`, `"os.environ['X']"`
+    if "\n" in sep and text is not None and end is not None:
+        vstart = end - len(v)
+        nl = text.rfind("\n", 0, vstart)
+        if vstart == nl + 1 or text[end:end + 1] == ":":
+            return True  # AG62: `Enter password:` + newline + `Authentication successful`, `password:` + `  database: app`: the next line is not the value
+    if _STATUS_RE.fullmatch(v):
+        return True  # AG62: `token: expired`, `password: required`, `token: string;`, `password: (hidden)`: a status or a type, not a value
+    if _ENVREF_RE.match(vq):
+        return True  # AG62: `api_key: $API_KEY`, a YAML tag `password: !vault |`
+    if sep.startswith("]") and not (text is not None and start > 0 and text[start - 1] == ":"):
+        return True  # AG62: `cache[token] = value` is code; only a quoted key or a Ruby symbol (`params[:password]`) counts
+    if text is not None and start >= 3 and text[start - 3:start] == "://":
+        return True  # AG62: `https://token:x@host/` is URL userinfo, masked by the URL rule without eating the host
+    if " " in sep and "=" in sep and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", v) and not re.search(r"\d", v):
+        return True  # AG62: `secret = config.secret`, `api_key = settings.API_KEY` (attribute access in code)
+    if v[0] not in "\"'" and len(v) >= 3 and not v.isascii() and not re.search(r"[A-Za-z]", v):
+        return True  # AG62: `密码：必须至少包含八个字符` (CJK, Thai, Hindi label sentences); a secret holds ASCII
+    if "=" not in sep and text is not None and end is not None and _WORDISH_RE.fullmatch(v) and re.match(r"[ \t]+[^\d\s!-/:-@\[-`{-~]{2,}", text[end:end + 40]):
+        return True  # AG62: `password: expired yesterday`, `Passwort: falsch, bitte erneut versuchen`: more words follow, so it is prose
     low = name.lower()
     if low == "pass" and "=" not in sep:
         return True  # `pass:` alone is prose (a test result, a pass count); `PASS=hunter2` is an assignment (AG60)
@@ -202,7 +244,36 @@ _PROVIDER_KEY_RE = re.compile(
     r"|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})")
 # a PEM or PGP private-key block, terminated or cut off at the end of the text (MN31)
 _PEM_RE = re.compile(r"-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----(?:.*?-----END [A-Z ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----|.*\Z)", re.S)
-_URL_CRED_RE = re.compile(r"(://[^/\s:@]+:)([^\s/]+)(@)(?=[^\s/@]+)")  # user:password@host; the password may hold `@` (MN31/MN33, AG44)
+_PEM_BEGIN_RE = re.compile(r"-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
+_PEM_END_RE = re.compile(r"-----END [A-Z ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----")
+_PEM_BODY_RE = re.compile(r"\s*(?:[A-Za-z0-9+/=]{8,}|Proc-Type:|DEK-Info:|Version:)")
+
+
+def _pem_redact(out: str) -> str:
+    """A terminated block, or a cut-off one that STARTS with key material. `a PEM file begins with -----BEGIN PRIVATE KEY-----`
+    in prose used to swallow every line after it (88 lines became one); one pass, one END search per text (AG62)."""
+    if "-----BEGIN" not in out:
+        return out
+    pieces, pos, no_end = [], 0, False
+    for m in _PEM_BEGIN_RE.finditer(out):
+        if m.start() < pos:
+            continue
+        e = None if no_end else _PEM_END_RE.search(out, m.end())
+        if e is None:
+            no_end = True
+            if not _PEM_BODY_RE.match(out, m.end()):
+                continue
+            end = len(out)
+        else:
+            end = e.end()
+        pieces.append(out[pos:m.start()])
+        pieces.append("[REDACTED:private-key]")
+        pos = end
+    pieces.append(out[pos:])
+    return "".join(pieces)
+
+
+_URL_CRED_RE = re.compile(r"(://[^/\s:@]*:)([^\s/]+)(@)(?=[^\s/@]+)")  # an empty user too: `redis://:V@host` (AG62)  # user:password@host; the password may hold `@` (MN31/MN33, AG44)
 
 
 # ---- AG55 (sweep 18): shapes the key=value rule cannot see ------------------------------------------------------
@@ -215,7 +286,7 @@ _VAL = r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[^\s'\"<>]{6,})"
 _K8S_RE = re.compile(r"(?i)(^[ \t]*-?[ \t]*name[ \t]*:[ \t]*[\"']?(?:[A-Za-z0-9]{1,32}[_.-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX
                      + r"[\"']?[ \t]*\r?\n[ \t]*value[ \t]*:[ \t]*)" + _VAL, re.M)
 # .netrc (`machine h login u password V`, also newline separated) and `default login u password V`
-_NETRC_RE = re.compile(r"(?im)^[ \t]*((?:machine[ \t]+\S+[ \t]+|default[ \t]+)?login[ \t]+\S+(?:\s+account\s+\S+)?\s+password[ \t]+)(\S{4,})")  # a .netrc line, not prose about a login page (MN49)
+_NETRC_RE = re.compile(r"(?im)^([ \t]*(?:machine[ \t]+\S+[ \t]+|default[ \t]+)?login[ \t]+\S+(?:\s+account\s+\S+)?\s+password[ \t]+)(\S{4,})")  # a .netrc line, not prose about a login page (MN49); the indentation stays (AG61)
 # .pgpass: host:port:database:user:password on a line of its own
 _PGPASS_RE = re.compile(r"(?m)^((?=[^:\s]*[A-Za-z.*])[^:\s#]{1,253}:(?:\d{1,5}|\*):[^:\s]{1,63}:[^:\s]{1,63}:)([^\s]{8,})(?=[ \t]*\r?$)")
 # npmrc / pip.conf style underscore keys: `//registry/:_authToken=V`, `_password=V`, `_auth=V`
@@ -236,10 +307,10 @@ _COOKIE_ATTRS = frozenset({"path", "domain", "expires", "max-age", "samesite", "
 _COOKIE_PAIR_RE = re.compile(r"(?<![^\s;])([A-Za-z0-9_.%-]{1,64}=)([^\s;]{6,})")
 _WEBHOOK_RE = re.compile(r"(hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9]{6,}/[A-Za-z0-9]{6,}/)([A-Za-z0-9]{12,})|(discord(?:app)?\.com/api/webhooks/\d{6,}/)([A-Za-z0-9_-]{20,})")
 _AZURE_RE = re.compile(r"(?i)\b((?:AccountKey|SharedAccessKey|SharedAccessSignature|client_secret)=)([A-Za-z0-9+/%=_.-]{16,})|([?&;]sig=)([A-Za-z0-9%+/=_-]{16,})")
-_MYSQL_P_RE = re.compile(r"((?:^|[|;&(`]|\$\()[ \t]*(?:sudo[ \t]+)?(?:mysql|mysqldump|mysqladmin|mariadb|mysqlsh)\b[^\n|;&]{0,200}?[ \t]-p)([^\s\-][^\s]{2,})", re.M)  # the command itself, not `*.mysql` in a find (MN49: `-print` was masked)
+_MYSQL_P_RE = re.compile(r"((?<![\w./'\"\\-])(?:sudo[ \t]+)?(?:mysql|mysqldump|mysqladmin|mariadb|mysqlsh)\b[^\n|;&]{0,200}?[ \t]-p)([^\s\-][^\s]{2,})", re.M)  # the command word itself (not `*.mysql` in a find: MN49), wherever it stands: `RUN mysql`, `run: mysql`, `- mysql` (AG61)
 _DOCKER_P_RE = re.compile(r"(\b(?:docker|podman|nerdctl)[ \t]+login\b[^\n|;&]{0,200}?[ \t](?:-p|--password)[ =]+)([^\s\-]\S*)")
 _SSHPASS_RE = re.compile(r"(\bsshpass[ \t]+(?:-\w+[ \t]+)*-p[ \t]*)(?!-)(\S+)")
-_TOKEN_SHAPES_RE = re.compile(r"\b(npm_[A-Za-z0-9]{36}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|whsec_[A-Za-z0-9]{20,}|rk_live_[A-Za-z0-9]{10,}|shp(?:at|ss|ca)_[a-f0-9]{32})")
+_TOKEN_SHAPES_RE = re.compile(r"\b(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|ya29\.[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|whsec_[A-Za-z0-9]{20,}|rk_live_[A-Za-z0-9]{10,}|shp(?:at|ss|ca)_[a-f0-9]{32})")
 # prose: `my password is V` / `the token was V` where V looks like a secret (8+ chars, two or more character classes)
 _PROSE_RE = re.compile(r"(?i)\b((?:(?:my|your|the|his|her|their|our|new|old|temp(?:orary)?|root|admin|wifi|login)[ \t]+){1,2}(?:password|passcode|passphrase|api[ \t]key|access[ \t]token|token|secret)[ \t]+(?:is|was|are|will[ \t]+be|=|:)[ \t]+)([!-~]{8,})")
 
@@ -251,7 +322,7 @@ _PROSE_I18N2_RE = re.compile(
     r"|(?:मेरा|हमारा|मेरी)?[ \t]*(?:पासवर्ड|टोकन|कूटशब्द)[ \t]+(?:है[ \t]+)?"                     # Hindi: mera password (hai) V (hai)
     r"|" + _marked("كلمة", _AR_MARKS) + r"[ \t]" + _marked("السر", _AR_MARKS) + r"(?:[ \t]" + _marked("الخاصة", _AR_MARKS) + r"[ \t]" + _marked("بي", _AR_MARKS) + r")?[ \t]" + _marked("هي", _AR_MARKS) + r"[ \t]*"
     r"|ה?" + _marked("סיסמ", _HE_MARKS) + r"[אה][\u0591-\u05c7]*(?:[ \t]שלי)?[ \t]היא[ \t]*"                 # Hebrew: ha-sisma sheli hi V
-    r"|(?:رمز[\u200c \t]عبور|گذرواژه|توکن)(?:[ \t]من)?[ \t]+"                                  # Persian: ramz-e obur(-e man) V ast
+    r"|(?:رمز[\u200c \t]عبور|گذرواژه|توکن)(?:[ \t](?:من|شما|ما|او|تو))?[ \t]+"                                  # Persian: ramz-e obur(-e man) V ast
     r"|(?:мой[ \t]+|наш[ \t]+)?(?:пароль|токен)[ \t]+"                                        # Russian without a dash: moy parol V
     r"|(?:mein|das|unser)[ \t]+passwort[ \t]+(?:lautet|ist)[ \t]+"                            # German: mein Passwort lautet V
     r"|(?:meu|minha|o|a)[ \t]+(?:token|senha|chave)[ \t]+(?:é[ \t]+)?"                        # Portuguese: meu token V
@@ -263,7 +334,7 @@ _PROSE_I18N_RE = re.compile(r"(?i)((?:пароль|токен|passwort|kennwort|
 def _secretish(v: str) -> bool:
     """8+ chars, two or more of lower/upper/digit/symbol, and a digit, symbol or inner capital; not a path, URL or code."""
     v = v.strip("\"'`.,;:!?()[]{} ")  # `the token is "expired"`: the quotes made a prose word look mixed-class (MN49)
-    if len(v) < 8 or _CODE_VALUE_RE.match(v) or _PATH_VALUE_RE.match(v) or "://" in v or _PROSE_WORD_RE.search(v.lower()):
+    if len(v) < 8 or _CODE_VALUE_RE.match(v) or _PATH_VALUE_RE.match(v) or "://" in v or (v.isalpha() and _PROSE_WORD_RE.search(v.lower())):  # the suffix veto only for an all-letter word: `Tr0ub4dor&Rising` is a passphrase (AG61)
         return False
     if re.match(r"\d{4}-\d{2}-\d{2}", v) or re.fullmatch(r"[A-Za-z]+(?:-[A-Za-z]+)+", v):
         return False  # a date or a hyphenated English compound (`out-of-date`, `case-sensitive`) is prose
@@ -294,7 +365,9 @@ def _k8s_mask(m: "re.Match[str]") -> str:
 def _cookie_mask(m: "re.Match[str]") -> str:
     def pair(pm):
         name = pm.group(1)[:-1].lower()
-        return pm.group(0) if name in _COOKIE_ATTRS or "[REDACTED" in pm.group(2) else pm.group(1) + "[REDACTED]"
+        val = pm.group(2)
+        plain = (re.fullmatch(r"[a-z]+(?:[_.-][a-z]+)*|[A-Za-z]+/[A-Za-z_]+", val) and not re.search(r"(?i)sess|(?:^|[_.-])sid(?:$|[_.-])|auth|token|jwt|key|login|secret|pass|remember|csrf|xsrf|user", name))
+        return pm.group(0) if name in _COOKIE_ATTRS or "[REDACTED" in val or _PLACEHOLDER_RE.match(val) or plain else pm.group(1) + "[REDACTED]"  # `theme=dark`, `tz=Europe/Berlin`, `<session-id>` (AG62)
     return m.group(1) + _COOKIE_PAIR_RE.sub(pair, m.group(2))
 
 
@@ -329,7 +402,7 @@ def _extra_redact(out: str) -> str:
     if "value" in out:
         out = _K8S_RE.sub(_k8s_mask, out)
     if "login" in out.lower():
-        out = _NETRC_RE.sub(r"\1[REDACTED]", out)
+        out = _sub_value(_NETRC_RE, out, 2, ok=lambda v: not _doc_value(v) and "@" not in v)  # `password <your-password>`, an anonymous FTP e-mail (AG62)
     if ":" in out:
         out = _sub_value(_PGPASS_RE, out, 2)
     if "_" in out:
@@ -349,7 +422,7 @@ def _extra_redact(out: str) -> str:
     if "ookie" in out:
         out = _COOKIE_RE.sub(_cookie_mask, out)
     if "hooks." in out or "webhooks" in out:
-        out = _WEBHOOK_RE.sub(lambda m: m.group(0) if _PLACEHOLDER_RE.search(m.group(2) or m.group(4) or "") else (m.group(1) or m.group(3)) + "[REDACTED]", out)
+        out = _WEBHOOK_RE.sub(lambda m: m.group(0) if (_PLACEHOLDER_RE.search(m.group(2) or m.group(4) or "") or re.fullmatch(r"[xX]+", m.group(2) or m.group(4) or "")) else (m.group(1) or m.group(3)) + "[REDACTED]", out)
     if "=" in out:
         out = _AZURE_RE.sub(lambda m: m.group(0) if _PLACEHOLDER_RE.search(m.group(2) or m.group(4) or "") else (m.group(1) or m.group(3)) + "[REDACTED]", out)  # `AccountKey=xxxx` is a placeholder (MN49)
     if " -p" in out:
@@ -357,9 +430,50 @@ def _extra_redact(out: str) -> str:
         out = _DOCKER_P_RE.sub(r"\1[REDACTED]", out)
         out = _SSHPASS_RE.sub(r"\1[REDACTED]", out)
     out = _TOKEN_SHAPES_RE.sub("[REDACTED:provider-key]", out)
+    out = _ag62(out)
     out = _sub_value(_PROSE_RE, out, 2, ok=_secretish)
     out = _sub_value(_PROSE_I18N_RE, out, 2, ok=_secretish)
     out = _sub_value(_PROSE_I18N2_RE, out, 2, ok=_secretish)  # the word orders of Thai, Hindi, Arabic, Hebrew, Persian, bare Russian, German `lautet`, Portuguese (MN52)
+    return out
+
+
+_ARG = r"(['\"]?)(?!-)([^\s'\"|;&]{3,})"
+_AG62 = (  # (needle, regex with the value in group 2): command-specific shapes the key=value rule cannot see
+    ("-pass", re.compile(r"(?<!\S)(-pass(?:in|out)[ \t=]+(?:pass:)?['\"]?|-pass[ \t=]+pass:['\"]?)(?!(?:env|file|fd):|stdin)([^\s'\"|;&]{3,})")),
+    ("-pass ", re.compile(r"(?<!\S)(-pass[ \t=]+pass:['\"]?)([^\s'\"|;&]{3,})")),
+    ("openssl", re.compile(r"(\bopenssl[ \t]+enc\b[^\n|;&]{0,120}?[ \t]-k[ \t]+['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    ("pass", re.compile(r"(?<!\S)(-(?:(?:src|dest)?(?:store|key)pass)[ \t]+['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    ("-u", re.compile(r"(?<!\S)(-U[ \t]*['\"]?[^\s%'\"]{1,64}%)([^\s'\"|;&]{3,})")),
+    (("sqlcmd", "bcp", "zip", "mosquitto"), re.compile(r"(\b(?:sqlcmd|bcp|zip|unzip|zipcloak|mosquitto_pub|mosquitto_sub)\b[^\n|;&]{0,200}?[ \t]-P[ \t]*['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    (("7z", "rar"), re.compile(r"(\b(?:7z|7za|7zr|rar|unrar)\b[^\n|;&]{0,200}?[ \t]-p['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    (("mongo", "cqlsh", "psexec"), re.compile(r"(\b(?:mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport|cqlsh|psexec)\b[^\n|;&]{0,200}?[ \t](?:-p|--password)[ \t=]*['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    ("redis-cli", re.compile(r"(\bredis-cli\b[^\n|;&]{0,200}?[ \t](?:-a|--pass)[ \t]+['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    ("influx", re.compile(r"(\binflux\b[^\n|;&]{0,200}?[ \t]-password[ \t]+['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    ("ldap", re.compile(r"(\bldap(?:search|add|modify|delete|passwd)\b[^\n|;&]{0,200}?[ \t]-w[ \t]*['\"]?)(?!-)([^\s'\"|;&]{3,})")),
+    ("htpasswd", re.compile(r"(\bhtpasswd\b[ \t]+-[A-Za-z]*b[A-Za-z]*[ \t]+(?:-\w+[ \t]+)*(?:\S+[ \t]+){1,2})(?!-)(\S{3,})")),
+    ("vault", re.compile(r"(\bvault[ \t]+login[ \t]+(?:-\w+(?:=\S+)?[ \t]+)*(?:token=)?)(?!-)(\S{6,})")),
+    ("aws", re.compile(r"(\baws[ \t]+configure[ \t]+set[ \t]+(?:--profile[ \t]+\S+[ \t]+)?(?:\w+\.)?(?:aws_)?(?:secret_access_key|session_token)[ \t]+['\"]?)(\S{6,})")),
+    ("net use", re.compile(r"(?i)(\bnet[ \t]+use\b[^\n|;&]{0,120}?\\\\\S+[ \t]+)(?![/-])([^\s/'\"]{3,})")),
+    ("/pass:", re.compile(r"(?i)(/pass:['\"]?)([^\s'\"]{3,})")),
+    ("schtasks", re.compile(r"(?i)(\bschtasks\b[^\n|;&]{0,200}?[ \t]/rp[ \t]+['\"]?)([^\s'\"]{3,})")),
+    ("rabbitmqctl", re.compile(r"(\brabbitmqctl[ \t]+(?:add_user|change_password|authenticate_user)[ \t]+\S+[ \t]+['\"]?)([^\s'\"]{3,})")),
+    ("chpasswd", re.compile(r"(\becho[ \t]+['\"]?[A-Za-z0-9_.-]+:)([^\s'\"|]+)(?=['\"]?[ \t]*\|[ \t]*(?:sudo[ \t]+)?chpasswd)")),
+    ("config set", re.compile(r"(?i)(\b(?:npm|yarn|pnpm)[ \t]+config[ \t]+set[ \t]+\S*_(?:authToken|password|auth)[ \t]+['\"]?)([^\s'\"]{6,})")),
+    ("setx", re.compile(r"(?i)(\bsetx[ \t]+\w*(?:password|token|secret|api_?key)\w*[ \t]+['\"]?)([^\s'\"]{6,})")),
+    ("convertto-securestring", re.compile(r"(?i)(ConvertTo-SecureString[ \t]+['\"]?)([^\s'\"]{3,})(?=['\"]?[ \t]+-AsPlainText)")),
+    ("jdbc:oracle", re.compile(r"(jdbc:oracle:thin:[^/\s:@]+/)([^@\s]+)(?=@)")),
+    ("setpassword", re.compile(r"(?i)(\.set(?:Password|Passwd|Token|Secret|ApiKey|AccessToken|ClientSecret)\(\s*['\"])([^'\"\n]{4,})(?=['\"])")),
+    ("usernamepasswordcredentials", re.compile(r"(UsernamePasswordCredentials\(\s*[^,()]{1,64},\s*['\"])([^'\"\n]{4,})(?=['\"])")),
+)
+
+
+def _ag62(out: str) -> str:
+    low = out.lower()
+    for needle, rx in _AG62:
+        if any(n in low for n in ((needle,) if isinstance(needle, str) else needle)):
+            out = _sub_value(rx, out, 2, ok=lambda v: not _doc_value(v))
+    if "AUTH " in out:
+        out = _sub_value(re.compile(r"(\bAUTH[ \t]+)([^\s'\"]{6,})"), out, 2, ok=_secretish)  # redis-cli AUTH V
     return out
 
 
@@ -380,16 +494,16 @@ def redact(text: str | None, *, env: dict | None = None) -> str | None:
             out = out.replace(val, f"[REDACTED:{name}]")
 
     # 2) Structural patterns.
-    out = _BEARER_RE.sub(r"\1[REDACTED]", out)
+    out = _sub_value(_BEARER_RE, out, 2, ok=_bearer_ok)
     out = _TELEGRAM_RE.sub("[REDACTED:telegram-token]", out)
     out = _YAML_BLOCK_RE.sub(_yaml_block_mask, out)
     out = _XML_RE.sub(r"\1[REDACTED]\4", out)
     out = _kv_redact(out)
-    out = _CLI_SECRET_RE.sub(r"\1[REDACTED]", out)
-    out = _BASIC_AUTH_RE.sub(r"\1[REDACTED]", out)
-    out = _CURL_USER_RE.sub(r"\1[REDACTED]", out)
-    out = _URL_CRED_RE.sub(r"\1[REDACTED]\3", out)
+    out = _sub_value(_CLI_SECRET_RE, out, 2, ok=lambda v: not _doc_value(v))  # `--token TOKEN`, `--token=<value>` in help text (AG62)
+    out = _sub_value(_BASIC_AUTH_RE, out, 2, ok=lambda v: not _doc_value(v) and not _CODE_VALUE_RE.match(v))  # `Basic <credentials>`, `Basic base64(user:pass)`
+    out = _sub_value(_CURL_USER_RE, out, 2, ok=lambda v: not _doc_value(v))  # `curl -u user:password`, `-u $USER:$PASS`
+    out = _sub_value(_URL_CRED_RE, out, 2, ok=lambda v: not _doc_value(v) and v.lower() not in _DOC_WORDS)  # `postgres://user:password@host`, `user:${PW}@`
     out = _PROVIDER_KEY_RE.sub("[REDACTED:provider-key]", out)
-    out = _PEM_RE.sub("[REDACTED:private-key]", out)
+    out = _pem_redact(out)
     out = _extra_redact(out)
     return out

@@ -215,7 +215,12 @@ def _transcript_root_from_payload() -> str:
         if not tp:
             return ""
         from pathlib import Path as _Path
-        root = _Path(_posix_path_for(str(tp))).resolve().parents[1]
+        _p = _Path(_posix_path_for(str(tp))).resolve()
+        root = _p.parents[1]
+        if not _p.is_file() or not root.name.endswith("projects"):
+            return ""  # a payload must not choose the scanned tree: the transcript must exist and sit under a .../projects root (AG64: a nonexistent path outside the root made the hook scan its parent tree)
+        if _p.is_file():
+            _PAYLOAD["transcript_file"] = str(_p)
         return str(root) if root.is_dir() else ""
     except Exception:  # noqa: BLE001 - a hook never fails the session over its payload
         return ""
@@ -225,16 +230,20 @@ def main() -> int:
     """Entry point for the transcript summarizer hook: read stdin transcript, produce summaries, write session log."""
     import sys as _sys
     if len(_sys.argv) > 1 and _sys.argv[1] in ("-h", "--help"):
-        print("Usage: python -m atlas_plus.hooks.run --env ATLAS_SESSION_AUTONOMOUS=on stop  (the Stop hook; `atlas-summarize-session` is the transcript CLI and ignores stdin)   (Claude Code Stop hook entry point)\n\n"
-              "Reads the hook payload from stdin, summarizes the finished session with the\n"
-              "configured local model, and writes the session log into the memory corpus and\n"
-              "the updates file in the state dir. Dry run: ATLAS_SUMMARIZER_DRY_RUN=on.")
+        print("Usage: python -m atlas_plus.hooks.run --env ATLAS_SESSION_AUTONOMOUS=on stop\n"
+              "       (the Claude Code Stop hook; `sextant setup --client hooks` prints the full command)\n\n"
+              "Reads the Stop payload (session_id, transcript_path) from stdin, summarises that session with the\n"
+              "configured local model and writes its entry into the memory corpus day log and the state dir's\n"
+              "updates file, then runs the facts stage. ATLAS_SUMMARIZER_DRY_RUN=on calls the model and writes\n"
+              "nothing: the entry goes to <state>/logs/summarizer-dry-run.log and the facts stage is skipped.\n"
+              "`atlas-summarize-session` is the transcript CLI, not this hook: it ignores stdin.")
         return 0
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     _SESSION["id"] = ""
     _PAYLOAD["seen"] = False  # per run: a previous payload in this process must not stand in (the sweep-14 test)
     _PAYLOAD["garbled"] = False
     _PAYLOAD["empty"] = False
+    _PAYLOAD["transcript_file"] = ""
 
     if not is_session_autonomous():
         _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
@@ -266,6 +275,8 @@ def main() -> int:
         return 0
     if root and not _child_env.get("ATLAS_CLAUDE_CODE_ROOT"):  # root set, every session of the day was summarised)
         _child_env["ATLAS_CLAUDE_CODE_ROOT"] = root
+    if _PAYLOAD.get("transcript_file"):
+        _child_env["ATLAS_TRANSCRIPT_FILE"] = _PAYLOAD["transcript_file"]  # the loader reads this file only (AG64)
 
     # --- 1. Summarizer ---
     # Say so when it cannot run: the docs promise a summary, and a silent exit 0 let a user
@@ -282,12 +293,14 @@ def main() -> int:
             except Exception:  # noqa: BLE001
                 pass
     _dry_log = None
-    if _dry_run_flag() and not reason:
+    if _dry_run_flag() and not reason and os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes"):  # no child, no claim (AG61)
         try:
             from atlas_plus import activity as _act2
             _dry_path = atlas_paths.state_dir() / "logs" / "summarizer-dry-run.log"
             _dry_path.parent.mkdir(parents=True, exist_ok=True)
-            _dry_log = open(_dry_path, "a", encoding="utf-8")  # the child's output has somewhere to go (MN51: it went to DEVNULL)
+            _dry_log = open(_dry_path, "w" if (_dry_path.exists() and _dry_path.stat().st_size > 1_000_000) else "a", encoding="utf-8")  # starts over past 1 MB (AG61)  # the child's output has somewhere to go (MN51: it went to DEVNULL)
+            _dry_log.write(f"\n--- {__import__('datetime').datetime.now().isoformat(timespec='seconds')} session {_SESSION.get('id') or '?'} ---\n")  # each run stamped (AG64)
+            _dry_log.flush()
             _act2.record("hook", "summarizer_dry_run", log=str(_dry_path), session=_SESSION.get("id") or "")
             _sys.stderr.write(f"Sextant: ATLAS_SUMMARIZER_DRY_RUN is on: the model is called, nothing is written; the entry goes to {_dry_path}\n")
         except Exception:  # noqa: BLE001
@@ -323,7 +336,7 @@ def main() -> int:
                 pass
         if exe:
             subprocess.Popen(
-                [str(exe), "--auto", "--since", "2h", "--skip-similar", "0.8",
+                [str(exe), "--auto", "--since", "2h",  # no --skip-similar: the whole-note gate dropped corrections before the per-line rule ran (AG64)
                  *(["--conversation-id", _SESSION["id"]] if _SESSION.get("id") else [])],  # this session only (MN28)
                 cwd=project_dir,
                 start_new_session=True,

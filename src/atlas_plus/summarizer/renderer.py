@@ -108,7 +108,7 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     _sid = marker_prefix.split("session:", 1)[1] if "session:" in marker_prefix else ""
     if _sid:
         _em = _re.compile(r"^<!-- end session:" + _re.escape(_sid) + r" -->[ \t]*\n?", _re.M)
-        _m2 = _em.search(text, m.end(), end)
+        _m2 = _em.search(text, m.end())  # the end marker wins over a quoted `## ` line inside the body (AG64: the body's heading cut the entry short and left an orphan tail)
         if _m2:
             end = _m2.end()
     return (text[:start] + text[end:]).lstrip("\n")
@@ -142,14 +142,13 @@ def _remove_entry_elsewhere(current: Path, marker_prefix: str, days: int = 3) ->
 
 def _day_log_unmerged(session_file) -> bool:
     """True when git holds the day log as unmerged (the corpus is a repo and the file is in `ls-files -u`)."""
-    import subprocess as _sp
+    from atlas_plus import gitsafe as _gs
     root = Path(session_file).parent.parent
     if not (root / ".git").exists():
         return False
     try:
         rel = Path(session_file).resolve().relative_to(root.resolve()).as_posix()
-        out = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z", "--", rel], cwd=str(root), capture_output=True,
-                      stdin=_sp.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=5).stdout
+        out = _gs.run(["-c", "core.quotePath=false", "ls-files", "-u", "-z", "--", rel], root, timeout=5).stdout  # gitsafe (AG61: a raw call ran the repo's core.fsmonitor)
     except Exception:  # noqa: BLE001
         return False
     return bool(out.strip())
@@ -232,7 +231,7 @@ def partial_count(sessions_dir: Path, safe_id: str, days: int = 3) -> int:
     return 0
 
 
-def _write_lock(timeout: float = 60.0, stale: float = 60.0):
+def _write_lock(timeout: float = 60.0, stale: float = 120.0):
     """AG58: one writer at a time across SESSIONS (`<state>/summarizer/write.lock`). Four sessions stopping
     together each read the day's log, prepended and replaced it: one died on a Windows PermissionError with its
     output discarded (no event) and the others could overwrite each other's entry."""
@@ -249,7 +248,9 @@ def _write_lock(timeout: float = 60.0, stale: float = 60.0):
             deadline = _time.time() + timeout
             while True:
                 try:
-                    os.close(os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                    _fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    os.write(_fd, str(os.getpid()).encode())  # the owner's pid: only the owner releases it (AG61: a waiter's lock was deleted by the previous holder's finally)
+                    os.close(_fd)
                     held = True
                     break
                 except FileExistsError:
@@ -260,11 +261,10 @@ def _write_lock(timeout: float = 60.0, stale: float = 60.0):
                     except OSError:
                         pass
                     if _time.time() > deadline:
-                        try:
-                            lock.unlink()  # a crashed holder's lock is broken after the wait, not left for the next Stop to wait on again (MN51, MN49)
-                        except OSError:
-                            pass
-                        break  # never block the hook for ever: write without the lock
+                        # never write unlocked (AG64: a waiter broke a slow holder's lock and the holder's stale copy then erased the
+                        # waiter's entry); a lock older than `stale` is broken above, a younger one means a live writer: this Stop's
+                        # entry is skipped and retried at the next Stop (the chunk cache keeps every summary)
+                        raise RuntimeError(f"another summarizer run holds {lock} (broken once it is {int(stale)} s old); this entry is retried at the next Stop")
                     _time.sleep(0.05 + random.random() * 0.1)
         except OSError:
             pass
@@ -273,7 +273,8 @@ def _write_lock(timeout: float = 60.0, stale: float = 60.0):
         finally:
             if held:
                 try:
-                    lock.unlink()
+                    if lock.read_text(encoding="ascii", errors="replace").strip() in ("", str(os.getpid())):
+                        lock.unlink()
                 except OSError:
                     pass
     return _cm()
@@ -308,8 +309,21 @@ def write_outputs(
         result["updates_txt"] = str(UPDATES_TXT)
         return result
 
-    with _write_lock():
-        return _write_locked(session_file, session_log_text, updates_text, replace_session, result)
+    _prev = session_file.read_text(encoding="utf-8", errors="replace") if session_file.exists() else None
+    try:
+        with _write_lock():
+            return _write_locked(session_file, session_log_text, updates_text, replace_session, result)
+    except Exception:
+        # the day log and updates.txt move together: a failed updates write had left the day-log entry in place, so the
+        # next Stop found the session "done" and the updates entry stayed missing (AG64)
+        try:
+            if _prev is None:
+                session_file.unlink(missing_ok=True)
+            elif session_file.read_text(encoding="utf-8", errors="replace") != _prev:
+                _atomic_write(session_file, _prev)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
 
 
 def _write_locked(session_file, session_log_text, updates_text, replace_session, result):

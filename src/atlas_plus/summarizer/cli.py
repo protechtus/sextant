@@ -90,6 +90,39 @@ def _min_new_turns() -> int:
         return 6
 
 
+def _failure_file(safe_id: str):
+    from atlas_plus import paths as _ap
+    return _ap.state_dir() / "summarizer" / f"failed-{safe_id}.json" if safe_id else None
+
+
+def _note_failure(safe_id: str, nturns: int) -> None:
+    """Count a failed run at this turn count (AG64: a single-chunk or reduce failure paid a model call per Stop for ever)."""
+    import json as _json
+    f = _failure_file(safe_id)
+    if not f:
+        return
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        prev = _json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        count = int(prev.get("count", 0)) + 1 if prev.get("turns") == nturns else 1
+        f.write_text(_json.dumps({"turns": nturns, "count": count}), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _gave_up(safe_id: str, nturns: int) -> bool:
+    """True after three failed runs at the same turn count: the next Stops skip the model until the session grows."""
+    import json as _json
+    f = _failure_file(safe_id)
+    try:
+        if not f or not f.exists():
+            return False
+        prev = _json.loads(f.read_text(encoding="utf-8"))
+        return prev.get("turns") == nturns and int(prev.get("count", 0)) >= 3
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
     """One summarizer per session at a time: `<state>/summarizer/<id>.lock`, released at exit."""
     import atexit
@@ -321,11 +354,15 @@ def main(
     if conversation_id:
         # Claude Code fires Stop after every reply: the entry is refreshed when the session grew by
         # ATLAS_SUMMARIZER_MIN_NEW_TURNS turns, and left alone otherwise (MN33: the first summary froze)
-        if prior_turns is not None and len(turns) - prior_turns < _min_new_turns():
+        if _gave_up(safe_id, len(turns)):
+            console.print(f"[yellow]Session {conversation_id} failed to summarise three times at {len(turns)} turns; waiting for new turns.[/yellow]")
+            _event("summarizer_skipped", reason="gave up until the session grows", conversation_id=conversation_id or "")
+            raise typer.Exit(0)
+        if prior_turns is not None and prior_turns > 0 and len(turns) - prior_turns < _min_new_turns():  # 0 = a partial entry: always retried (AG64: a 3-turn partial session never was)
             console.print(f"[yellow]Session {conversation_id} is summarised at {prior_turns} turns and has {len(turns)} now: nothing new.[/yellow]")
             raise typer.Exit(0)
         marker = f"<!-- session:{safe_id} turns:{len(turns)} -->"
-        replace_prefix = f"<!-- session:{safe_id}" if prior_turns is not None else ""
+        replace_prefix = f"<!-- session:{safe_id}"  # always: a second workspace on the same state dir had duplicated the updates entry (AG64)
 
     # --- 2. Chunk ---
     chunks = chunk_turns(turns, token_budget=token_budget)
@@ -380,6 +417,7 @@ def main(
     if rejected and len(rejected) == len(chunks):
         console.print("[red]Every chunk reply was unusable; nothing written.[/red]")
         _event("summarizer_failed", reason=f"all {len(chunks)} chunk replies were unusable (not summaries); see summarizer_chunk_rejected", conversation_id=conversation_id or "")
+        _note_failure(safe_id, len(turns))
         raise typer.Exit(1)
     if reused:
         console.print(f"[dim]{reused} of {len(chunks)} chunk summaries reused from the last run.[/dim]")
@@ -413,6 +451,7 @@ def main(
         _why = _reject_reason(summary)
         console.print(f"[red]The model's reply was not a usable summary: {_why}; nothing written. It is retried at the next Stop; if it keeps happening, try a larger model (ATLAS_SUMMARIZER_MODEL).[/red]")
         _event("summarizer_failed", reason=f"model reply was not a summary: {_why}", conversation_id=conversation_id or "")
+        _note_failure(safe_id, len(turns))
         raise typer.Exit(1)
 
     if rejected:
@@ -420,15 +459,17 @@ def main(
         summary.setdefault("pending", [])
         if not isinstance(summary["pending"], list):
             summary["pending"] = []
-        summary["pending"].append("Incomplete: " + "; ".join(rejected) + " could not be summarised (unusable model reply); retried at the next Stop")
-        console.print(f"[yellow]{len(rejected)} of {len(chunks)} chunks could not be summarised; the entry says so and is retried at the next Stop.[/yellow]")
+        from atlas_plus.summarizer.renderer import MEMORY_SESSIONS_DIR as _sdir2, _PARTIAL_RETRIES as _PR, partial_count as _pc
+        _n = (_pc(_sdir2, safe_id) + 1) if marker else 1
+        _again = "retried at the next Stop" if _n < _PR else "retried when the session grows (the model gave up on it twice)"  # AG61: the text promised a retry the cap no longer makes
+        summary["pending"].append("Incomplete: " + "; ".join(rejected) + " could not be summarised (unusable model reply); " + _again)
+        console.print(f"[yellow]{len(rejected)} of {len(chunks)} chunks could not be summarised; the entry says so and is {_again}.[/yellow]")
         if marker:
-            from atlas_plus.summarizer.renderer import MEMORY_SESSIONS_DIR as _sdir2, partial_count as _pc
-            marker = marker[:-4] + f" partial:{_pc(_sdir2, safe_id) + 1} -->"  # the count caps the retries (MN49)
+            marker = marker[:-4] + f" partial:{_n} -->"  # the count caps the retries (MN49)
     # --- 5. Render ---
-    for _k in ("worked_on", "completed", "pending", "decisions", "files_touched"):
+    for _k in ("worked_on", "completed", "pending", "decisions", "files_touched", "lessons"):  # lessons too (AG61: a newline inside a lesson left orphaned headings and end markers)
         if isinstance(summary.get(_k), list):
-            summary[_k] = [" ".join(str(x).split()) for x in summary[_k] if str(x).strip()]  # one line per item: a newline inside an item broke the entry boundary (AG49)
+            summary[_k] = [__import__("re").sub(r"^#+\s*", "", " ".join(str(x).split())) for x in summary[_k] if str(x).strip()]  # one line per item (AG49); no item starts a heading (AG64)
     if isinstance(summary.get("title"), str):
         summary["title"] = " ".join(summary["title"].split())
     session_log_text = _redact(render_session_log(summary, date))
@@ -464,6 +505,8 @@ def main(
         raise typer.Exit(0)
     if not dry_run:
         _event("summary_written", path=result.get("session_log", ""), conversation_id=conversation_id or "", **({"partial_chunks": len(rejected)} if rejected else {}))
+    if dry_run:
+        console.print(session_log_text)  # the entry the run would have written: the dry-run log had held only progress lines (AG64)
     dry_tag = " (dry-run)" if dry_run else ""
     for label, path in result.items():
         console.print(f"[green]Written{dry_tag}:[/green] {label} -> {path}")

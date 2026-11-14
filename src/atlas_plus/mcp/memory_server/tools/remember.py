@@ -51,9 +51,8 @@ def _is_unmerged(target: Path) -> bool:
     now = _time.monotonic()
     if now - _UNMERGED_CACHE["at"] > 2.0 or _UNMERGED_CACHE.get("root") != str(root):
         try:
-            import subprocess as _sp
-            out = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True, stdin=_sp.DEVNULL,
-                          text=True, encoding="utf-8", errors="replace", timeout=5).stdout  # never the server's stdin (MN53)
+            from atlas_plus import gitsafe as _gs
+            out = _gs.run(["-c", "core.quotePath=false", "ls-files", "-u", "-z"], root, timeout=5).stdout  # gitsafe: a corpus repo's core.fsmonitor must never run (AG61); never the server's stdin (MN53)
             paths = frozenset(e.split("\t", 1)[1] for e in out.split("\0") if "\t" in e)
         except Exception:  # noqa: BLE001
             paths = frozenset()
