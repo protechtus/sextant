@@ -273,6 +273,8 @@ def _connect() -> sqlite3.Connection:
             conn.execute(_MIGRATE_LAST_CONFIRMED)
         if "size" not in existing_cols:
             conn.execute("ALTER TABLE memory_files ADD COLUMN size INTEGER")
+        if "fts_rowid" not in existing_cols:
+            conn.execute("ALTER TABLE memory_files ADD COLUMN fts_rowid INTEGER")  # AG42: delete by rowid, not by a scan
         conn.commit()
     except BaseException:
         conn.close()
@@ -427,6 +429,22 @@ def _parse_md(raw: str) -> tuple[str, str, float | None]:
     return frontmatter_json, body, confirmed_ts
 
 
+def _fts_delete(conn: sqlite3.Connection, rel: str, rowid) -> None:
+    """Drop a note's index row. `DELETE ... WHERE path=?` on an FTS5 column is a full scan (0.1 s
+    per note at 5,000 notes), so a corpus whose mtimes all changed (a pull, a sync, a restore, a
+    copy) stalled the first search for minutes (AG42, sweep 15). The rowid memory_files recorded
+    is used when it still names this path; otherwise the scan runs once and records a fresh one."""
+    if rowid is not None:
+        try:
+            row = conn.execute("SELECT path FROM memory_fts WHERE rowid=?", (int(rowid),)).fetchone()
+        except (sqlite3.Error, TypeError, ValueError):
+            row = None
+        if row and row[0] == rel:
+            conn.execute("DELETE FROM memory_fts WHERE rowid=?", (int(rowid),))
+            return
+    conn.execute("DELETE FROM memory_fts WHERE path=?", (rel,))
+
+
 def update_incremental() -> int:
     """Bring the index up to date by touching ONLY changed files.
 
@@ -456,6 +474,7 @@ def update_incremental() -> int:
                 row[0]: (row[1], row[2])
                 for row in conn.execute("SELECT path, mtime, size FROM memory_files")
             }
+            rowids = {row[0]: row[1] for row in conn.execute("SELECT path, fts_rowid FROM memory_files")}
             now = time.time()
             changed = 0
             seen: set[str] = set()
@@ -473,19 +492,19 @@ def update_incremental() -> int:
                 except OSError:
                     continue
                 frontmatter_json, body, confirmed_ts = _parse_md(raw)
-                conn.execute("DELETE FROM memory_fts WHERE path=?", (rel,))
-                conn.execute(
+                _fts_delete(conn, rel, rowids.get(rel))
+                cur = conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
                     (rel, frontmatter_json, _index_body(frontmatter_json, body)),
                 )
                 conn.execute(
-                    "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size)"
-                    " VALUES (?,?,?,?,?)",
-                    (rel, mtime, now, confirmed_ts, size),
+                    "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size, fts_rowid)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (rel, mtime, now, confirmed_ts, size, cur.lastrowid),
                 )
                 changed += 1
             for rel in set(db_state) - seen:
-                conn.execute("DELETE FROM memory_fts WHERE path=?", (rel,))
+                _fts_delete(conn, rel, rowids.get(rel))
                 conn.execute("DELETE FROM memory_files WHERE path=?", (rel,))
                 changed += 1
             if changed:
@@ -590,15 +609,15 @@ def rebuild(force: bool = False) -> int:
 
                 frontmatter_json, body, confirmed_ts = _parse_md(raw)
 
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
                     (rel, frontmatter_json, _index_body(frontmatter_json, body)),
                 )
                 st = abs_path.stat()
                 conn.execute(
-                    "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size)"
-                    " VALUES (?,?,?,?,?)",
-                    (rel, st.st_mtime, now, confirmed_ts, st.st_size),
+                    "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size, fts_rowid)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (rel, st.st_mtime, now, confirmed_ts, st.st_size, cur.lastrowid),
                 )
                 count += 1
 

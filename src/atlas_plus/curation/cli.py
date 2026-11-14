@@ -68,7 +68,8 @@ def cmd_duplicates(
     for p in pairs:
         table.add_row(p.file1, p.file2, f"{p.similarity:.2f}")
     console.print(table)
-    console.print(f"\n[yellow]{len(pairs)} pair(s) found.[/yellow]")
+    from atlas_plus.curation import duplicates as _dupmod
+    console.print(f"\n[yellow]{len(pairs)}{'+' if _dupmod._LAST_CAPPED else ''} pair(s) found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + '; lower the threshold or add --json for the rest)' if _dupmod._LAST_CAPPED else ''}.[/yellow]")
 
 
 @app.command("stale")

@@ -24,6 +24,7 @@ _NON_CURATABLE_DIRS = EXCLUDED_DIRS | {
 
 
 _MAX_FILE_PAIRS = 500  # the report shows a handful; snippets for more than this are wasted reads (AG32)
+_LAST_CAPPED = False   # True when the last file-level scan found more pairs than the cap (AG42: the count read as a total)
 
 
 def _tokenize(text: str) -> set[str]:
@@ -256,25 +257,36 @@ def find_duplicates(
     for i, f in enumerate(file_list):
         for tok in tokens[f]:
             index.setdefault(tok, []).append(i)
+    # Prefix filtering (exact): a pair with Jaccard >= t shares at least ceil(t*|A|) of A's tokens,
+    # so at least one shared token lies among A's |A| - ceil(t*|A|) + 1 RAREST tokens (one global
+    # order: document frequency, then the token). Only those short posting lists are walked; the
+    # walk over every posting list ran 1.3 billion times on 5,000 notes (AG42, sweep 15). Each
+    # candidate then gets the exact set intersection.
+    df = {tok: len(ix) for tok, ix in index.items()}
     found: list[tuple[float, int, int]] = []
     for i in range(len(file_list)):
         si = sizes[i]
         if si == 0:
             continue
-        shared: dict[int, int] = {}
-        for tok in tokens[file_list[i]]:
+        toks1 = tokens[file_list[i]]
+        need = int(-(-(threshold * si) // 1))            # ceil(t * |A|)
+        prefix = sorted(toks1, key=lambda t: (df[t], t))[:max(1, si - need + 1)]
+        cand: set[int] = set()
+        for tok in prefix:
             for j in index[tok]:
                 if j > i:
-                    shared[j] = shared.get(j, 0) + 1
-        toks1 = tokens[file_list[i]]
-        for j, common in shared.items():
+                    cand.add(j)
+        for j in cand:
             sj = sizes[j]
-            if common < threshold * max(si, sj):
-                continue
+            if min(si, sj) < threshold * max(si, sj):
+                continue                              # size band: Jaccard <= min/max
+            common = len(toks1 & tokens[file_list[j]])
             sim = common / (si + sj - common)
             if sim >= threshold:
                 found.append((sim, i, j))
     found.sort(key=lambda t: t[0], reverse=True)
+    global _LAST_CAPPED
+    _LAST_CAPPED = len(found) > _MAX_FILE_PAIRS
     for sim, i, j in found[:_MAX_FILE_PAIRS]:
         f1, f2 = file_list[i], file_list[j]
         pairs.append(DuplicatePair(

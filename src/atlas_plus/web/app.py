@@ -745,7 +745,7 @@ async def agents_html(request: Request):
     """
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=0.75)) as client:  # /api/agents hung 20 s on a blackholed Brain (AG42)
             r = await client.get(f"{BRAIN_URL}/agents", headers=_brain_headers)
         r.raise_for_status()
         agents = r.json().get("agents", [])

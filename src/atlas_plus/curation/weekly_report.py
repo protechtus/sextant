@@ -140,6 +140,22 @@ _COUNT_RULES = (
 )
 
 
+def _diverse(fact_dups: list, limit: int, per_pair: int = 3) -> list:
+    """At most ``per_pair`` lines per note pair: one pair of near-copies filled the whole section
+    (AG42: lines 7 to 110 were n0035 against n0633)."""
+    seen: dict[tuple, int] = {}
+    out = []
+    for d in fact_dups:
+        key = (d.get("file1"), d.get("file2"))
+        if seen.get(key, 0) >= per_pair:
+            continue
+        seen[key] = seen.get(key, 0) + 1
+        out.append(d)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def curation_counts(report_text: str) -> dict[str, int]:
     """The headline numbers of a report, parsed once for the dashboard, brain chat and Telegram
     (MN25: three hand-copied parsers, two of which crashed on every run). Repeated facts and
@@ -174,6 +190,7 @@ def generate_report(
     root = memory_root or MEMORY_ROOT
     today = date.today().isoformat()
 
+    from atlas_plus.curation import duplicates as _dupmod
     dups = find_duplicates(memory_root=root, threshold=dup_threshold, scope=scope)
     stale = find_stale(memory_root=root, months=stale_months, scope=scope)
     from atlas_plus.curation.duplicates import find_fact_duplicates
@@ -194,7 +211,7 @@ def generate_report(
         f"{sum(1 for d in fact_dups if d['kind'] == 'exact')} exact, "
         f"{sum(1 for d in fact_dups if d['kind'] != 'exact')} near)",
         "",
-        *[f"- {d['kind']}: `{d['file1']}` and `{d['file2']}`: {d['fact'][:120]}" for d in fact_dups[:30]],
+        *[f"- {d['kind']}: `{d['file1']}` and `{d['file2']}`: {d['fact'][:120]}" for d in _diverse(fact_dups, 30)],
         *([f"- ... and {len(fact_dups) - 30} more (`atlas-review-memory duplicates --facts --json`)"]
           if len(fact_dups) > 30 else []),
         "",
@@ -203,7 +220,7 @@ def generate_report(
         *[f"- `{c['path']}` ({c['age_days']} days; `memory_confirm_tool` when still true, or archive)" for c in never[:30]],
         *([f"- ... and {len(never) - 30} more (`atlas-review-memory unconfirmed-decay --json`)"] if len(never) > 30 else []),
         "",
-        f"## Potential Duplicates ({len(dups)} found, threshold={dup_threshold})",
+        f"## Potential Duplicates ({len(dups)}{'+' if _dupmod._LAST_CAPPED else ''} found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + ')' if _dupmod._LAST_CAPPED else ''}, threshold={dup_threshold})",
         "",
     ]
 

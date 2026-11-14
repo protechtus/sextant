@@ -356,3 +356,108 @@ def test_raw_load_reports_eol_and_bom_and_json_rules():
     with pytest.raises(HTTPException) as e3:
         asyncio.run(web._json_object(req(b'{"k": "' + b"x" * 2_200_000 + b'"}')))
     assert e3.value.status_code == 413
+
+
+# --- AG42: performance round four ---
+
+
+def _fts_corpus(tmp_path, monkeypatch, n=3):
+    import atlas_plus.mcp.memory_server.fts as fts
+
+    mem = tmp_path / "mem"
+    (mem / "reference").mkdir(parents=True)
+    words = ["alpha aardvark", "beta binturong", "gamma gerenuk", "delta dikdik"]
+    for i in range(n):
+        (mem / "reference" / f"n{i}.md").write_text(f"---\ntitle: N{i}\n---\n\n{words[i % 4]} note{i}\n", encoding="utf-8")
+    monkeypatch.setattr(fts, "MEMORY_ROOT", mem)
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "fts.sqlite")
+    fts.rebuild(force=True)
+    return fts, mem
+
+
+def test_incremental_update_deletes_index_rows_by_rowid(tmp_path, monkeypatch):
+    import os
+    import sqlite3
+    import time
+
+    fts, mem = _fts_corpus(tmp_path, monkeypatch)
+    conn = sqlite3.connect(str(fts.FTS_DB))
+    rows = dict(conn.execute("SELECT path, fts_rowid FROM memory_files").fetchall())
+    assert len(rows) == 3 and all(v is not None for v in rows.values())     # the rebuild recorded every rowid
+    # every mtime changes (a pull, a restore, a copy): the update must not scan the table per note
+    later = time.time() + 5
+    for p in (mem / "reference").glob("*.md"):
+        os.utime(p, (later, later))
+    conn.close()
+    assert fts.update_incremental() == 3
+    conn = sqlite3.connect(str(fts.FTS_DB))
+    assert conn.execute("SELECT count(*) FROM memory_fts").fetchone()[0] == 3
+    # a stale rowid (pointing at another note) must not delete that note's row
+    a_rowid = conn.execute("SELECT fts_rowid FROM memory_files WHERE path LIKE '%n0.md'").fetchone()[0]
+    b_rowid = conn.execute("SELECT fts_rowid FROM memory_files WHERE path LIKE '%n1.md'").fetchone()[0]
+    conn.execute("UPDATE memory_files SET fts_rowid=? WHERE path LIKE '%n0.md'", (b_rowid,))
+    conn.commit()
+    conn.close()
+    later += 5
+    os.utime(mem / "reference" / "n0.md", (later, later))
+    assert fts.update_incremental() == 1
+    conn = sqlite3.connect(str(fts.FTS_DB))
+    assert conn.execute("SELECT count(*) FROM memory_fts").fetchone()[0] == 3
+    paths = sorted(r[0] for r in conn.execute("SELECT path FROM memory_fts"))
+    assert len(set(paths)) == 3
+    conn.close()
+    assert [r["path"] for r in fts.search("binturong")]           # the other note's row survived
+    assert [r["path"] for r in fts.search("aardvark")]
+
+
+def test_prefix_filtered_file_duplicates_equal_brute_force(tmp_path):
+    import itertools
+    import random
+
+    from atlas_plus.curation import duplicates as d
+
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    rng = random.Random(42)
+    vocab = [f"w{i}" for i in range(2000)]
+    notes = []
+    for i in range(400):
+        words = rng.sample(vocab, 40)
+        notes.append(words)
+        (root / "reference" / f"n{i}.md").write_text("---\nid: n\n---\n" + " ".join(words) + "\n", encoding="utf-8")
+    for i in range(20):                                             # planted near-copies
+        base = notes[i]
+        (root / "reference" / f"c{i}.md").write_text("---\nid: c\n---\n" + " ".join(base[:30] + rng.sample(vocab, 6)) + "\n", encoding="utf-8")
+    files = sorted((root / "reference").glob("*.md"))
+    toks = {f: d._tokenize(f.read_text(encoding="utf-8")) for f in files}
+    for threshold in (0.4, 0.2):
+        brute = set()
+        for a, b in itertools.combinations(files, 2):
+            if d._jaccard(toks[a], toks[b]) >= threshold:
+                brute.add(frozenset((a.relative_to(root).as_posix(), b.relative_to(root).as_posix())))
+        got = {frozenset((p.file1, p.file2)) for p in d.find_duplicates(root, threshold=threshold)}
+        assert got == brute, (threshold, len(got), len(brute))
+        assert d._LAST_CAPPED is False
+
+
+def test_file_duplicate_cap_is_disclosed(tmp_path):
+    from atlas_plus.curation import duplicates as d
+    from atlas_plus.curation.weekly_report import _diverse
+
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    body = " ".join(f"w{i}" for i in range(50))
+    for i in range(60):                                             # 60 near-identical notes: 1,770 pairs over the cap
+        (root / "reference" / f"n{i}.md").write_text("---\nid: n\n---\n" + body + f" x{i}\n", encoding="utf-8")
+    pairs = d.find_duplicates(root, threshold=0.4)
+    assert len(pairs) == d._MAX_FILE_PAIRS and d._LAST_CAPPED is True
+    dups = [{"file1": "a", "file2": "b", "fact": f"f{i}", "kind": "exact"} for i in range(100)] + [{"file1": "c", "file2": "d", "fact": "g", "kind": "exact"}]
+    assert [x["file1"] for x in _diverse(dups, 30)] == ["a", "a", "a", "c"]
+
+
+def test_agents_route_has_a_connect_timeout():
+    import inspect
+
+    from atlas_plus.web import app as web
+
+    assert "httpx.AsyncClient(timeout=20.0)" not in inspect.getsource(web)

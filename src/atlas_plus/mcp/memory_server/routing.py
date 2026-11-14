@@ -1112,7 +1112,8 @@ def downgrade_stale_confirmations(
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            from atlas_plus._yaml import fast_safe_load as _fsl  # libyaml (AG42: 10,000 pure-Python loads per report)
+            fm = _fsl(raw[3:end]) or {}
         except Exception:
             continue
 
