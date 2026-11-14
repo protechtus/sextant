@@ -181,7 +181,7 @@ sextant remember "I take my coffee black" --scope preference:coffee   # store a 
 sextant search "coffee"                                               # find it (shows the confidence band)
 sextant --help                 # the CLI family
 atlas-review-memory summary    # corpus health at a glance (counts)
-sextant review report          # the weekly check: repeated facts, never-confirmed notes, stale notes, decisions to revisit (minutes on thousands of notes; the dashboard's panel caches it)
+sextant review report          # the weekly check: repeated facts, never-confirmed notes, stale notes, decisions to revisit (tens of seconds on thousands of notes; the dashboard's panel caches it)
 ```
 
 ## 5b. Bring your existing knowledge
@@ -208,7 +208,8 @@ conversation an older build already imported under another name is recognised
 and not filed again. A ChatGPT export keeps only the live branch
 of each conversation (regenerated or edited answers are left out). Keyword
 search picks imported notes up on its own (Chinese, Japanese and Korean text is
-matched character by character, so `東京` finds `東京都`; full-width letters and
+matched character by character, so `東京` finds `東京都` (Thai, Lao, Khmer and Burmese runs the
+same way; Arabic and Hebrew vowel marks are ignored on both sides); full-width letters and
 half-width katakana match their ordinary forms); if you run Ollama, refresh the
 semantic index with `sextant-embed-index` to enable semantic search
 (`ollama pull nomic-embed-text` once, then searches understand meaning,

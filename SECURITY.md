@@ -40,8 +40,10 @@ loopback is trusted the same way once it is listed in `ATLAS_MCP_TRUSTED_PEERS`
 that is not an IP address counts as its own bounded source (it is never the
 loopback exemption). A failure counts against the forwarded
 client only, so one locked client does not lock the proxy's other clients, and
-a flood through one proxy, whatever names it forwards, locks the proxy itself
-after ten times the per-client limit. Docker's published port is a NAT, not a
+a flood through one LISTED proxy, whatever names it forwards, locks the proxy
+itself after ten times the per-client limit; a proxy on loopback is the
+operator's own machine and is never locked, so it must overwrite the forwarded
+header (Recipe B's `header_up`), never pass a client's through. Docker's published port is a NAT, not a
 proxy: it adds no header, so listing the compose gateway separates nothing for
 clients that reach the port directly. Sextant reads these
 headers itself and starts its servers with uvicorn's own proxy-header

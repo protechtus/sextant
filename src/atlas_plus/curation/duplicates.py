@@ -34,8 +34,9 @@ def _tokenize(text: str) -> set[str]:
         end = text.find("---", 3)
         if end != -1:
             text = text[end + 3:]
-    words = re.findall(r"[a-z0-9]+", text.lower())
-    # CJK body text has no spaces: without bigrams every Japanese note looked identical (MN23)
+    text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
+    words = re.findall(r"\w+", text.lower())  # letters of every script
+    # CJK, Thai, Lao, Khmer and Burmese body text has no spaces: without bigrams every Japanese note looked identical (MN23)
     for run in re.findall(_CJK_RE.pattern + "+", text):
         words.extend(run[i:i + 2] for i in range(len(run) - 1))
     # Drop very common stop words and single chars
@@ -266,6 +267,21 @@ def find_duplicates(
     # walk over every posting list ran 1.3 billion times on 5,000 notes (AG42, sweep 15). Each
     # candidate then gets the exact set intersection.
     df = {tok: len(ix) for tok, ix in index.items()}
+    # Every note's token set as one Python int (one bit per token that appears in at least two notes; a
+    # token in one note can never be shared). `(a & b).bit_count()` is the intersection size in C: the
+    # per-pair set intersection cost 10 us and 125 of 132 seconds on 5,000 notes (AG54, round six).
+    shared_bit: dict[str, int] = {}
+    for tok, n_docs in df.items():
+        if n_docs >= 2:
+            shared_bit[tok] = 1 << len(shared_bit)
+    bits: list[int] = []
+    for f in file_list:
+        b = 0
+        for tok in tokens[f]:
+            bit = shared_bit.get(tok)
+            if bit:
+                b |= bit
+        bits.append(b)
     found: list[tuple[float, int, int]] = []
     # Postings are appended in ascending i, so they are sorted: bisect to the entries with j > i
     # instead of walking the whole list (AG48: 80 million set.add on 5,000 notes, 135 s). Once more
@@ -278,6 +294,7 @@ def find_duplicates(
         if si == 0:
             continue
         toks1 = tokens[file_list[i]]
+        bi = bits[i]
         need = int(-(-(thr * si) // 1))                  # ceil(t * |A|)
         prefix = sorted(toks1, key=lambda t: (df[t], t))[:max(1, si - need + 1)]
         cand: set[int] = set()
@@ -288,7 +305,7 @@ def find_duplicates(
             sj = sizes[j]
             if min(si, sj) < thr * max(si, sj):
                 continue                              # size band: Jaccard <= min/max
-            common = len(toks1 & tokens[file_list[j]])
+            common = (bi & bits[j]).bit_count()
             sim = common / (si + sj - common)
             if sim >= thr:
                 found.append((sim, i, j))

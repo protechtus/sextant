@@ -420,6 +420,9 @@ def cmd_remember(
     except RuntimeError as exc:  # the write kill switch (ATLAS_INTERACTIVE_WRITES=off)
         console.print(f"[red]Not stored:[/red] {exc}")
         raise typer.Exit(1)
+    except UnicodeEncodeError:
+        console.print("[red]Not stored:[/red] this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again.")  # the codec dump (AG52)
+        raise typer.Exit(1)
     if not result.get("ok"):
         console.print(f"[red]Not stored:[/red] {result.get('error')}")
         raise typer.Exit(1)

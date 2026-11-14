@@ -292,7 +292,7 @@ def _valid_ip(value: str) -> str:
     import ipaddress
     import re as _re
     v = value.strip()
-    m = _re.match(r"^(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}$", v) or _re.match(r"^\[([0-9A-Fa-f:.]+)\]:\d{1,5}$", v)
+    m = _re.match(r"^(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}$", v) or _re.match(r"^\[([0-9A-Fa-f:.]+)\](?::\d{1,5})?$", v)  # `[::1]` with or without a port (AG49)
     if m:
         v = m.group(1)
     try:

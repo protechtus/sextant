@@ -127,6 +127,11 @@ def _find_script(name: str) -> Path | None:
 
 
 _SESSION: dict[str, str] = {"id": ""}  # the Stop payload's session id, for the summarizer
+_PAYLOAD = {"seen": False}
+
+
+def _payload_seen() -> bool:
+    return _PAYLOAD["seen"]
 
 
 def _summarizer_unavailable_reason() -> str:
@@ -191,6 +196,7 @@ def _transcript_root_from_payload() -> str:
         payload = _json.loads(raw)
         if isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
             _SESSION["id"] = payload["session_id"].strip()[:120]
+        _PAYLOAD["seen"] = True
         tp = payload.get("transcript_path") if isinstance(payload, dict) else None
         if not tp:
             return ""
@@ -211,6 +217,8 @@ def main() -> int:
               "the updates file in the state dir. Dry run: ATLAS_SUMMARIZER_DRY_RUN=on.")
         return 0
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    _SESSION["id"] = ""
+    _PAYLOAD["seen"] = False  # per run: a previous payload in this process must not stand in (the sweep-14 test)
 
     if not is_session_autonomous():
         _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
@@ -230,6 +238,16 @@ def main() -> int:
     # 2026-11-10).
     _child_env = dict(os.environ)
     root = _transcript_root_from_payload()  # always read: it carries the session id (MN25/MN28: with the
+    if not _SESSION.get("id") and _payload_seen():
+        # a payload without a session id would summarise the whole day on every Stop, one more entry each
+        # time (AG50); Claude Code always sends session_id, so a missing one is a broken payload
+        _sys.stderr.write("Sextant: the Stop payload carries no session_id; nothing summarised.\n")
+        try:
+            from atlas_plus import activity as _act
+            _act.record("hook", "summarizer_skipped", reason="payload has no session_id")
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
     if root and not _child_env.get("ATLAS_CLAUDE_CODE_ROOT"):  # root set, every session of the day was summarised)
         _child_env["ATLAS_CLAUDE_CODE_ROOT"] = root
 
@@ -266,6 +284,13 @@ def main() -> int:
     # --- 2. Suggest-facts (auto mode: only writes confidence >= 0.85) ---
     if os.environ.get("ATLAS_DISABLE_SUGGEST_FACTS", "").lower() not in ("1", "true", "yes") and not reason:  # no model, no facts stage (MN31)
         exe = _find_script("atlas-suggest-facts")
+        if not exe:
+            _sys.stderr.write("Sextant: atlas-suggest-facts is not installed beside this interpreter, on PATH or in ~/.local/bin; the facts stage was skipped.\n")  # it was silent (AG50)
+            try:
+                from atlas_plus import activity as _act
+                _act.record("hook", "suggest_facts_skipped", reason="atlas-suggest-facts not found")
+            except Exception:  # noqa: BLE001
+                pass
         if exe:
             subprocess.Popen(
                 [str(exe), "--auto", "--since", "2h", "--skip-similar", "0.8",

@@ -35,8 +35,8 @@ INIT = REPO / "src" / "atlas_plus" / "__init__.py"
 CHANGELOG = REPO / "CHANGELOG.md"
 import os
 
-# the workspace keeps version copies two levels up (<workspace>/versions, a mirrored path tree);
-# a plain checkout keeps them beside the repo
+# the maintainer's workspace keeps version copies two levels up (<workspace>/versions, a mirrored path
+# tree); a plain checkout keeps them inside the clone under versions/ (gitignored)
 _WS = REPO.parent.parent
 _IN_WORKSPACE = REPO.parent.name == "projects" and (_WS / "versions").is_dir()  # <workspace>/projects/<repo>; a stranger's clone keeps copies beside itself (MN40)
 VERSIONS = Path(os.environ.get("SEXTANT_VERSIONS_DIR") or ((_WS / "versions") if _IN_WORKSPACE else (REPO / "versions")))
@@ -92,6 +92,8 @@ def drift(text_pyproject: str | None = None, text_init: str | None = None, text_
         problems.append("CHANGELOG.md has no `## [Unreleased]` heading")
     heads = changelog_release_headings(cl)
     vt = _base(v)
+    if stamped and stamped.group(1) in heads:
+        problems.append(f"stamped build {v!r} precedes a version the CHANGELOG already released ({stamped.group(1)}): the builder must advance the patch (pip would downgrade a git user)")  # AG49
     for h in heads:
         if vt is not None and tuple(map(int, h.split("."))) > vt:
             problems.append(f"CHANGELOG release heading [{h}] is newer than pyproject {v}")

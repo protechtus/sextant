@@ -188,6 +188,101 @@ def _refuse_cross_site(request) -> None:
 _LOCK_WARNED: dict[str, float] = {}
 
 
+def _same_bytes_as_disk(content: str, safe_path: str) -> bool:
+    try:
+        current = (Path(MEMORY_ROOT) / safe_path).read_bytes()
+    except OSError:
+        return False
+    _eol = lambda s: s.replace("\r\n", "\n").replace("\r", "\n")  # noqa: E731
+    return content.encode("utf-8") == current or _eol(content) == _eol(current.decode("utf-8", "replace"))
+
+
+_SSL_CTX = None
+
+
+def _shared_ssl_context():
+    """One verified TLS context for every peer client: httpx builds a certifi context per client
+    (0.43 to 0.51 s here), and the dashboard made 27 of them per page cycle (AG54)."""
+    global _SSL_CTX
+    if _SSL_CTX is None:
+        try:
+            _SSL_CTX = httpx.create_ssl_context()
+        except Exception:  # noqa: BLE001
+            _SSL_CTX = True
+    return _SSL_CTX
+
+
+class _PeerClient:
+    """A wrapper around ``httpx.AsyncClient(...)`` with a circuit breaker per host: after a refused or
+    timed-out connect on a GET the host is skipped for PEER_DOWN_SECONDS and the caller gets the same
+    ConnectError at once (AG51: thirteen panels each paid about 1.2 s per poll against a dead Brain and
+    eight in parallel stalled /health). Actions (POST and the rest) are always tried. It wraps the
+    client object at call time, so a test that patches ``httpx.AsyncClient`` is honoured."""
+    _down: dict[str, float] = {}
+    PEER_DOWN_SECONDS = 20.0
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("verify", _shared_ssl_context())  # building a certifi context per client cost 0.43 s on the loop (AG54)
+        self._raw = httpx.AsyncClient(*args, **kwargs)
+        self._inner = None
+
+    async def __aenter__(self):
+        entered = await self._raw.__aenter__()
+        self._inner = entered if entered is not None else self._raw
+        return self
+
+    async def __aexit__(self, *exc):
+        return await self._raw.__aexit__(*exc)
+
+    async def aclose(self):
+        close = getattr(self._raw, "aclose", None)
+        if close is not None:
+            return await close()
+
+    @classmethod
+    def _host(cls, url) -> str:
+        from urllib.parse import urlsplit
+        return urlsplit(str(url)).netloc
+
+    async def _guard(self, method: str, url, call, *args, **kwargs):
+        import time as _time
+        host = self._host(url)
+        until = self._down.get(host, 0.0)
+        if until > _time.monotonic() and method.upper() == "GET":
+            raise httpx.ConnectError(f"{host} marked down for {int(until - _time.monotonic())}s more (circuit breaker)")
+        try:
+            return await call(*args, **kwargs)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            self._down[host] = _time.monotonic() + self.PEER_DOWN_SECONDS
+            if len(self._down) > 64:
+                self._down.pop(next(iter(self._down)))
+            raise
+
+    def _target(self):
+        return self._inner if self._inner is not None else self._raw
+
+    async def request(self, method, url, *args, **kwargs):
+        return await self._guard(str(method), url, self._target().request, method, url, *args, **kwargs)
+
+    async def get(self, url, *args, **kwargs):
+        return await self._guard("GET", url, self._target().get, url, *args, **kwargs)
+
+    async def post(self, url, *args, **kwargs):
+        return await self._guard("POST", url, self._target().post, url, *args, **kwargs)
+
+    async def put(self, url, *args, **kwargs):
+        return await self._guard("PUT", url, self._target().put, url, *args, **kwargs)
+
+    async def patch(self, url, *args, **kwargs):
+        return await self._guard("PATCH", url, self._target().patch, url, *args, **kwargs)
+
+    async def delete(self, url, *args, **kwargs):
+        return await self._guard("DELETE", url, self._target().delete, url, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._target(), name)
+
+
 def _check_auth(request: Request, header_only: bool = False) -> None:
     if _ALLOW_NO_AUTH and not API_KEY:
         _refuse_cross_site(request)
@@ -315,7 +410,7 @@ async def _task_poll_loop() -> None:
     while True:
         changed = False
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+            async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
                 r = await client.get(
                     f"{BRAIN_URL}/tasks", params={"limit": "20"}, headers=_brain_headers
                 )
@@ -573,7 +668,7 @@ async def status_partial(request: Request):
     from atlas_plus.llm.ollama_url import default_ollama_url as _ollama_url
     ollama_base = _ollama_url().rstrip("/")  # the same endpoint the Brain uses (MN25: it showed the owner's 11434 as up)
     # Fire all three checks concurrently; worst-case latency = slowest, not sum.
-    async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
+    async with _PeerClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
         brain_req  = client.get(f"{BRAIN_URL}/health")
         mcp_req    = client.get(f"{mcp_base}/health", headers=_mcp_headers)
         ollama_req = client.get(f"{ollama_base}/api/tags")
@@ -767,7 +862,7 @@ async def agents_html(request: Request):
     """
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=0.75)) as client:  # /api/agents hung 20 s on a blackholed Brain (AG42)
+        async with _PeerClient(timeout=httpx.Timeout(20.0, connect=0.75)) as client:  # /api/agents hung 20 s on a blackholed Brain (AG42)
             r = await client.get(f"{BRAIN_URL}/agents", headers=_brain_headers)
         r.raise_for_status()
         agents = r.json().get("agents", [])
@@ -787,8 +882,12 @@ async def agents_html(request: Request):
             f'<div class="text-red-400 text-xs">Brain error {exc.response.status_code}.</div>'
         )
     except Exception as exc:
+        if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return HTMLResponse(  # on Windows a refused loopback connect reads as ConnectTimeout, so the "not running" branch never fired (AG54)
+                f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it, or set ATLAS_BRAIN_URL.</div>'
+            )
         return HTMLResponse(
-            f'<div class="text-red-400 text-xs">Brain unreachable: {type(exc).__name__}: {exc}</div>'
+            f'<div class="text-red-400 text-xs">Brain unreachable: {type(exc).__name__}: {_html_mod.escape(str(exc)[:160])}</div>'
         )
 
     online_count = sum(1 for a in agents if a.get("online"))
@@ -796,7 +895,7 @@ async def agents_html(request: Request):
     # Fetch credit-exhausted agent names from Brain diagnostic
     credit_exhausted: set[str] = set()
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as _dc:
+        async with _PeerClient(timeout=httpx.Timeout(3.0, connect=0.75)) as _dc:
             _dr = await _dc.get(f"{BRAIN_URL}/diagnostic", headers=_brain_headers)
             if _dr.status_code == 200:
                 credit_exhausted = set(_dr.json().get("credit_exhausted_agents", []))
@@ -945,7 +1044,7 @@ async def submit_task(req: TaskSubmit, request: Request):
     if req.agent:
         body["agent"] = req.agent
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/task", json=body, headers=_brain_headers)
         r.raise_for_status()
         task = r.json()
@@ -972,7 +1071,7 @@ async def submit_claude_task(req: TaskSubmit, request: Request):
         "session_id": req.session_id or "webui-claude-direct",
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/task", json=body, headers=_brain_headers)
         r.raise_for_status()
         task = r.json()
@@ -1013,7 +1112,7 @@ async def get_task_json(task_id: str, request: Request):
     """
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/task/{task_id}", headers=_brain_headers)
         if r.status_code == 404:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -1151,7 +1250,7 @@ async def bump_task_priority(task_id: str, request: Request):
     _check_auth(request)
     body = await _json_object(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.patch(
                 f"{BRAIN_URL}/task/{task_id}/priority",
                 json=body,
@@ -1171,7 +1270,7 @@ async def retry_all_failed(request: Request):
     from atlas_plus.brain import tasks as ts
     failed = ts.list_tasks(status="failed", limit=50)
     submitted = 0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+    async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
         for task in failed:
             body: dict = {"instruction": task.instruction, "session_id": task.session_id}
             if task.agent:
@@ -1201,7 +1300,7 @@ async def retry_task(task_id: str, request: Request):
     if task.agent:
         body["agent"] = task.agent
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/task", json=body, headers=_brain_headers)
         r.raise_for_status()
         new_task = r.json()
@@ -1259,7 +1358,7 @@ async def scheduler_trigger_proxy(job_id: str, request: Request):
     """Proxy to Brain POST /scheduler/trigger/{job_id}."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/scheduler/trigger/{job_id}", headers=_brain_headers
             )
@@ -1277,7 +1376,7 @@ async def scheduler_jobs_proxy(request: Request):
     """Proxy to Brain GET /scheduler/jobs."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/scheduler/jobs", headers=_brain_headers)
         r.raise_for_status()
         return r.json()
@@ -1290,7 +1389,7 @@ async def credit_reset_proxy(request: Request):
     """Proxy to Brain POST /credit/reset -- clear credit exhaustion state."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.post(f"{BRAIN_URL}/credit/reset", headers=_brain_headers)
         r.raise_for_status()
         return r.json()
@@ -1526,7 +1625,7 @@ async def memory_file_write(request: Request):
         raise HTTPException(status_code=400, detail="Path rejected")
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {safe_path}")
-    if len(content.encode("utf-8")) > 1_048_576:  # 1 MB cap prevents accidental large writes
+    if len(content.encode("utf-8")) > 1_048_576:  # 1 MB cap prevents accidental large writes and not _same_bytes_as_disk(content, safe_path):  # unchanged before the size rule (AG51)
         raise HTTPException(status_code=413, detail="Content exceeds 1 MB limit for memory files.")
     from atlas_plus.mcp.memory_server.routing import _atomic_write_text, _write_lock
     from atlas_plus.mcp.memory_server.versioning import version_before_write
@@ -1681,7 +1780,7 @@ async def chat_history(request: Request, session_id: str = ""):
     if not session_id:
         return HTMLResponse('<div class="text-slate-500 text-xs">No session_id provided.</div>')
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.get(
                 f"{BRAIN_URL}/session/{session_id}/history",
                 params={"limit": "40"},
@@ -1792,7 +1891,7 @@ async def routing_stats_panel(request: Request):
     """Routing configuration and classification cache panel for the Agents tab."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/routing/stats", headers=_brain_headers)
         r.raise_for_status()
         data = r.json()
@@ -2006,7 +2105,7 @@ async def pending_facts_panel(request: Request):
     """Render the pending facts review panel for the Memory tab."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/pending-facts?status=pending&limit=20", headers=_brain_headers)
         r.raise_for_status()
         facts = r.json().get("facts", [])
@@ -2063,7 +2162,7 @@ async def approve_fact_proxy(fact_id: str, request: Request):
     except Exception:
         pass
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/pending-facts/{fact_id}/approve",
                 json=body, headers=_brain_headers,
@@ -2083,7 +2182,7 @@ async def reject_fact_proxy(fact_id: str, request: Request):
     """
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/pending-facts/{fact_id}/reject",
                 headers=_brain_headers,
@@ -2099,7 +2198,7 @@ async def pending_facts_count_proxy(request: Request):
     """Return {count} of pending facts -- used by Memory tab badge."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(3.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/pending-facts/count", headers=_brain_headers)
         if r.status_code == 200:
             return r.json()
@@ -3333,7 +3432,7 @@ def _store_node(node_id: str, label: str, path: Path, detail: str = "") -> dict:
 async def api_topology(request: Request):
     """GET /api/topology -- nodes + edges for the Map tab, probed live."""
     _check_auth(request)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(1.5, connect=0.75)) as client:
+    async with _PeerClient(timeout=httpx.Timeout(1.5, connect=0.75)) as client:
         brain_s, mcp_s, ollama_s, sync_s = await asyncio.gather(
             _probe_health(client, f"{BRAIN_URL}/health"),
             _probe_health(client, f"{MCP_URL}/health"),
@@ -3599,8 +3698,8 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
         rows.append(
             f'<div class="flex items-center gap-2 py-1 border-b border-slate-700 row-hover group"'
             f' onclick="showTicketDetail({_js_arg(_tref(t))})">'
-            f'<span class="text-slate-500 text-xs w-24 truncate font-mono">{t.id}</span>'
-            f'<span class="{sc} text-xs w-20">{t.status}</span>'
+            f'<span class="text-slate-500 text-xs w-24 truncate font-mono tk-id">{t.id}</span>'
+            f'<span class="{sc} text-xs w-20 tk-status">{t.status}</span>'
             f'<span class="{pc} text-xs w-4 shrink-0">{getattr(t, "priority", "N")[0].upper()}</span>'
             f'<span class="text-slate-300 text-xs flex-1 truncate">{_html_mod.escape(t.title)}</span>'
             f'<span class="text-slate-500 text-xs w-24 truncate tk-proj">{t.project}</span>'
@@ -3754,14 +3853,19 @@ async def operator_queue_html(request: Request):
 def _tref(t) -> str:
     """`project/ID`: the one name for a ticket when two projects minted the same id (AG45: the board's
     Done landed on the other project's ticket)."""
-    proj = getattr(t, "project", "") or ""
-    if proj:
-        try:
-            from atlas_plus.tickets.store import TICKETS_ROOT as _troot
-            if (_troot / proj / f"{t.id}.md").is_file():
-                return f"{proj}/{t.id}"
-        except Exception:  # noqa: BLE001
-            pass
+    try:
+        from atlas_plus.tickets.store import TICKETS_ROOT as _troot
+        p = getattr(t, "path", None)
+        if p is not None:
+            parent = Path(p).resolve().parent
+            if parent == Path(_troot).resolve():
+                return t.id  # a root-level ticket: the bare id, even when a folder holds the same id (AG49)
+            return f"{parent.name}/{t.id}"  # the folder the file is IN, not the frontmatter's project
+        proj = getattr(t, "project", "") or ""
+        if proj and (_troot / proj / f"{t.id}.md").is_file():
+            return f"{proj}/{t.id}"
+    except Exception:  # noqa: BLE001
+        pass
     return t.id  # a root-level or moved ticket keeps the bare id (MN37: `tickets/OLD-001` was not found)
 
 
@@ -3873,7 +3977,7 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
         task_payload["agent"] = agent_hint
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(10.0, connect=0.75)) as client:
             r = await client.post(
                 f"{BRAIN_URL}/task",
                 json=task_payload,
@@ -3916,7 +4020,7 @@ async def tickets_dispatch_stats(request: Request):
     _check_auth(request)
     brain_key = os.environ.get("ATLAS_BRAIN_API_KEY", "")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(
                 f"{BRAIN_URL}/dispatch-stats",
                 headers={"Authorization": f"Bearer {brain_key}"},
@@ -3934,7 +4038,7 @@ async def tickets_dispatch_stats_html(request: Request):
     brain_key = os.environ.get("ATLAS_BRAIN_API_KEY", "")
     stats: dict = {"enabled": False}
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(
                 f"{BRAIN_URL}/dispatch-stats",
                 headers={"Authorization": f"Bearer {brain_key}"},
@@ -4521,7 +4625,7 @@ async def ws_chat(websocket: WebSocket, session_id: str):
     await websocket.accept()
     try:
         # Use a generous timeout; Brain chat can take 30-120s for deep tool call chains.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=140.0, write=30.0, pool=10.0)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(connect=10.0, read=140.0, write=30.0, pool=10.0)) as client:
             while True:
                 text = await websocket.receive_text()
                 if not text.strip():
@@ -4717,6 +4821,8 @@ button{{font-family:inherit;cursor:pointer}}
   .w-64,.w-72,.w-80,.w-96{{width:100%!important}}
   #tabbar{{flex-wrap:wrap;overflow-x:visible}}
   .tk-proj{{display:none}}
+  .tk-id{{width:3.6rem!important}}
+  .tk-status{{width:2.6rem!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
   .tab{{padding:.3rem .5rem;font-size:.65rem}}
   .detail-panel{{height:12rem!important}}
   #dash-detail{{height:10rem!important}}
@@ -5527,7 +5633,7 @@ function switchTab(name){{
 document.body.addEventListener("htmx:responseError",function(e){{
   const s=e.detail&&e.detail.xhr?e.detail.xhr.status:0;
   if(s===401){{
-    const dirty=[...document.querySelectorAll('textarea[data-dirty="1"]')].some(t=>t.value.trim()&&t.offsetParent!==null);
+    const dirty=[...document.querySelectorAll('textarea[data-dirty="1"]')].some(t=>t.value.trim());  // a draft on a hidden tab counts too (AG49)
     if(dirty){{
       // typed text is never thrown away (AG45); every poll stops, or the dead session's 401s lock a remote user out (MN37, the AG31 rule)
       window._sextantExpired=true;try{{es.close();}}catch(_){{}}
@@ -5566,6 +5672,7 @@ es.onmessage=(e)=>{{
 // ---- WebSocket chat ----
 let ws=null;
 function cwS(){{
+  if(window._sextantExpired)return;
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+"/ws/chat/"+SID);  // behind TLS the page's CSP refuses ws:// (AG47)
   ws.onmessage=(e)=>{{
     const m=JSON.parse(e.data),b=document.getElementById("chat-messages");
@@ -5602,7 +5709,7 @@ function cwS(){{
     }}
     b.scrollTop=b.scrollHeight;
   }};
-  ws.onclose=()=>setTimeout(cwS,3000);
+  ws.onclose=()=>{{if(!window._sextantExpired)setTimeout(cwS,3000);}};  // a dead session must not retry the handshake every 3 s: each try counted as an auth failure and locked the remote user out (AG49)
 }}
 cwS();
 
@@ -5709,7 +5816,7 @@ async function operatorAct(id,outcome){{
 function showTicketDetail(ticketId){{
   fetch("/api/tickets/"+ticketId+"/detail",{{headers:{{}}}})
     .then(r=>{{if(!r.ok)throw new Error("HTTP "+r.status);return r.text();}})
-    .then(html=>document.getElementById("ticket-detail").innerHTML=html)
+    .then(html=>{{const d=document.getElementById("ticket-detail");d.innerHTML=html;if(window.innerWidth<768)d.scrollIntoView({{behavior:'smooth',block:'start'}});}})  // on a phone the pane sits below the fold (AG51)
     .catch(e=>{{document.getElementById("ticket-detail").innerHTML='<div class="text-red-400 text-xs">Failed to load ticket: '+e.message+'</div>';showToast("Ticket detail failed: "+e.message,"failed");}});
 }}
 
@@ -6449,7 +6556,7 @@ async def workers_proxy(request: Request):
     """Proxy GET /workers from Brain server. Shows worker health assessment."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/workers", headers=_brain_headers)
         return r.json()
     except Exception as exc:
@@ -6561,7 +6668,7 @@ async def spend_proxy(request: Request, days: int = 7):
     """Proxy GET /spend from Brain: token totals + estimated cost (spend v2)."""
     _check_auth(request)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
             r = await client.get(f"{BRAIN_URL}/spend", params={"days": days}, headers=_brain_headers)
         return r.json()
     except Exception as exc:
@@ -6582,7 +6689,7 @@ async def public_status():
 
     async def _probe(name: str, url: str, headers: dict | None = None) -> tuple[str, str]:
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.75)) as client:
+            async with _PeerClient(timeout=httpx.Timeout(2.0, connect=0.75)) as client:
                 r = await client.get(url, headers=headers or {})
             # 429 is a locked-out source, not a healthy service (claims pass 2026-11-10)
             return name, "degraded" if (r.status_code >= 500 or r.status_code == 429) else "ok"

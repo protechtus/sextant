@@ -181,7 +181,7 @@ def _extract_candidates(
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1:
-        if re.search(r"\bno (?:new |additional |notable )?facts?\b|nothing (?:worth|to) (?:sav|extract|remember|not)", text, re.I):
+        if "{" not in text and "\"fact\"" not in text and re.search(r"\bno (?:new |additional |notable )?facts?\b|nothing (?:worth|to) (?:sav|extract|remember|not)", text, re.I):  # a truncated fact object is a failed run, not an empty answer (AG49)
             return [], 0  # a plain-English "no facts" is an answer, not a failure (MN37)
         raise RuntimeError("model reply was not a JSON list of facts")  # a junk reply is a failed run, not a completed one (AG43: it marked the session done)
     try:
@@ -189,8 +189,8 @@ def _extract_candidates(
     except json.JSONDecodeError as e:
         raise RuntimeError("model reply was not a JSON list of facts") from e
 
-    if not isinstance(candidates, list):
-        raise RuntimeError("model reply was not a JSON list of facts")
+    if not isinstance(candidates, list) or (candidates and not any(isinstance(c, dict) for c in candidates)):
+        raise RuntimeError("model reply was not a JSON list of facts")  # `[1, 2, 3]` is junk, not an empty answer (AG50)
 
     # Filter and normalize
     valid = []
@@ -379,7 +379,7 @@ def _queue_for_review(cand: dict, conversation_id: str | None) -> None:
 
 
 def _fact_tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
+    return set(re.findall(r"\w+", text.lower()))  # letters of every script (AG52: a fact with no ASCII never counted as present)
 
 
 def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:

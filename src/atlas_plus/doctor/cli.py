@@ -316,6 +316,7 @@ def check_stop_hook() -> dict:
     except Exception:  # noqa: BLE001
         result["gate"] = False
     result["disabled"] = _os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() in ("1", "true", "yes")
+    result["gate_value"] = _os.environ.get("ATLAS_SESSION_AUTONOMOUS", "")
     try:
         import urllib.request as _ur
         with _ur.urlopen(f"{result['url']}/api/tags", timeout=1.0) as resp:
@@ -336,7 +337,7 @@ def check_stop_hook() -> dict:
     try:
         from atlas_plus import activity as _act
         for ev in reversed(_act.tail(limit=200)):  # tail is oldest-first: the NEWEST event is the one that matters (MN33)
-            if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped"):
+            if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped", "suggest_facts_failed", "fact_needs_review"):  # the facts stage too (AG50)
                 result["last_event"] = f"{ev.get('event')} at {str(ev.get('ts') or ev.get('time') or '')[:16]} UTC {' '.join(str(ev.get('reason') or '').split())[:200]}".strip()  # one line, labelled (AG43); the 404 hint fits (MN39)
                 break
     except Exception:  # noqa: BLE001
@@ -714,8 +715,8 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         # a modify/delete conflict has no markers: `git ls-files -u` is the only trace (MN41)
         try:
             import subprocess as _sp
-            _u = _sp.run(["git", "ls-files", "-u"], cwd=str(root), capture_output=True, text=True, timeout=10)
-            unmerged = sorted({ln.split("\t", 1)[1] for ln in _u.stdout.splitlines() if "\t" in ln})
+            _u = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+            unmerged = sorted({e.split("\t", 1)[1] for e in _u.stdout.split("\0") if "\t" in e})  # NUL-separated, unquoted: CJK paths were octal escapes (AG49)
         except Exception:  # noqa: BLE001
             unmerged = []
         if unmerged:
@@ -1612,7 +1613,7 @@ def render_text(data: dict) -> str:
             lines.append(f"  \033[33mempty\033[0m  root: {mc.get('root')}")
         if mc.get("hint"):
             lines.append(f"  \033[33m{mc['hint']}\033[0m")
-        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "import_copies_hint", "locks_hint"):
+        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "unmerged_hint", "import_copies_hint", "locks_hint"):  # unmerged was JSON-only (AG49)
             if mc.get(extra_key):
                 lines.append(f"  \033[33m{mc[extra_key]}\033[0m")
         emb = mc.get("embed_index") or {}
@@ -1782,7 +1783,13 @@ def render_text(data: dict) -> str:
     sh = data.get("stop_hook", {})
     if sh.get("model"):
         lines.append("\033[1mStop hook (session summaries)\033[0m")
-        gate = "on" if sh.get("gate") else "off in this shell (the hook needs --env ATLAS_SESSION_AUTONOMOUS=on on its command)"
+        _raw = (sh.get("gate_value") or "").strip()
+        if sh.get("gate"):
+            gate = "on"
+        elif _raw and _raw.lower() not in ("off", "0", "false", "no"):
+            gate = f"off: ATLAS_SESSION_AUTONOMOUS={_raw!r} is not one of on/1/true"  # name the bad value (AG50)
+        else:
+            gate = "off in this shell (the hook needs --env ATLAS_SESSION_AUTONOMOUS=on on its command)"
         if not sh.get("reachable"):
             model_note = f"\033[33mno Ollama at {sh.get('url')}\033[0m"
         elif sh.get("model_pulled"):

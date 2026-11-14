@@ -12,10 +12,24 @@ from .base import ChatResponse, ModelProvider, ToolCall
 PostFn = Callable[[str, dict, float], dict]
 
 
+_SSL_CTX = None
+
+
+def _shared_ssl_context():
+    global _SSL_CTX
+    if _SSL_CTX is None:
+        import httpx as _httpx
+        try:
+            _SSL_CTX = _httpx.create_ssl_context()
+        except Exception:  # noqa: BLE001
+            _SSL_CTX = True
+    return _SSL_CTX
+
+
 def _httpx_post(url: str, json: dict, timeout: float) -> dict:
     import httpx
 
-    resp = httpx.post(url, json=json, timeout=timeout)
+    resp = httpx.post(url, json=json, timeout=timeout, verify=_shared_ssl_context())  # one TLS context, not one per call (AG54: 0.43 s each)
     resp.raise_for_status()
     return resp.json()
 

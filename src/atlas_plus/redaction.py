@@ -49,7 +49,8 @@ _TELEGRAM_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
 _KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|client[_-]?secret|private[_-]?key"
              r"|access[_-]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
              r"|パスワード|トークン|シークレット|秘密鍵|秘密|鍵|APIキー"
-             r"|비밀번호|비밀|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰)")
+             r"|비밀번호|비밀|비밀키|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰|暗証番号"
+             r"|كلمة[_ ]السر|كلمة[_ ]المرور|סיסמה|รหัสผ่าน|पासवर्ड)")  # Arabic, Hebrew, Thai, Hindi (AG52)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
 # Exact key NAMES: a bounded prefix of up to eight `_`/`-` segments (`MY_APP_PROD_EU_WEST_DB_`), an
 # optional camelCase head (`dbPassword`, `AccessToken`), the name, and up to two short suffixes
@@ -61,7 +62,7 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 # with `&` leaked its tail; a query-string tail is over-masked instead). The lookbehind limits the
 # scan to word starts, so a 1 MB blob costs one attempt per word, not per character.
 _KV_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_])((?:[A-Za-z0-9]{1,32}[_-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"
+    r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]{1,32}[_-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"
     r"(?![A-Za-z0-9])"
     r"(['\"]?\s*[=:：＝]\s*(?:r(?=['\"]))?)"
     r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[\"']?[^\s'\"]{6,})"
@@ -80,27 +81,51 @@ _FULLWIDTH = {c: c - 0xFEE0 for c in range(0xFF01, 0xFF5F)}
 _FULLWIDTH[0x3000] = 0x20
 
 
+def _yaml_block_mask(m: "re.Match[str]") -> str:
+    """Mask only the lines indented deeper than the key: `host:`/`port:` siblings stay (AG49)."""
+    head = m.group(1)
+    key_indent = len(head) - len(head.lstrip(" \t"))
+    kept = []
+    masked = False
+    for line in m.group(2).splitlines(keepends=True):
+        indent = len(line) - len(line.lstrip(" \t"))
+        if indent > key_indent and line.strip():
+            if not masked:
+                kept.append(" " * (key_indent + 2) + "[REDACTED]\n")
+                masked = True
+            continue
+        kept.append(line)
+    return head + "".join(kept)
+
+
 def _kv_quote(v: str) -> str:
     return v[0] if v and v[0] in "\"'" and len(v) > 1 and v[-1] == v[0] else ""
 
 
-def _kv_skip(name: str, v: str, sep: str = "=") -> bool:
-    """Matches that are not secrets: placeholders, code expressions, a bare `pass:` in prose, `PWD=/path`."""
+def _kv_skip(name: str, v: str, sep: str = "=", text: str | None = None, start: int = 0) -> bool:
+    """Matches that are not secrets: placeholders, code expressions, a bare `pass:` in prose, `PWD=/path`,
+    `bypass =`/`compass =` (a camel head before pass/pwd), and a lowercase word after a colon when the
+    key sits mid-sentence (`The token: refreshing`), never when it starts its line (`password: hunter`
+    in YAML, INI or compose: AG49, the earlier prose rule unmasked those)."""
     if not any(ch.isalnum() for ch in v):
         return True  # `password: ********` is a placeholder, not a secret
     low = name.lower()
     if low == "pass":
         return True  # only a prefixed `DB_PASS`/`MYSQL_PASS` is a key name; `pass:` alone is prose
+    if (low.endswith("pass") or low.endswith("pwd")) and not re.search(r"(?:^|[_-])(?:pass|pwd)$", low):
+        return True  # `bypass`, `compass`
     if low.endswith("pwd") and _PATH_VALUE_RE.match(v):
         return True  # the shell's PWD=/home/u
-    if "=" not in sep and re.fullmatch(r"[a-z]+", v):
-        return True  # `The token: refreshing the page` is prose, not an assignment (MN37)
+    if "=" not in sep and re.fullmatch(r"[a-z]+", v) and text is not None:
+        line_prefix = text[text.rfind("\n", 0, start) + 1:start]
+        if re.search(r"[A-Za-z0-9,.;)]\s+$", line_prefix):
+            return True  # mid-sentence prose: `The token: refreshing the page` (MN37)
     return bool(_CODE_VALUE_RE.match(v))
 
 
 def _kv_mask(m: "re.Match[str]") -> str:
     v = m.group(3)
-    if _kv_skip(m.group(1), v, m.group(2)):
+    if _kv_skip(m.group(1), v, m.group(2), m.string, m.start()):
         return m.group(0)
     q = _kv_quote(v)
     if not q and v[0] in "\"'":
@@ -116,7 +141,7 @@ def _kv_redact(out: str) -> str:
         pos = 0
         for m in _KV_RE.finditer(folded):
             v = m.group(3)
-            if _kv_skip(m.group(1), v, m.group(2)) or "[REDACTED]" in v:
+            if _kv_skip(m.group(1), v, m.group(2), folded, m.start()) or "[REDACTED]" in v:
                 continue
             q = _kv_quote(v)
             pieces.append(out[pos:m.start(3)])
@@ -153,7 +178,7 @@ def redact(text: str | None, *, env: dict | None = None) -> str | None:
     # 2) Structural patterns.
     out = _BEARER_RE.sub(r"\1[REDACTED]", out)
     out = _TELEGRAM_RE.sub("[REDACTED:telegram-token]", out)
-    out = _YAML_BLOCK_RE.sub(lambda m: m.group(1) + "    [REDACTED]\n", out)
+    out = _YAML_BLOCK_RE.sub(_yaml_block_mask, out)
     out = _XML_RE.sub(r"\1[REDACTED]\4", out)
     out = _kv_redact(out)
     out = _CLI_SECRET_RE.sub(r"\1[REDACTED]", out)

@@ -120,8 +120,30 @@ def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
     return True
 
 
+_ECHO_MARKERS = ("You are summarizing", "short description of each thing", "things that were finished", "things started but not finished", "Think step by step")
+
+
+def _is_prompt_echo(parsed) -> bool:
+    """An echoed prompt parses as a summary because the prompt holds the schema (AG50: four 22 KB echoes
+    were cached and fed every later reduce; a single-chunk echo wrote the placeholders as the entry)."""
+    import json as _json
+    try:
+        flat = _json.dumps(parsed, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        flat = str(parsed)
+    return any(marker in flat for marker in _ECHO_MARKERS)
+
+
+def _looks_like_chunk_summary(parsed) -> bool:
+    """A map reply worth caching: a JSON object with at least one of the schema's list fields, and not an
+    echo of the prompt."""
+    if not isinstance(parsed, dict) or parsed.get("_fallback") or _is_prompt_echo(parsed):
+        return False
+    return any(isinstance(parsed.get(k), list) for k in ("worked_on", "completed", "pending", "decisions", "files_touched"))
+
+
 def _looks_like_summary(summary) -> bool:
-    if not isinstance(summary, dict) or summary.get("_fallback"):
+    if not isinstance(summary, dict) or summary.get("_fallback") or _is_prompt_echo(summary):
         return False
     title = summary.get("title")
     # the MAP prompt's schema has no title, so a single-chunk session (no reduce) arrives without one
@@ -254,10 +276,12 @@ def main(
         except ProviderError as e:
             console.print(f"[red]LLM call failed:[/red] {e}")
             _event("summarizer_failed", reason=str(e)[:200], conversation_id=conversation_id or "")
+            if safe_id and not dry_run and used_cache:
+                _save_chunk_cache(safe_id, used_cache)  # the chunks already summarised are kept for the retry (AG54: 34 calls paid twice)
             raise typer.Exit(1)
         chunk_summaries.append(text)
-        if not _parse_json_response(text).get("_fallback"):
-            used_cache[key] = text  # a junk or echoed reply is never cached (MN39: three poisoned chunks fed every later reduce)
+        if _looks_like_chunk_summary(_parse_json_response(text)):
+            used_cache[key] = text  # only a reply shaped like a chunk summary is cached (MN39, AG49: a JSON list crashed here and a JSON object of junk was cached)
     if reused:
         console.print(f"[dim]{reused} of {len(chunks)} chunk summaries reused from the last run.[/dim]")
     if safe_id and not dry_run:
@@ -288,6 +312,11 @@ def main(
         raise typer.Exit(1)
 
     # --- 5. Render ---
+    for _k in ("worked_on", "completed", "pending", "decisions", "files_touched"):
+        if isinstance(summary.get(_k), list):
+            summary[_k] = [" ".join(str(x).split()) for x in summary[_k] if str(x).strip()]  # one line per item: a newline inside an item broke the entry boundary (AG49)
+    if isinstance(summary.get("title"), str):
+        summary["title"] = " ".join(summary["title"].split())
     session_log_text = _redact(render_session_log(summary, date))
     updates_text = _redact(render_updates_entry(summary, date))
     if marker:

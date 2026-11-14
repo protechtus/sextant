@@ -207,8 +207,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if n:
             print(f"  note: {n} parked cop{'y' if n == 1 else 'ies'} remain under {leftover} -- archive or delete "
                   "them once resolved so `status` and `doctor` stop counting them")
+    import re as _re
     for item in report.errors:
-        print(f"  error: {item}")
+        print(f"  error: {_re.sub(chr(91) + chr(92) + 'x00-' + chr(92) + 'x1f' + chr(92) + 'x7f' + chr(93), ' ', str(item))[:300]}")  # the hub's text is untrusted: no control characters, 300 chars (AG49)
     if report.remote_deleted or report.local_deleted:
         print(
             f"  deletions reported, not propagated: "

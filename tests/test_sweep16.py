@@ -316,7 +316,7 @@ def test_single_chunk_summary_needs_no_title_and_junk_is_never_cached():
     assert not scli._looks_like_summary({"title": "x\ny", "completed": ["a"]})
     assert not scli._looks_like_summary(scli._parse_json_response("Sure! Here is a summary."))
     src = inspect.getsource(scli.main)
-    assert 'if not _parse_json_response(text).get("_fallback"):' in src and "if safe_id and not dry_run:" in src
+    assert "_looks_like_chunk_summary(_parse_json_response(text))" in src and "if safe_id and not dry_run:" in src
 
 
 def test_gate_value_is_stripped_and_off_is_an_opt_out(monkeypatch):

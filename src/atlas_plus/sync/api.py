@@ -115,8 +115,9 @@ async def _require_principal(request: Request) -> devices.Device:
         import logging as _logging
         import time as _time
         _src = fwd_ip or peer_ip
-        if _time.time() - _LOCK_WARNED.get(_src, 0.0) > AUTH_FAILURES.window_seconds:
-            _LOCK_WARNED[_src] = _time.time()
+        _wk = peer_ip if fwd_ip else _src  # one line per PEER per window, like the dashboard (AG49: 40 forged names, 40 lines)
+        if _time.time() - _LOCK_WARNED.get(_wk, 0.0) > AUTH_FAILURES.window_seconds:
+            _LOCK_WARNED[_wk] = _time.time()
             if len(_LOCK_WARNED) > 512:
                 _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))
             _logging.getLogger("atlas_plus.sync.api").warning("sync hub: %s is locked out after repeated auth failures; refusing with 429", _src)  # the hub left no trace (AG44)

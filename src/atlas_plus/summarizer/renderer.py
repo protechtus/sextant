@@ -82,7 +82,12 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     end the id (`<!-- session:abc` never matches `abc-def`: AG44)."""
     import re as _re
     pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)? -->\n", _re.M)
-    m = pat.search(text)
+    m = None
+    for cand in pat.finditer(text):
+        # a match inside a fenced code block is a user's quotation, not the entry (AG50: the quoted pair was cut)
+        if text.count("\n```", 0, cand.start()) % 2 == 0 and not text.startswith("```"):
+            m = cand
+            break
     if not m:
         return text
     start = m.start()
@@ -122,13 +127,17 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
         return text
     start = m.start()
     end = m.end()
+    first = True
     for line in text[m.end():].splitlines(keepends=True):
         if not line.strip():
             end += len(line)  # the blank separator goes with the entry
             break
+        if not first and _re.match(r"^\d{4}-\d{2}-\d{2} \| ", line):
+            break  # a second `date | title` line is another entry (AG50)
+        first = False
         # the rendered entry (templates/updates_entry.txt.j2): a dashed rule, `date | title`, a dashed rule,
         # `COMPLETED:`/`FILES:`/`NEXT:` section lines and indented items; anything else is not ours
-        if not _re.match(r"^(?:-{5,}\s*$|\d{4}-\d{2}-\d{2} \| |[A-Z][A-Z _-]*:\s*$|[ \t]+\S)", line):
+        if not _re.match(r"^(?:-{5,}\s*$|\d{4}-\d{2}-\d{2} \| |(?:COMPLETED|FILES|NEXT):\s*$|[ \t]+\S)", line):  # the template's three sections only; a hand-written `NOTES:` is not ours (AG49)
             break  # a hand-written line, the next entry's date line, a heading: not ours
         end += len(line)
     return text[:start] + text[end:]

@@ -379,6 +379,11 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
         root = root / proj
     if not root.exists():
         return None
+    direct = root / f"{ticket_id}.md"
+    if "/" not in ticket_id and direct.is_file():
+        t = _parse_ticket(direct)
+        if t and t.id == ticket_id:
+            return t  # a bare id names the ROOT-level ticket first when a folder holds the same id (AG49)
     for f in _walk_live_ticket_files(root):
         # The file name must agree with the frontmatter id: a spoofed `id:` in some other
         # file must not become the ticket a status change rewrites (round-B 2026-11-09, N-O).

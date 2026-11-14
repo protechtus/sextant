@@ -59,7 +59,8 @@ _MAX_FM_INDEX_CHARS = 65_536    # at most this much frontmatter text is indexed 
 _CJK_SEP = "\u2060"
 _CJK_RE = re.compile(
     "[\u1100-\u11ff\u2e80-\u2fdf\u3040-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u4dbf"
-    "\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\U00020000-\U0003134f]")
+    "\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\U00020000-\U0003134f"
+    "\u0e00-\u0e7f\u0e80-\u0eff\u1000-\u109f\u1780-\u17ff]")  # Thai, Lao, Burmese, Khmer: no word spaces either; a mid-run Thai word was unsearchable (AG52)
 _CJK_RUN_RE = re.compile(_CJK_RE.pattern + "{2,}")
 _CJK_RUN_OR_CHAR_RE = re.compile(_CJK_RE.pattern + "+")
 # A CJK character glued to a Latin letter or digit fused into one token: `2025年`, `Python编程`
@@ -81,9 +82,16 @@ def _cjk_split(text: str) -> str:
     return _CJK_ASCII_BOUNDARY_RE.sub(_CJK_SEP, text)
 
 
+_MARKS_RE = re.compile("[\u064b-\u0652\u0670\u0640\u0591-\u05c7]")  # Arabic harakat and tatweel, Hebrew points: a vocalised text and a plain query never met (AG52)
+
+
+def _fold_marks(text: str) -> str:
+    return _MARKS_RE.sub("", text)
+
+
 def _norm_index_text(text: str) -> str:
     broken = _BREAK_RE.sub(lambda m: " " + _SENTINEL + " ", text)
-    return _cjk_split(unicodedata.normalize("NFKC", broken))
+    return _cjk_split(_fold_marks(unicodedata.normalize("NFKC", broken)))
 
 
 def _fm_values(obj) -> list[str]:
@@ -148,7 +156,7 @@ def _bigram_fallback(raw: str) -> str:
 def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
-    q = unicodedata.normalize("NFKC", query).replace(_SENTINEL, " ")
+    q = _fold_marks(unicodedata.normalize("NFKC", query)).replace(_SENTINEL, " ")
     q = re.sub(r"(?<=\S):(?=\S)", " ", q)  # `alpha:beta` is two words, not an FTS5 column filter (AG46: a silent miss)
     if not _CJK_RE.search(q):
         return q
@@ -390,11 +398,17 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
+INDEX_FORMAT = "2"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded)
+
+
 def _needs_rebuild() -> bool:
     if not FTS_DB.exists():
         return True
     conn = _connect()
     try:
+        fmt = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+        if not fmt or fmt[0] != INDEX_FORMAT:
+            return True
         row = conn.execute(
             "SELECT value FROM atlas_meta WHERE key='last_indexed'"
         ).fetchone()
@@ -518,7 +532,7 @@ def update_incremental() -> int:
                 changed += 1
             if changed:
                 conn.execute(
-                    "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('last_indexed',?)",
+                    "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?)",
                     (str(now),),
                 )
                 conn.commit()
@@ -631,7 +645,7 @@ def rebuild(force: bool = False) -> int:
                 count += 1
 
             conn.execute(
-                "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('last_indexed',?)",
+                "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?)",
                 (str(now),),
             )
             conn.commit()
