@@ -45,9 +45,16 @@ class TestFindScript:
 
         assert result == script
 
-    def test_returns_none_when_not_found(self, tmp_path):
+    def test_returns_none_when_not_found(self, tmp_path, monkeypatch):
+        import shutil
+        from pathlib import Path as _P
+
         from atlas_plus.summarizer.hook_entry import _find_script
 
+        # since MN39 the lookup falls back to PATH and ~/.local/bin (a `pip install --user` keeps the
+        # scripts away from the interpreter); CI has the script on PATH, so both fallbacks are emptied here
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        monkeypatch.setattr(_P, "home", classmethod(lambda cls: tmp_path / "home"))
         with patch.object(sys, "executable", str(tmp_path / "python.exe")):
             result = _find_script("atlas-temporal")
 
