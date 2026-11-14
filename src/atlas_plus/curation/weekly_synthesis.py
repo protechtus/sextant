@@ -280,7 +280,7 @@ def run_weekly_synthesis(
     if suggest_facts and autonomous:
         try:
             from atlas_plus.curation.suggest_facts import _extract_candidates, _write_fact
-            candidates = _extract_candidates(synthesis)
+            candidates, _rejected = _extract_candidates(synthesis)  # it returns (list, int); the loop ran over the tuple (MN37)
             written = 0
             for cand in candidates:
                 if cand.get("confidence", 0) >= 0.85:

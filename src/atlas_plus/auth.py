@@ -286,10 +286,16 @@ def forwarded_ip(headers, peer: str, trusted=None) -> str:
 
 
 def _valid_ip(value: str) -> str:
-    """The value as a normalised IP address, or '' for anything else (AG44: a 5,000-character
-    header value was accepted as a client identity and counted as one)."""
+    """The value as a normalised IP address; a port suffix (`1.2.3.4:5678`, `[::1]:443`) is dropped.
+    Anything else becomes its own BOUNDED source `bad:<40 chars>` (AG44: a 5,000-character value was
+    an identity; MN37: an empty result switched the loopback exemption on and the throttle off)."""
     import ipaddress
+    import re as _re
+    v = value.strip()
+    m = _re.match(r"^(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}$", v) or _re.match(r"^\[([0-9A-Fa-f:.]+)\]:\d{1,5}$", v)
+    if m:
+        v = m.group(1)
     try:
-        return str(ipaddress.ip_address(value.split("%", 1)[0]))
+        return str(ipaddress.ip_address(v.split("%", 1)[0]))
     except ValueError:
-        return ""
+        return "bad:" + _re.sub(r"[^\x21-\x7e]", "?", v)[:40]

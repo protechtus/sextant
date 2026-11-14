@@ -103,10 +103,14 @@ Two things about keys that only show up later:
   port is a NAT, not a proxy. It adds no header, so every client that reaches the published port
   directly still looks like the gateway and shares one failure counter (ten bad keys from one
   browser on your LAN lock the dashboard for everyone on the published port for a minute). The
-  list helps when a reverse proxy that sets `Cf-Connecting-Ip` (Caddy, cloudflared) sits in
+  list helps when a reverse proxy that OVERWRITES `Cf-Connecting-Ip` with the real client address
+  sits in front (cloudflared does; Caddy only with Recipe B's `header_up Cf-Connecting-Ip
+  {remote_host}` line, since a bare Caddy passes the client's own header through)
   front: then each forwarded client has its own counter, a forwarded value that is not an IP
   address is ignored, and a flood through one proxy locks the proxy itself after ten times the
-  per-client limit. The published ports bind `127.0.0.1` on purpose. Restoring into a fresh
+  per-client limit. The MCP server is the exception: it never locks a listed peer, so direct
+  requests through the gateway are unthrottled there. The published ports bind `127.0.0.1` on
+  purpose. Restoring into a fresh
   stack: `docker compose up --no-start mcp` first (it creates the labelled volume), then the
   tar; a volume made with `docker volume create` draws the warning "was not created by Docker
   Compose".

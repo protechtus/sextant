@@ -225,7 +225,7 @@ close the note's frontmatter); dashes mid-sentence are fine. In PowerShell
 (`-` reads the fact from stdin). PowerShell 5.1 pipes text as ASCII by default:
 for anything beyond ASCII (Japanese, accents, emoji) run
 `$OutputEncoding = [Text.Encoding]::UTF8` once in that session, or pass the fact
-as an argument; a mangled pipe is refused rather than stored. A topic may name a subfolder note from an
+as an argument; a visibly mangled pipe (replacement characters, runs of `?`) is refused rather than stored, while a single accent turned into `?` cannot be told from a question mark, so set the encoding before piping anything beyond ASCII. A topic may name a subfolder note from an
 imported vault: `--scope reference:obsidian/README`.
 
 ## 6. Optional layers, when you want them
@@ -250,8 +250,10 @@ imported vault: `--scope reference:obsidian/README`.
   - `session_start_hook*` (priming): injects memory highlights,
     the active project, and open work as context before your first message.
     Read-only and fail-fast; safe to enable immediately.
-  - `stop_hook*` (summarize): deliberately inert until
-    background writes are enabled (`ATLAS_AUTONOMOUS=on`); once on, it
+  - `stop_hook*` (summarize): deliberately inert until the gate reaches it
+    on the hook command itself, `--env ATLAS_SESSION_AUTONOMOUS=on` (a hook does
+    not inherit your shell's variables; `ATLAS_AUTONOMOUS=on` in the hook's
+    environment also opens it); once on, it
     summarizes the session and extracts high-confidence facts when a model is
     reachable (Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`; when none
     is, it says so on stderr and in the activity log and skips that part), and

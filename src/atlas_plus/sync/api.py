@@ -110,7 +110,8 @@ def _source_ips(request: Request) -> tuple[str, str]:
 
 async def _require_principal(request: Request) -> devices.Device:
     peer_ip, fwd_ip = _source_ips(request)
-    if (fwd_ip or peer_ip not in _LOOPBACK) and AUTH_FAILURES.is_rate_limited(fwd_ip or peer_ip):
+    _peer_flood = bool(fwd_ip) and peer_ip not in _LOOPBACK and AUTH_FAILURES.failures_via_peer(peer_ip) >= 10 * AUTH_FAILURES.max_failures_per_window  # a listed proxy whose clients rotate names (MN37: 220 guesses, never a 429)
+    if ((fwd_ip or peer_ip not in _LOOPBACK) and AUTH_FAILURES.is_rate_limited(fwd_ip or peer_ip)) or _peer_flood:
         import logging as _logging
         import time as _time
         _src = fwd_ip or peer_ip
@@ -128,7 +129,7 @@ async def _require_principal(request: Request) -> devices.Device:
     if device is None:
         store.audit(
             "auth_failure",
-            client=request.client.host if request.client else "unknown",
+            client=((lambda p, f: f or p)(*_source_ips(request)) if request.client else "unknown"),  # the forwarded device, not the proxy (MN41)
             path=request.url.path,
         )
         AUTH_FAILURES.record(path=request.url.path, client_ip=peer_ip, cf_ip=fwd_ip,

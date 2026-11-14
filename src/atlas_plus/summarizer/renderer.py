@@ -76,18 +76,17 @@ def find_session_entry(sessions_dir: Path, safe_id: str, days: int = 3):
 
 
 def remove_session_entry(text: str, marker_prefix: str) -> str:
-    """Drop the `## ...` entry that holds ``marker_prefix`` (from its heading to the next heading).
-    The prefix must end the id (`<!-- session:abc` never matches `abc-def`: AG44)."""
+    """Drop the entry whose `## ...` heading is IMMEDIATELY followed by this session's marker line
+    (the shape write_outputs writes). A marker quoted anywhere else, in a code block or a hand-written
+    section, is left alone (MN37: a user's notes that quoted the marker were deleted). The prefix must
+    end the id (`<!-- session:abc` never matches `abc-def`: AG44)."""
     import re as _re
-    m = _re.search(_re.escape(marker_prefix) + r"(?= )", text)
-    i = m.start() if m else -1
-    if i == -1:
+    pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)? -->\n", _re.M)
+    m = pat.search(text)
+    if not m:
         return text
-    start = text.rfind("\n## ", 0, i)
-    start = 0 if start == -1 else start + 1
-    if start == 1 and not text.startswith("## "):
-        start = 0
-    end = text.find("\n## ", i)
+    start = m.start()
+    end = text.find("\n## ", m.end())
     end = len(text) if end == -1 else end + 1
     return (text[:start] + text[end:]).lstrip("\n")
 
@@ -113,16 +112,23 @@ def _remove_entry_elsewhere(current: Path, marker_prefix: str, days: int = 3) ->
 
 
 def remove_updates_entry(text: str, marker_prefix: str) -> str:
-    """Drop the updates.txt entry (a blank-line-separated block) that holds ``marker_prefix``."""
+    """Drop the updates.txt entry whose first line is followed by this session's marker line. The
+    entry ends at the next blank line OR the next line that starts a new entry (a date, a heading),
+    so hand-written lines appended without a blank line survive (MN37)."""
     import re as _re
-    m = _re.search(_re.escape(marker_prefix) + r"(?= )", text)
+    pat = _re.compile(r"^[^\n]+\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)? -->\n", _re.M)
+    m = pat.search(text)
     if not m:
         return text
-    i = m.start()
-    start = text.rfind("\n\n", 0, i)
-    start = 0 if start == -1 else start + 2
-    end = text.find("\n\n", i)
-    end = len(text) if end == -1 else end + 2
+    start = m.start()
+    end = m.end()
+    for line in text[m.end():].splitlines(keepends=True):
+        if not line.strip():
+            end += len(line)  # the blank separator goes with the entry
+            break
+        if not _re.match(r"^\s*(?:[-*]\s|\s+\S)", line):
+            break  # a hand-written line, the next entry's date line, a heading: not ours
+        end += len(line)
     return text[:start] + text[end:]
 
 

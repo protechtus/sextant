@@ -37,7 +37,8 @@ appending proxy leaves the first hop client-chosen). A proxy that is not on
 loopback is trusted the same way once it is listed in `ATLAS_MCP_TRUSTED_PEERS`
 (the dashboard reads `ATLAS_WEB_TRUSTED_PEERS` and the sync hub
 `ATLAS_SYNC_TRUSTED_PEERS`, each falling back to that list). A forwarded value
-that is not an IP address is ignored. A failure counts against the forwarded
+that is not an IP address counts as its own bounded source (it is never the
+loopback exemption). A failure counts against the forwarded
 client only, so one locked client does not lock the proxy's other clients, and
 a flood through one proxy, whatever names it forwards, locks the proxy itself
 after ten times the per-client limit. Docker's published port is a NAT, not a

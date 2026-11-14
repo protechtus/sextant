@@ -185,6 +185,9 @@ def _refuse_cross_site(request) -> None:
         raise HTTPException(status_code=403, detail="cross-site request refused: writes need the dashboard's own Origin, even with --no-auth")
 
 
+_LOCK_WARNED: dict[str, float] = {}
+
+
 def _check_auth(request: Request, header_only: bool = False) -> None:
     if _ALLOW_NO_AUTH and not API_KEY:
         _refuse_cross_site(request)
@@ -208,8 +211,13 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
     if not _is_loopback and (AUTH_FAILURES.is_rate_limited(throttle_ip) or _peer_flood):
         try:
             AUTH_FAILURES.record(path=request.url.path, client_ip=client_ip, cf_ip=cf_ip, reason="locked_out")  # visible in the panel, not counted (MN29)
-            if AUTH_FAILURES.stats().get("locked_out_refusals", {}).get(throttle_ip) == 1:
-                log.warning("dashboard: %s is locked out after repeated auth failures; refusing with 429", throttle_ip)  # the log said nothing (MN35)
+            import time as _time
+            _wk = client_ip if cf_ip else throttle_ip  # one line per PEER per window: a forger named 40 sources and got 40 lines (MN37/MN38)
+            if _time.time() - _LOCK_WARNED.get(_wk, 0.0) > AUTH_FAILURES.window_seconds:
+                _LOCK_WARNED[_wk] = _time.time()
+                if len(_LOCK_WARNED) > 512:
+                    _LOCK_WARNED.pop(next(iter(_LOCK_WARNED)))
+                log.warning("dashboard: %s is locked out after repeated auth failures (via %s); refusing with 429", throttle_ip, client_ip)  # the log said nothing (MN35)
         except Exception:  # noqa: BLE001
             pass
         raise HTTPException(
@@ -3595,7 +3603,7 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
             f'<span class="{sc} text-xs w-20">{t.status}</span>'
             f'<span class="{pc} text-xs w-4 shrink-0">{getattr(t, "priority", "N")[0].upper()}</span>'
             f'<span class="text-slate-300 text-xs flex-1 truncate">{_html_mod.escape(t.title)}</span>'
-            f'<span class="text-slate-500 text-xs w-24 truncate">{t.project}</span>'
+            f'<span class="text-slate-500 text-xs w-24 truncate tk-proj">{t.project}</span>'
             f'<span class="text-slate-600 text-xs w-6 shrink-0">{assignee_label}</span>'
             f'{task_badge}'
             f'{verify_badge}'
@@ -3747,7 +3755,14 @@ def _tref(t) -> str:
     """`project/ID`: the one name for a ticket when two projects minted the same id (AG45: the board's
     Done landed on the other project's ticket)."""
     proj = getattr(t, "project", "") or ""
-    return f"{proj}/{t.id}" if proj else t.id
+    if proj:
+        try:
+            from atlas_plus.tickets.store import TICKETS_ROOT as _troot
+            if (_troot / proj / f"{t.id}.md").is_file():
+                return f"{proj}/{t.id}"
+        except Exception:  # noqa: BLE001
+            pass
+    return t.id  # a root-level or moved ticket keeps the bare id (MN37: `tickets/OLD-001` was not found)
 
 
 def _norm_ref(ref: str) -> str:
@@ -4698,7 +4713,10 @@ button{{font-family:inherit;cursor:pointer}}
   #tab-dash{{flex-direction:column!important}}
   #tab-tickets{{flex-direction:column!important}}
   #tab-tasks{{flex-direction:column!important}}
-  .w-64,.w-80,.w-96{{width:100%!important}}
+  #tab-memory{{flex-direction:column!important}}
+  .w-64,.w-72,.w-80,.w-96{{width:100%!important}}
+  #tabbar{{flex-wrap:wrap;overflow-x:visible}}
+  .tk-proj{{display:none}}
   .tab{{padding:.3rem .5rem;font-size:.65rem}}
   .detail-panel{{height:12rem!important}}
   #dash-detail{{height:10rem!important}}
@@ -4754,7 +4772,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- Tabs -->
-<div class="flex gap-1 px-3 pt-1.5 border-b border-slate-700 shrink-0 overflow-x-auto">
+<div id="tabbar" class="flex gap-1 px-3 pt-1.5 border-b border-slate-700 shrink-0 overflow-x-auto">
   <div class="tab active" data-tab="dash" onclick="switchTab('dash')">Dashboard</div>
   <div class="tab" data-tab="map" onclick="switchTab('map')">Map</div>
   <div class="tab" data-tab="tickets" onclick="switchTab('tickets')">Tickets</div>
@@ -4996,7 +5014,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
     </div>
     <div class="mt-2">
       <div class="text-xs text-slate-500 mb-1">Body (optional)</div>
-      <div class="flex gap-2 flex-wrap"><input id="tk-requires" class="flex-1 text-xs" placeholder="requires (e.g. WEB-001)"><input id="tk-verified" class="flex-1 text-xs" placeholder="verified (YYYY-MM-DD)"><select id="tk-effort" class="text-xs"><option value="">effort</option><option>S</option><option>M</option><option>L</option></select></div>
+      <div class="flex gap-2 flex-wrap"><input id="tk-requires" class="flex-1 text-xs" placeholder="requires (e.g. WEB-001)"><input id="tk-verified" class="flex-1 text-xs" placeholder="verified (YYYY-MM-DD)"><select id="tk-effort" class="text-xs"><option value="">effort</option><option>S</option><option>M</option><option>L</option><option>XL</option></select></div>
       <textarea id="tk-body" rows="2" class="w-full resize-none" placeholder="Description, context, steps..."></textarea>
     </div>
     <div class="flex gap-2 mt-2">
@@ -5509,11 +5527,19 @@ function switchTab(name){{
 document.body.addEventListener("htmx:responseError",function(e){{
   const s=e.detail&&e.detail.xhr?e.detail.xhr.status:0;
   if(s===401){{
-    if(document.querySelector('textarea[data-dirty="1"]')){{if(!window._sextantExpiredToast){{window._sextantExpiredToast=true;showToast('Your session expired: copy any unsaved editor text, then reload and sign in with ?key=','failed');}}return;}}  // typed text is never thrown away (AG45)
+    const dirty=[...document.querySelectorAll('textarea[data-dirty="1"]')].some(t=>t.value.trim()&&t.offsetParent!==null);
+    if(dirty){{
+      // typed text is never thrown away (AG45); every poll stops, or the dead session's 401s lock a remote user out (MN37, the AG31 rule)
+      window._sextantExpired=true;try{{es.close();}}catch(_){{}}
+      if(!window._sextantExpiredToast){{window._sextantExpiredToast=true;showToast('Your session expired: copy any unsaved editor text, then reload and sign in with ?key=','failed');}}
+      return;
+    }}
     window.location.replace("/expired");
   }}
 }});
-document.addEventListener('input',function(e){{if(e.target&&e.target.tagName==='TEXTAREA')e.target.dataset.dirty='1';}});
+document.body.addEventListener('htmx:beforeRequest',function(e){{if(window._sextantExpired)e.preventDefault();}});
+(function(){{const _f=window.fetch;window.fetch=function(){{if(window._sextantExpired)return Promise.reject(new Error('session expired'));return _f.apply(this,arguments);}};}})();
+document.addEventListener('input',function(e){{if(e.target&&e.target.tagName==='TEXTAREA')e.target.dataset.dirty=e.target.value.trim()?'1':'0';}});  // an emptied or abandoned box is not unsaved work (MN38)
 const es=new EventSource("/events");
 es.onopen=()=>document.getElementById("conn").textContent="live";
 es.onerror=()=>document.getElementById("conn").textContent="off";
@@ -6216,7 +6242,7 @@ async function editMemoryFile(path){{
   const pre=document.getElementById('mf-content');
   if(!pre)return;
   let current=pre.textContent;
-  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';if(_mfEol==='mixed')showToast('This note mixes CRLF and LF line endings; a save makes them LF','done');}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
+  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';if(_mfEol==='mixed')showToast('This note has line endings other than plain LF (CRLF mixed in, or lone CR); a save makes them LF','done');}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
   catch(e){{showToast('Could not load the whole file: '+e.message,'failed');return;}}
   const r=document.getElementById('mem-results');
   // Static skeleton via innerHTML; the PATH lands via textContent -- a

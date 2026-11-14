@@ -1959,10 +1959,12 @@ def cmd_next_actions(
 def cmd_report(
     stale_months: int = typer.Option(6, "--stale-months"),
     dup_threshold: float = typer.Option(0.40, "--dup-threshold"),
-    scope: str = typer.Option("", "--scope"),
+    scope: str = typer.Option("", "--scope", help="Top-level corpus folder to restrict to (reference, projects, identity, preference, or a sub-folder path like reference/obsidian); a `topic:name` route belongs to remember, not here"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n"),
 ):
     """Generate weekly curation report (no auto-edits)."""
+    if ":" in scope:
+        typer.echo(f"note: --scope is a folder path (reference, reference/obsidian); '{scope}' looks like a remember() route and matches no folder", err=True)  # a silent empty report (MN42)
     from atlas_plus.curation.weekly_report import generate_report
     report, out_path = generate_report(
         stale_months=stale_months,

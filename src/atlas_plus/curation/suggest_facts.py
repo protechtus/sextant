@@ -181,6 +181,8 @@ def _extract_candidates(
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1:
+        if re.search(r"\bno (?:new |additional |notable )?facts?\b|nothing (?:worth|to) (?:sav|extract|remember|not)", text, re.I):
+            return [], 0  # a plain-English "no facts" is an answer, not a failure (MN37)
         raise RuntimeError("model reply was not a JSON list of facts")  # a junk reply is a failed run, not a completed one (AG43: it marked the session done)
     try:
         candidates = json.loads(text[start:end + 1])
@@ -286,8 +288,17 @@ def _norm_fact(text: str) -> str:
     """Case, punctuation and provenance comments folded; letters of EVERY script, digits and the
     signs that change a fact's meaning (`-5`, `C++`, `€` vs `$`) kept (AG44: the Latin-only rule
     treated every Cyrillic or Korean fact sharing a digit as a duplicate)."""
-    text = re.sub(r"<!--.*?-->", " ", text)
-    return " ".join(re.sub(r"[^\w+\-$€£¥%]+", " ", text.lower()).split())
+    import unicodedata as _ud
+    text = re.sub(r"<!--.*?-->", " ", text).replace("\u2212", "-")  # the real minus sign (MN37)
+    keep_signs = set("+-$€£¥%<>=!#≥≤≠")
+    out = []
+    for ch in _ud.normalize("NFC", text.lower()):
+        cat = _ud.category(ch)
+        if cat[0] in "LNM" or ch in keep_signs:  # letters, digits and COMBINING MARKS of every script (Devanagari vowel signs were stripped)
+            out.append(ch)
+        else:
+            out.append(" ")
+    return " ".join("".join(out).split())
 
 
 def _redact_text(text: str) -> str:
@@ -603,6 +614,8 @@ def _review_candidates(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    from atlas_plus._console import utf8_stdout_when_piped as _u
+    _u()  # a Korean candidate in a Git Bash pipe died (MN42)
     """Typer-based CLI entry point: atlas-suggest-facts."""
     import typer
     from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
@@ -653,6 +666,13 @@ def suggest_facts(*args, **kwargs) -> dict:
             return {"approved": 0, "skipped": 0, "written": 0, "already_done": True}
     try:
         return _suggest_facts_run(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            from atlas_plus import activity as _act
+            _act.record("hook", "suggest_facts_failed", reason=str(exc)[:200], conversation_id=conversation_id or "")  # doctor shows it (MN39: a failed facts stage left no trace)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
     finally:
         if release is not None:
             release()

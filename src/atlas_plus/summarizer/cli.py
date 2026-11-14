@@ -124,9 +124,12 @@ def _looks_like_summary(summary) -> bool:
     if not isinstance(summary, dict) or summary.get("_fallback"):
         return False
     title = summary.get("title")
-    if not isinstance(title, str) or not title.strip() or len(title) > 160 or "\n" in title or "JSON" in title:
+    # the MAP prompt's schema has no title, so a single-chunk session (no reduce) arrives without one
+    # (MN39: every short session was refused as "not a summary" for a whole day); a title that IS present
+    # must look like a title
+    if title is not None and (not isinstance(title, str) or len(title) > 160 or "\n" in title or "JSON" in title):
         return False
-    return any(isinstance(summary.get(k), list) and summary.get(k) for k in ("completed", "pending", "worked_on"))
+    return any(isinstance(summary.get(k), list) and summary.get(k) for k in ("completed", "pending", "worked_on", "decisions"))
 
 
 def _parse_json_response(text: str) -> dict:
@@ -253,10 +256,11 @@ def main(
             _event("summarizer_failed", reason=str(e)[:200], conversation_id=conversation_id or "")
             raise typer.Exit(1)
         chunk_summaries.append(text)
-        used_cache[key] = text
+        if not _parse_json_response(text).get("_fallback"):
+            used_cache[key] = text  # a junk or echoed reply is never cached (MN39: three poisoned chunks fed every later reduce)
     if reused:
         console.print(f"[dim]{reused} of {len(chunks)} chunk summaries reused from the last run.[/dim]")
-    if safe_id:
+    if safe_id and not dry_run:
         _save_chunk_cache(safe_id, used_cache)
 
     # --- 4. Reduce ---
@@ -273,6 +277,9 @@ def main(
         summary = _parse_json_response(final_text)
     else:
         summary = _parse_json_response(chunk_summaries[0])
+    if isinstance(summary, dict) and not str(summary.get("title") or "").strip():
+        _first = next((v[0] for k in ("worked_on", "completed", "pending") for v in [summary.get(k)] if isinstance(v, list) and v and isinstance(v[0], str)), "")
+        summary["title"] = (_first.strip()[:80] or "Session summary")  # the map schema carries no title (MN39)
     if not _looks_like_summary(summary):
         # a non-JSON reply used to be written as the session's summary and then protected by its
         # marker (MN33: "things that were finished and confirmed working Pending: ...")

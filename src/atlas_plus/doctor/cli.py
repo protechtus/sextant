@@ -337,7 +337,7 @@ def check_stop_hook() -> dict:
         from atlas_plus import activity as _act
         for ev in reversed(_act.tail(limit=200)):  # tail is oldest-first: the NEWEST event is the one that matters (MN33)
             if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped"):
-                result["last_event"] = f"{ev.get('event')} at {str(ev.get('ts') or ev.get('time') or '')[:16]} UTC {' '.join(str(ev.get('reason') or '').split())[:80]}".strip()  # one line, labelled (AG43)
+                result["last_event"] = f"{ev.get('event')} at {str(ev.get('ts') or ev.get('time') or '')[:16]} UTC {' '.join(str(ev.get('reason') or '').split())[:200]}".strip()  # one line, labelled (AG43); the 404 hint fits (MN39)
                 break
     except Exception:  # noqa: BLE001
         pass
@@ -710,6 +710,18 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         result["conflict_markers"] = conflicted[:10]
         result["conflict_markers_hint"] = (f"{len(conflicted)} note(s) hold git conflict markers (<<<<<<< / >>>>>>>): "
                                            "resolve the merge before writing to them: " + ", ".join(conflicted[:5]))
+    if (root / ".git").exists():
+        # a modify/delete conflict has no markers: `git ls-files -u` is the only trace (MN41)
+        try:
+            import subprocess as _sp
+            _u = _sp.run(["git", "ls-files", "-u"], cwd=str(root), capture_output=True, text=True, timeout=10)
+            unmerged = sorted({ln.split("\t", 1)[1] for ln in _u.stdout.splitlines() if "\t" in ln})
+        except Exception:  # noqa: BLE001
+            unmerged = []
+        if unmerged:
+            result["unmerged"] = unmerged[:10]
+            result["unmerged_hint"] = (f"{len(unmerged)} path(s) are unmerged in git (a modify/delete or add/add conflict without markers): "
+                                      "resolve them in git before writing: " + ", ".join(unmerged[:5]))
     bad_names = [f.rel for f in files if f.bad_name]
     if bad_names:
         result["bad_names"] = bad_names[:10]
@@ -1779,7 +1791,9 @@ def render_text(data: dict) -> str:
             model_note = f"\033[33mmodel {sh.get('model')} NOT pulled at {sh.get('url')} (ollama pull {sh.get('model')}, or set ATLAS_SUMMARIZER_MODEL)\033[0m"
         lines.append(f"  Gate: {gate}" + ("  (ATLAS_DISABLE_AUTOSUMMARIZE is set: no summaries)" if sh.get("disabled") else ""))
         lines.append(f"  Model: {model_note}")
-        lines.append(f"  Last summary: {sh.get('last_summary') or 'none written yet'}" + (f"  Last event: {sh['last_event']}" if sh.get('last_event') else ""))
+        lines.append(f"  Last summary: {sh.get('last_summary') or 'none written yet'}")
+        if sh.get('last_event'):
+            lines.append(f"  Last event: {sh['last_event']}")  # its own line (MN39)
         lines.append("")
 
     # Nightly jobs

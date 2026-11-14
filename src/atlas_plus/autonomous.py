@@ -85,7 +85,7 @@ def is_session_autonomous() -> bool:
 
     Checks ATLAS_SESSION_AUTONOMOUS first; falls back to ATLAS_AUTONOMOUS.
     """
-    session_val = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").lower()
+    session_val = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip().lower()  # `--env ATLAS_SESSION_AUTONOMOUS=' on '` (MN39)
     if session_val in _ENABLED_VALUES:
         return True
     if session_val in ("off", "0", "false"):

@@ -164,6 +164,13 @@ class SyncClient:
 
     def _transport_error(self, verb: str, path: str, exc: Exception) -> SyncClientError:
         # A refused connection is "no hub answering", not a WinError dump (persona rerun 2026-11-10).
+        _s = str(exc)
+        if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower() or "ssl" in type(exc).__name__.lower():
+            return SyncClientError(
+                f"the hub at {self._hub_label()} presented a certificate this client does not trust (a private CA, "
+                "`tls internal`, or a wrong SSL_CERT_FILE): point SSL_CERT_FILE at the CA certificate, or use the "
+                "hub's http:// address on a trusted network"  # it said "no hub answering" (MN41)
+            )
         if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
             return SyncClientError(
                 f"no hub answering at {self._hub_label()} -- is `sextant-sync serve` running there, "
@@ -421,6 +428,7 @@ class SyncClient:
                             report.errors.append(f"{rel}: could not fetch the hub's copy ({_detail(exc)})")
                     elif result == "denied":
                         report.denied.append(rel)
+                        report.errors.append(f"{rel}: denied (hub said: {item.get('detail') or 'policy'})")  # `denied 1` named nothing (MN41)
                         unresolved.add(rel)
                     else:
                         report.errors.append(f"{rel}: {item.get('detail', result)}")

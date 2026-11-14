@@ -33,7 +33,9 @@ $ sextant --version
 sextant 0.1.0.dev15 (source d63cb35)
 ```
 
-names the exact build in a bug report. Dev releases sort below the release they precede, so
+names the exact build in a bug report. Once `vX.Y.Z` is tagged, the next builds are
+`X.Y.(Z+1).devN` without anyone editing a file, so a git user is never "upgraded" down to
+the PyPI release. Dev releases sort below the release they precede, so
 `pip install -U git+https://github.com/protechtus/sextant` moves from build to build and the
 release itself replaces them all. (Until the maintainer turns the stamp on, every build says
 plain `0.1.0`, `-U` is a no-op, and `pip install --force-reinstall --no-deps git+...` is the

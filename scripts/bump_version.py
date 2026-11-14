@@ -126,7 +126,8 @@ def close_unreleased(version: str, dry_run: bool = False) -> None:
         print(f"would close [Unreleased] ({len(body.splitlines())} lines) under {heading.strip()}")
         return
     _version_copy(CHANGELOG)
-    CHANGELOG.write_text(cl[:m.end()] + "\n" + heading + body.lstrip("\n") + cl[nxt.start() if nxt else len(cl):], encoding="utf-8", newline="\n")
+    _nl = "\r\n" if b"\r\n" in CHANGELOG.read_bytes()[:4096] else "\n"  # keep the file's line endings (MN37)
+    CHANGELOG.write_text(cl[:m.end()] + "\n" + heading + body.lstrip("\n") + cl[nxt.start() if nxt else len(cl):], encoding="utf-8", newline=_nl)
     print(f"closed [Unreleased] under [{version}]; tag v{version} on the mirror after publishing")
 
 

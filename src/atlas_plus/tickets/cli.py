@@ -113,15 +113,19 @@ def cmd_create(
 ):
     """Create a new ticket."""
     from atlas_plus.tickets.store import create_ticket
-    t = create_ticket(
-        interactive=True,  # a person at the keyboard, like the dashboard form (MN29: it printed a traceback)
-        title=title,
-        project=project,
-        assignee=assignee,
-        priority=priority,
-        effort=effort,
-        requires=requires,
-    )
+    try:
+        t = create_ticket(
+            interactive=True,  # a person at the keyboard, like the dashboard form (MN29: it printed a traceback)
+            title=title,
+            project=project,
+            assignee=assignee,
+            priority=priority,
+            effort=effort,
+            requires=requires,
+        )
+    except ValueError as exc:  # a bad project name is one sentence (MN42)
+        console.print(f"[red]Not created:[/red] {exc}")
+        raise typer.Exit(2)
     console.print(f"[green]Created:[/green] {t.id} - {t.title}")
     console.print(f"[dim]{t.path}[/dim]")
 

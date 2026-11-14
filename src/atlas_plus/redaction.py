@@ -46,7 +46,7 @@ _TELEGRAM_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
 # Optional quotes around the key name's close and the value's open ("api_key": "v", token='v')
 # so JSON and quoted assignments redact too; the trailing quote is left in place, preserving
 # structure: {"api_key": "[REDACTED]"}.
-_KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|client[_-]?secret|private[_-]?key"
+_KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|client[_-]?secret|private[_-]?key"
              r"|access[_-]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
              r"|パスワード|トークン|シークレット|秘密鍵|秘密|鍵|APIキー"
              r"|비밀번호|비밀|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰)")
@@ -63,11 +63,16 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 _KV_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_])((?:[A-Za-z0-9]{1,32}[_-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"
     r"(?![A-Za-z0-9])"
-    r"(['\"]?\s*[=:：＝]\s*r?)"
-    r"(\"[^\"\n]{4,400}\"|'[^'\n]{4,400}'|[^\s'\"]{6,})"
+    r"(['\"]?\s*[=:：＝]\s*(?:r(?=['\"]))?)"
+    r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[\"']?[^\s'\"]{6,})"
 )
-_CLI_SECRET_RE = re.compile(r"(?i)(--(?:token|password|passwd|api[_-]?key|secret|passphrase|client[_-]?secret)[= ])(\S{6,})")
-_BASIC_AUTH_RE = re.compile(r"(?i)(authorization:\s*basic\s+)([A-Za-z0-9+/=]{8,})")
+_CLI_SECRET_RE = re.compile(r"(?i)(--(?:[a-z]+-){0,3}(?:token|password|passwd|api[_-]?key|secret|passphrase|client[_-]?secret)[= ])(\S{6,})")  # --db-password, --api-token (MN37)
+_BASIC_AUTH_RE = re.compile(r"(?i)(authorization:\s*(?:basic|token|apikey|api-key)\s+)(\S{8,})")
+_CURL_USER_RE = re.compile(r"(?i)((?:^|\s)(?:-u|--user)\s+[^\s:]+:)(\S+)")  # the `-u user:password` form of curl (MN37)
+_YAML_BLOCK_RE = re.compile(r"(?im)^([ \t]*(?:[A-Za-z0-9]{1,32}[_-]){0,4}(?:password|passwd|secret|token|api[_-]?key)\s*:\s*[>|][-+0-9]*[ \t]*\n)((?:[ \t]+\S[^\n]*\n?)+)")  # password: > / | block scalars (MN37)
+_XML_RE = re.compile(r"(?i)(<(password|passwd|secret|token|api[_-]?key)>)([^<\n]{4,})(</\2>)")
+_CODE_VALUE_RE = re.compile(r"^(?:os\.|env\.|process\.env|\$\{|\$\(|[A-Za-z_][A-Za-z0-9_.]*(?:\[|\())")  # `token = tokens[0]`, `os.environ[...]` are code, not secrets (MN37)
+_PATH_VALUE_RE = re.compile(r"^(?:/|[A-Za-z]:[\\/]|\.{1,2}/|~)")
 # full-width ASCII (ＤＢ＿ＰＡＳＳＷＯＲＤ＝, a Japanese IME) folded one code point per code point, so a
 # match in the folded text has the same span in the original and only the value is replaced
 # (AG44: a whole-text NFKC pass rewrote x² and ½ in the summary)
@@ -79,11 +84,27 @@ def _kv_quote(v: str) -> str:
     return v[0] if v and v[0] in "\"'" and len(v) > 1 and v[-1] == v[0] else ""
 
 
+def _kv_skip(name: str, v: str, sep: str = "=") -> bool:
+    """Matches that are not secrets: placeholders, code expressions, a bare `pass:` in prose, `PWD=/path`."""
+    if not any(ch.isalnum() for ch in v):
+        return True  # `password: ********` is a placeholder, not a secret
+    low = name.lower()
+    if low == "pass":
+        return True  # only a prefixed `DB_PASS`/`MYSQL_PASS` is a key name; `pass:` alone is prose
+    if low.endswith("pwd") and _PATH_VALUE_RE.match(v):
+        return True  # the shell's PWD=/home/u
+    if "=" not in sep and re.fullmatch(r"[a-z]+", v):
+        return True  # `The token: refreshing the page` is prose, not an assignment (MN37)
+    return bool(_CODE_VALUE_RE.match(v))
+
+
 def _kv_mask(m: "re.Match[str]") -> str:
     v = m.group(3)
-    if not any(ch.isalnum() for ch in v):
-        return m.group(0)  # `password: ********` is a placeholder, not a secret
+    if _kv_skip(m.group(1), v, m.group(2)):
+        return m.group(0)
     q = _kv_quote(v)
+    if not q and v[0] in "\"'":
+        return f"{m.group(1)}{m.group(2)}{v[0]}[REDACTED]"  # an unterminated quote (a cut log line) still masks
     return f"{m.group(1)}{m.group(2)}{q}[REDACTED]{q}"
 
 
@@ -91,14 +112,18 @@ def _kv_redact(out: str) -> str:
     out = _KV_RE.sub(_kv_mask, out)
     folded = out.translate(_FULLWIDTH)
     if folded != out:
-        edits = []
+        pieces = []
+        pos = 0
         for m in _KV_RE.finditer(folded):
             v = m.group(3)
-            if any(ch.isalnum() for ch in v) and "[REDACTED]" not in v:
-                q = _kv_quote(v)
-                edits.append((m.start(3), m.end(3), f"{q}[REDACTED]{q}"))
-        for s, e, rep in reversed(edits):
-            out = out[:s] + rep + out[e:]
+            if _kv_skip(m.group(1), v, m.group(2)) or "[REDACTED]" in v:
+                continue
+            q = _kv_quote(v)
+            pieces.append(out[pos:m.start(3)])
+            pieces.append(f"{q}[REDACTED]{q}")
+            pos = m.end(3)
+        pieces.append(out[pos:])
+        out = "".join(pieces)  # one pass, not a string rebuild per match (MN37: 97 s per MB of full-width text)
     return out
 # Provider-prefixed key shapes (distinctive prefixes -> low false-positive risk).
 _PROVIDER_KEY_RE = re.compile(
@@ -128,9 +153,12 @@ def redact(text: str | None, *, env: dict | None = None) -> str | None:
     # 2) Structural patterns.
     out = _BEARER_RE.sub(r"\1[REDACTED]", out)
     out = _TELEGRAM_RE.sub("[REDACTED:telegram-token]", out)
+    out = _YAML_BLOCK_RE.sub(lambda m: m.group(1) + "    [REDACTED]\n", out)
+    out = _XML_RE.sub(r"\1[REDACTED]\4", out)
     out = _kv_redact(out)
     out = _CLI_SECRET_RE.sub(r"\1[REDACTED]", out)
     out = _BASIC_AUTH_RE.sub(r"\1[REDACTED]", out)
+    out = _CURL_USER_RE.sub(r"\1[REDACTED]", out)
     out = _URL_CRED_RE.sub(r"\1[REDACTED]\3", out)
     out = _PROVIDER_KEY_RE.sub("[REDACTED:provider-key]", out)
     out = _PEM_RE.sub("[REDACTED:private-key]", out)

@@ -98,6 +98,13 @@ def _capture_fsdiffs() -> None:
     }
     out_file = out_dir / f"{stamp}.fsdiff.json"
     out_file.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    try:
+        # one snapshot per Stop, Stop fires per reply: keep the newest 200 across the day folders (MN39)
+        snaps = sorted(out_dir.parent.rglob("*.fsdiff.json"), key=lambda p: p.name)
+        for old in snaps[:-200]:
+            old.unlink()
+    except OSError:
+        pass
 
 
 def _find_script(name: str) -> Path | None:
@@ -105,6 +112,15 @@ def _find_script(name: str) -> Path | None:
     scripts_dir = Path(sys.executable).parent
     for candidate in [f"{name}.exe", name]:
         p = scripts_dir / candidate
+        if p.exists():
+            return p
+    # a `pip install --user` puts the scripts in ~/.local/bin beside no interpreter (MN39: the facts
+    # stage was skipped with no trace); PATH and the user scripts dir are the next places to look
+    import shutil as _shutil
+    found = _shutil.which(name)
+    if found:
+        return Path(found)
+    for p in (Path.home() / ".local" / "bin" / name, Path.home() / ".local" / "bin" / f"{name}.exe"):
         if p.exists():
             return p
     return None
@@ -197,8 +213,8 @@ def main() -> int:
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
     if not is_session_autonomous():
-        _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "")
-        if _raw:
+        _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
+        if _raw and _raw.lower() not in ("off", "0", "false", "no"):  # an explicit opt-out is not a typo (MN39)
             # `--env ATLAS_SESSION_AUTONOMOUS=yes` was a silent no-op (AG43): only on/1/true opens the gate
             _sys.stderr.write(f"Sextant: ATLAS_SESSION_AUTONOMOUS={_raw!r} is not one of on/1/true; the Stop hook wrote nothing.\n")
             try:
