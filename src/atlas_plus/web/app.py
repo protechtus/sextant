@@ -1927,7 +1927,7 @@ async def routing_stats_panel(request: Request):
 
 # Cache the memory file count -- rglob("*.md") is O(files) and called every 5s
 # from the dashboard header poll. Cache for 60s; stale by at most one minute.
-_mem_file_count_cache: tuple[float, int] = (0.0, 0)  # (timestamp, count)
+_mem_file_count_cache: tuple[float, int] = (float("-inf"), 0)  # (monotonic timestamp, count); -inf, not 0.0: CLOCK_MONOTONIC is seconds since boot, so a fresh host (a CI runner) read the empty sentinel as fresh for 60 s (CI on 434bb67)
 _MEM_FILE_CACHE_TTL = 60.0
 
 

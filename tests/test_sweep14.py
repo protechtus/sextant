@@ -22,7 +22,7 @@ def test_memory_file_count_ignores_version_copies(tmp_path, monkeypatch):
     for i in range(5):
         (root / "versions" / "reference" / f"a_2026-11-13_v{i}.md").write_text("a", encoding="utf-8")
     monkeypatch.setattr(web, "MEMORY_ROOT", root)
-    monkeypatch.setattr(web, "_mem_file_count_cache", (0.0, 0))
+    monkeypatch.setattr(web, "_mem_file_count_cache", (float("-inf"), 0))
     assert web._get_mem_file_count() == 1
 
 
