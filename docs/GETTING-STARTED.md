@@ -450,9 +450,14 @@ echo '{"session_id":"test-1","transcript_path":"/path/to/.claude/projects/<slug>
   | bash -c "<the stop command from sextant setup --client hooks>"
 ```
 
+The `session_id` must be the transcript's own `sessionId` (the file name without `.jsonl`): with any other
+value the hook finds no turns and records `summarizer_failed`. In PowerShell 5.1 the quotes inside `echo '...'`
+are mangled and the hook refuses the payload; use Git Bash for this test.
+
 A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
-activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`
-or `summarizer_skipped`) say what happened; `sextant doctor` has a "Stop hook" block with the
+activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`,
+`summarizer_skipped`, and for the facts stage `suggest_facts_failed`, `suggest_facts_skipped` and
+`fact_needs_review`) say what happened; `sextant doctor` has a "Stop hook" block with the
 model, the endpoint and the newest summary. Claude Code fires Stop after every reply, not
 only at the end: the session's entry is written once and then refreshed in place (in the
 day's log and in `updates.txt`; across midnight it moves to the new day) each time

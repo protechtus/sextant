@@ -424,7 +424,10 @@ def cmd_remember(
         console.print("[red]Not stored:[/red] this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again.")  # the codec dump (AG52)
         raise typer.Exit(1)
     if not result.get("ok"):
-        console.print(f"[red]Not stored:[/red] {result.get('error')}")
+        _err = str(result.get("error") or "")
+        if "codec can't encode" in _err:
+            _err = "this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again."  # the codec dump (MN46)
+        console.print(f"[red]Not stored:[/red] {_err}")
         raise typer.Exit(1)
     console.print(f"Remembered in {result['file']}")
     if result.get("possible_duplicate"):

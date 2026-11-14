@@ -35,6 +35,8 @@ def _tokenize(text: str) -> set[str]:
         if end != -1:
             text = text[end + 3:]
     text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
+    import unicodedata as _ud
+    text = "".join(ch for ch in _ud.normalize("NFC", text) if not _ud.category(ch).startswith("M"))  # `\w` breaks at every combining mark: vocalised Arabic and Hindi shattered into fragments and scored 1.00 (MN46)
     words = re.findall(r"\w+", text.lower())  # letters of every script
     # CJK, Thai, Lao, Khmer and Burmese body text has no spaces: without bigrams every Japanese note looked identical (MN23)
     for run in re.findall(_CJK_RE.pattern + "+", text):
@@ -97,7 +99,8 @@ _PROVENANCE_RE = re.compile(r"\s*<!--[^>]*-->")
 _NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
 
 
-_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]")
+# the same run classes search uses: CJK, Hangul and the space-less South-East Asian scripts (MN46)
+from atlas_plus.mcp.memory_server.fts import _CJK_RE  # noqa: E402
 
 
 def _weight(s: str) -> int:
@@ -273,14 +276,14 @@ def find_duplicates(
     shared_bit: dict[str, int] = {}
     for tok, n_docs in df.items():
         if n_docs >= 2:
-            shared_bit[tok] = 1 << len(shared_bit)
+            shared_bit[tok] = len(shared_bit)  # the bit index: storing `1 << k` per token was quadratic in memory (799 MB on 98,000 tokens: MN43)
     bits: list[int] = []
     for f in file_list:
         b = 0
         for tok in tokens[f]:
             bit = shared_bit.get(tok)
-            if bit:
-                b |= bit
+            if bit is not None:
+                b |= 1 << bit
         bits.append(b)
     found: list[tuple[float, int, int]] = []
     # Postings are appended in ascending i, so they are sorted: bisect to the entries with j > i

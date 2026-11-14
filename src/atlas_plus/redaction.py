@@ -46,11 +46,30 @@ _TELEGRAM_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
 # Optional quotes around the key name's close and the value's open ("api_key": "v", token='v')
 # so JSON and quoted assignments redact too; the trailing quote is left in place, preserving
 # structure: {"api_key": "[REDACTED]"}.
+_AR_MARKS = "[\u064b-\u0652\u0670]*"  # harakat and dagger alif between letters
+_HE_MARKS = "[\u0591-\u05c7]*"  # niqqud and cantillation between letters
+
+
+def _marked(word: str, marks: str) -> str:
+    """A key name that still matches when vowel marks sit between its letters (MN46: vocalised Arabic keys leaked)."""
+    return "".join(ch + marks for ch in word)
+
+
+_MARKED_NAMES = "|" + "|".join([
+    _marked("كلمة", _AR_MARKS) + "[_ ]" + _marked("السر", _AR_MARKS),
+    _marked("كلمة", _AR_MARKS) + "[_ ]" + _marked("المرور", _AR_MARKS),
+    _marked("السر", _AR_MARKS),
+    _marked("مفتاح", _AR_MARKS) + "[_ ]API",
+    _marked("رمز", _AR_MARKS) + "[_ ]" + _marked("الوصول", _AR_MARKS),
+    _marked("סיסמה", _HE_MARKS),
+    _marked("טוקן", _HE_MARKS),
+    _marked("סוד", _HE_MARKS),
+])
 _KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|client[_-]?secret|private[_-]?key"
              r"|access[_-]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
              r"|パスワード|トークン|シークレット|秘密鍵|秘密|鍵|APIキー"
              r"|비밀번호|비밀|비밀키|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰|暗証番号"
-             r"|كلمة[_ ]السر|كلمة[_ ]المرور|סיסמה|รหัสผ่าน|पासवर्ड)")  # Arabic, Hebrew, Thai, Hindi (AG52)
+             r"|รหัสผ่าน|รหัสลับ|โทเคน|पासवर्ड|टोकन|गुप्त[ _]कुंजी" + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
 # Exact key NAMES: a bounded prefix of up to eight `_`/`-` segments (`MY_APP_PROD_EU_WEST_DB_`), an
 # optional camelCase head (`dbPassword`, `AccessToken`), the name, and up to two short suffixes
@@ -62,7 +81,7 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 # with `&` leaked its tail; a query-string tail is over-masked instead). The lookbehind limits the
 # scan to word starts, so a 1 MB blob costs one attempt per word, not per character.
 _KV_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]{1,32}[_-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"
+    r"(?i)(?<![A-Za-z0-9_-])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43)
     r"(?![A-Za-z0-9])"
     r"(['\"]?\s*[=:：＝]\s*(?:r(?=['\"]))?)"
     r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[\"']?[^\s'\"]{6,})"
@@ -102,6 +121,9 @@ def _kv_quote(v: str) -> str:
     return v[0] if v and v[0] in "\"'" and len(v) > 1 and v[-1] == v[0] else ""
 
 
+_PASS_WORDS = frozenset({"bypass", "compass", "encompass", "surpass", "trespass", "overpass", "underpass", "impasse", "passe"})
+
+
 def _kv_skip(name: str, v: str, sep: str = "=", text: str | None = None, start: int = 0) -> bool:
     """Matches that are not secrets: placeholders, code expressions, a bare `pass:` in prose, `PWD=/path`,
     `bypass =`/`compass =` (a camel head before pass/pwd), and a lowercase word after a colon when the
@@ -112,12 +134,13 @@ def _kv_skip(name: str, v: str, sep: str = "=", text: str | None = None, start: 
     low = name.lower()
     if low == "pass":
         return True  # only a prefixed `DB_PASS`/`MYSQL_PASS` is a key name; `pass:` alone is prose
-    if (low.endswith("pass") or low.endswith("pwd")) and not re.search(r"(?:^|[_-])(?:pass|pwd)$", low):
-        return True  # `bypass`, `compass`
+    if low in _PASS_WORDS:
+        return True  # `bypass`, `compass`: English words, not key names (the suffix rule unmasked `dbPass`/`PGPASS`: MN43)
     if low.endswith("pwd") and _PATH_VALUE_RE.match(v):
         return True  # the shell's PWD=/home/u
     if "=" not in sep and re.fullmatch(r"[a-z]+", v) and text is not None:
-        line_prefix = text[text.rfind("\n", 0, start) + 1:start]
+        lo = text.rfind("\n", max(0, start - 200), start)  # a bounded window: the unbounded rfind plus slice was quadratic on a 256 KB line (MN43)
+        line_prefix = text[(lo + 1 if lo >= 0 else max(0, start - 200)):start]
         if re.search(r"[A-Za-z0-9,.;)]\s+$", line_prefix):
             return True  # mid-sentence prose: `The token: refreshing the page` (MN37)
     return bool(_CODE_VALUE_RE.match(v))

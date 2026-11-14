@@ -225,7 +225,7 @@ def _extract_candidates(
 # Deduplication against existing memory
 # ---------------------------------------------------------------------------
 
-def _tokenize(text: str) -> set[str]:
+def _tokenize(text: str) -> set[str]:  # `\w+` since MN46: the similarity note and --skip-similar were ASCII-only
     _STOPS = {
         "the", "a", "an", "and", "or", "of", "to", "in", "is", "it",
         "that", "this", "for", "be", "with", "on", "at", "by", "from",
@@ -237,7 +237,7 @@ def _tokenize(text: str) -> set[str]:
         end = text.find("---", 3)
         if end != -1:
             text = text[end + 3:]
-    words = re.findall(r"[a-z0-9]+", text.lower())
+    words = re.findall(r"\w+", text.lower())
     return {w for w in words if len(w) > 2 and w not in _STOPS}
 
 
@@ -551,7 +551,11 @@ def _review_candidates(
             continue
 
         if dry_run:
-            _print("[dim](dry-run)[/dim]" if console else "(dry-run)")
+            try:
+                _present = _fact_already_there(cand.get("scope", ""), _redact_text(str(cand.get("fact", ""))))
+            except Exception:  # noqa: BLE001
+                _present = False
+            _print(("[dim](dry-run; already in memory, --auto would skip it)[/dim]" if _present else "[dim](dry-run)[/dim]") if console else ("(dry-run; already in memory, --auto would skip it)" if _present else "(dry-run)"))  # MN46
             skipped += 1
             continue
 

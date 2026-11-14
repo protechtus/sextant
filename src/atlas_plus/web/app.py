@@ -251,12 +251,14 @@ class _PeerClient:
         if until > _time.monotonic() and method.upper() == "GET":
             raise httpx.ConnectError(f"{host} marked down for {int(until - _time.monotonic())}s more (circuit breaker)")
         try:
-            return await call(*args, **kwargs)
+            result = await call(*args, **kwargs)
         except (httpx.ConnectError, httpx.ConnectTimeout):
             self._down[host] = _time.monotonic() + self.PEER_DOWN_SECONDS
             if len(self._down) > 64:
                 self._down.pop(next(iter(self._down)))
             raise
+        self._down.pop(host, None)  # any answer (a POST too) clears the mark: a host stayed down 20 s after it came up (MN43)
+        return result
 
     def _target(self):
         return self._inner if self._inner is not None else self._raw
@@ -868,9 +870,7 @@ async def agents_html(request: Request):
         agents = r.json().get("agents", [])
     except httpx.ConnectError:
         return HTMLResponse(
-            '<div class="text-red-400 text-xs">Brain not running.'
-            '<br>Start: <code>' + (".venv\\Scripts\\python.exe" if os.name == "nt" else ".venv/bin/python")
-            + ' -m atlas_plus.brain.server</code></div>'
+            f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it, or set ATLAS_BRAIN_URL.</div>'  # the source-tree command was wrong for a pip install (MN43)
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 401:
@@ -1625,7 +1625,7 @@ async def memory_file_write(request: Request):
         raise HTTPException(status_code=400, detail="Path rejected")
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {safe_path}")
-    if len(content.encode("utf-8")) > 1_048_576:  # 1 MB cap prevents accidental large writes and not _same_bytes_as_disk(content, safe_path):  # unchanged before the size rule (AG51)
+    if len(content.encode("utf-8")) > 1_048_576 and not _same_bytes_as_disk(content, safe_path):  # 1 MB cap prevents accidental large writes; an unchanged note is "No change" first (AG51; the clause sat inside the comment until MN43)
         raise HTTPException(status_code=413, detail="Content exceeds 1 MB limit for memory files.")
     from atlas_plus.mcp.memory_server.routing import _atomic_write_text, _write_lock
     from atlas_plus.mcp.memory_server.versioning import version_before_write
@@ -1790,7 +1790,7 @@ async def chat_history(request: Request, session_id: str = ""):
         data = r.json()
         messages = data.get("messages", [])
     except httpx.ConnectError:
-        return HTMLResponse('<div class="text-red-400 text-xs">Brain not running.</div>')
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it, or set ATLAS_BRAIN_URL.</div>')
     except Exception as exc:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc))}</div>')
     if not messages:
@@ -2797,7 +2797,7 @@ def _cached_panel(key: str, build, ttl: float = _PANEL_TTL):
     flight per key: repeated loads of a slow panel piled up threads (670 MB RSS at 5,000 notes)."""
     import threading as _th
     import time as _time
-    if os.environ.get("ATLAS_WEB_PANEL_CACHE", "on").strip().lower() in ("off", "0", "false"):
+    if os.environ.get("ATLAS_WEB_PANEL_CACHE", "on").strip().lower() not in ("on", "1", "true"):  # anything else is off, like every other switch (MN44)
         return build()
     sig = _corpus_signature()
     hit = _PANEL_CACHE.get(key)
@@ -4217,7 +4217,7 @@ async def memory_search(request: Request, q: str = ""):
                         f' title="Open in Memory viewer">{_html_mod.escape(rel)}</span>'
                         f'<span class="text-slate-600 text-xs">{score:.2f}</span>'
                         f'</div>'
-                        f'<div class="text-slate-300 text-xs pl-2">{_html_mod.escape(snippet[:200])}</div>'
+                        f'<div class="text-slate-300 text-xs pl-2" dir="auto">{_html_mod.escape(snippet[:200])}</div>'
                         f'</div>'
                     )
                 rows.append('</div>')
@@ -4360,7 +4360,7 @@ async def sessions_search(q: str = "", request: Request = None):
         rows.append(
             f'<div class="py-1 border-b border-slate-700 row-hover cursor-pointer" onclick="showSession({_js_arg(name)})">'
             f'<div class="text-cyan-400 text-xs font-medium">{_html_mod.escape(stem)}</div>'
-            f'<div class="text-slate-400 text-xs mt-0.5">...{hl_snippet}...</div>'
+            f'<div class="text-slate-400 text-xs mt-0.5" dir="auto">...{hl_snippet}...</div>'
             f'</div>'
         )
     return HTMLResponse("\n".join(rows))
@@ -5672,7 +5672,7 @@ es.onmessage=(e)=>{{
 // ---- WebSocket chat ----
 let ws=null;
 function cwS(){{
-  if(window._sextantExpired)return;
+  if(window._sextantExpired||window._sextantStopped)return;
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+"/ws/chat/"+SID);  // behind TLS the page's CSP refuses ws:// (AG47)
   ws.onmessage=(e)=>{{
     const m=JSON.parse(e.data),b=document.getElementById("chat-messages");
@@ -5709,7 +5709,7 @@ function cwS(){{
     }}
     b.scrollTop=b.scrollHeight;
   }};
-  ws.onclose=()=>{{if(!window._sextantExpired)setTimeout(cwS,3000);}};  // a dead session must not retry the handshake every 3 s: each try counted as an auth failure and locked the remote user out (AG49)
+  ws.onclose=()=>{{if(!window._sextantExpired&&!window._sextantStopped)setTimeout(cwS,3000);}};  // the stopped page too (MN44: 15 handshakes from a stopped tab locked the remote user out after a restart)  // a dead session must not retry the handshake every 3 s: each try counted as an auth failure and locked the remote user out (AG49)
 }}
 cwS();
 
@@ -6362,7 +6362,7 @@ async function editMemoryFile(path){{
     +'<button class="btn btn-green text-xs" onclick="saveMemoryFile()">Save</button>'
     +'<button class="btn btn-slate text-xs" onclick="readMemoryFile(_mfEditPath)">Cancel</button>'
     +'</div></div>'
-    +'<textarea id="mf-edit" class="w-full text-xs" style="height:70vh;resize:vertical;font-family:monospace"></textarea>';
+    +'<textarea id="mf-edit" dir="auto" class="w-full text-xs" style="height:70vh;resize:vertical;font-family:monospace"></textarea>';  // RTL notes read right-to-left (MN46)
   const sp=document.getElementById('mf-edit-path');
   if(sp)sp.textContent=path;
   const ta=document.getElementById('mf-edit');

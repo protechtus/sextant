@@ -131,7 +131,7 @@ def _is_prompt_echo(parsed) -> bool:
         flat = _json.dumps(parsed, ensure_ascii=False)
     except Exception:  # noqa: BLE001
         flat = str(parsed)
-    return any(marker in flat for marker in _ECHO_MARKERS)
+    return sum(marker in flat for marker in _ECHO_MARKERS) >= 2  # one quoted phrase (a session about prompts) is a summary; the echoed prompt carries them all (MN43)
 
 
 def _looks_like_chunk_summary(parsed) -> bool:

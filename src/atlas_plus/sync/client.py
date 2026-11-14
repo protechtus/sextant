@@ -138,12 +138,20 @@ class SyncClient:
             if token:
                 self._client.headers["Authorization"] = f"Bearer {token}"
         else:
-            self._client = httpx.Client(
-                base_url=base_url,
-                headers={"Authorization": f"Bearer {token}"},
-                transport=transport,
-                timeout=timeout,
-            )
+            try:
+                self._client = httpx.Client(
+                    base_url=base_url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    transport=transport,
+                    timeout=timeout,
+                )
+            except (OSError, ValueError) as exc:  # ssl.SSLError is an OSError: httpx loads SSL_CERT_FILE here (MN47: a traceback for a missing or garbage file)
+                import os as _os
+                _cf = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE") or ""
+                raise SyncClientError(
+                    f"the certificate bundle {_cf!r} (SSL_CERT_FILE) cannot be read as a PEM certificate file: {type(exc).__name__}: "
+                    f"{str(exc)[:160]}. Point SSL_CERT_FILE at the hub's CA certificate, or unset it."
+                ) from exc
 
     def close(self) -> None:
         self._client.close()

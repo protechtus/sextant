@@ -82,7 +82,7 @@ def _cjk_split(text: str) -> str:
     return _CJK_ASCII_BOUNDARY_RE.sub(_CJK_SEP, text)
 
 
-_MARKS_RE = re.compile("[\u064b-\u0652\u0670\u0640\u0591-\u05c7]")  # Arabic harakat and tatweel, Hebrew points: a vocalised text and a plain query never met (AG52)
+_MARKS_RE = re.compile("[\u064b-\u0652\u0670\u0640\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7]")  # Arabic harakat and tatweel, Hebrew points (AG52); maqaf, paseq and sof pasuq are punctuation and stay (MN43: `בית־ספר` lost `ספר`)
 
 
 def _fold_marks(text: str) -> str:
@@ -398,7 +398,7 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
-INDEX_FORMAT = "2"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded)
+INDEX_FORMAT = "3"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild)
 
 
 def _needs_rebuild() -> bool:
@@ -489,6 +489,16 @@ def update_incremental() -> int:
         conn.close()
     if empty:
         return max(rebuild(force=True), 0)
+    try:
+        _c = _connect()
+        try:
+            _fmt = _c.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+        finally:
+            _c.close()
+    except Exception:  # noqa: BLE001
+        _fmt = None
+    if not _fmt or _fmt[0] != INDEX_FORMAT:
+        return max(rebuild(force=True), 0)  # a normalisation change re-indexes every note once; the tag was read by the rebuild command only (MN46)
 
     with _rebuild_lock:
         conn = _connect()

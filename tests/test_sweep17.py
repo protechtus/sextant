@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 
 import pytest
 
@@ -46,8 +47,8 @@ def test_dashboard_dead_session_stops_the_chat_socket_and_hidden_drafts_count():
     from atlas_plus.web import app as web
 
     page = inspect.getsource(web)
-    assert "if(!window._sextantExpired)setTimeout(cwS,3000)" in page
-    assert "function cwS(){{\n  if(window._sextantExpired)return;" in page
+    assert "if(!window._sextantExpired&&!window._sextantStopped)setTimeout(cwS,3000)" in page
+    assert "function cwS(){{\n  if(window._sextantExpired||window._sextantStopped)return;" in page
     assert "some(t=>t.value.trim());" in page and "offsetParent" not in page.split("const dirty=")[1].split("\n")[0]
 
 
@@ -173,7 +174,7 @@ def test_doctor_facts_events_gate_value_and_hook_traces():
     from atlas_plus.summarizer import hook_entry
 
     src = inspect.getsource(doc)
-    assert '"suggest_facts_failed", "fact_needs_review"' in src and "is not one of on/1/true" in src
+    assert '"suggest_facts_failed", "suggest_facts_skipped", "fact_needs_review"' in src and "is not one of on/1/true" in src
     h = inspect.getsource(hook_entry)
     assert "suggest_facts_skipped" in h and "payload has no session_id" in h
 
@@ -191,7 +192,7 @@ def test_index_format_tag_forces_a_rebuild_and_breaker_is_wired():
     from atlas_plus.mcp.memory_server import fts
     from atlas_plus.web import app as web
 
-    assert fts.INDEX_FORMAT == "2" and "index_format" in inspect.getsource(fts._needs_rebuild)
+    assert fts.INDEX_FORMAT == "3" and "index_format" in inspect.getsource(fts._needs_rebuild)
     page = inspect.getsource(web)
     assert page.count("= httpx.AsyncClient(") == 1 and "async with httpx.AsyncClient(" not in page and "_PeerClient(" in page   # the one real client lives inside the breaker wrapper
     assert ".tk-id{{width:3.6rem" in page and "scrollIntoView" in page and "_same_bytes_as_disk" in page
@@ -266,4 +267,140 @@ def test_shared_tls_context_cache_kept_and_dash_lookbehind():
     assert time.perf_counter() - t0 < 2.0                                            # dash-dense text (AG54: 3.75 s per MB)
     v = "Zq9wX7vB3nK1"
     assert v not in redact("X-Api-" + "Key: " + v) and v not in redact("a-b-c-" + "password=" + v)  # assembled: the pre-commit scan reads literal key lines as leaks
+
+
+# ---------------------------------------------------------------- MN46: format tag on the search path, marks folded, more key names, RTL
+def test_index_format_is_honoured_on_the_search_path(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.mcp.memory_server import fts
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "search.sqlite", raising=False)
+    monkeypatch.setattr(fts, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    memory_remember("reference:thai", "ฉันกินข้าวที่ร้านอาหารใกล้บ้านทุกวัน", source="agent")
+    fts.rebuild(force=True)
+    conn = fts._connect()
+    conn.execute("DELETE FROM atlas_meta WHERE key='index_format'")  # an index built by a build before the tag
+    conn.commit()
+    conn.close()
+    fts.update_incremental()                                                   # the search path, not the rebuild command
+    conn = fts._connect()
+    row = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+    conn.close()
+    assert row and row[0] == fts.INDEX_FORMAT
+
+
+def test_duplicate_tokens_survive_vowel_marks_and_more_key_names_are_masked():
+    from atlas_plus.curation import duplicates as dup
+    from atlas_plus.redaction import redact
+
+    ar_voc = dup._tokenize("---\nid: a\n---\nالْخَادِمُ الرَّئِيسِيُّ يَعْمَلُ عَلَى الْمَنْفَذِ\n")
+    hi = dup._tokenize("---\nid: b\n---\nमैंने उसे बदला और सर्वर को फिर से शुरू किया\n")
+    assert len(ar_voc) >= 3 and len(hi) >= 2 and not (ar_voc & hi)             # real tokens, nothing shared (MN46: both were {'2026'})
+    v = "Zq8vN3pLx7Rw"
+    for s in (f"مفتاح_API={v}", f"رمز_الوصول: {v}", f"السر: {v}", f"كَلِمَةُ السِّرِّ = {v}", f"كَلِمَةُ_السِّرِّ={v}",
+              f"טוקן: {v}", f"סוד: {v}", f"סִיסְמָה={v}", f"โทเคน={v}", f"รหัสลับ={v}", f"टोकन: {v}", f"गुप्त कुंजी: {v}"):
+        assert v not in redact(s), s
+
+
+def test_codec_dump_named_in_the_result_branch_and_rtl_dir_present():
+    from atlas_plus import cli
+    from atlas_plus.curation import suggest_facts as sf
+    from atlas_plus.web import app as web
+
+    assert "codec can't encode" in inspect.getsource(cli)
+    assert 're.findall(r"\\w+"' in inspect.getsource(sf._tokenize)
+    page = inspect.getsource(web)
+    assert 'id="mf-edit" dir="auto"' in page and page.count('dir="auto"') >= 3
+
+
+# ---------------------------------------------------------------- MN43: the seven regressions
+def test_dashed_flags_and_camel_pass_names_mask_again():
+    from atlas_plus.redaction import redact
+
+    v = "Qm7rT2kW9pLx"
+    for s in (f"--secret-key={v}", f"--access-key={v}", f"--my-app-prod-db-password={v}", f"java -Dpassword={v}",
+              f"-DdbPassword={v}", f"-DDB_PASSWORD={v}", f"-ApiKey:{v}", f"-Token:{v}", f"dbPass={v}", f"dbPwd: {v}",
+              f"rootPass={v}", f"adminPwd={v}", f"PGPASS={v}", f"MYSQLPWD={v}", f"smtpPass: {v}"):
+        assert v not in redact(s), s
+    for s in ("bypass = true", "compass: north", "pass: 3 of 4"):
+        assert redact(s) == s, s
+
+
+def test_prose_rule_is_linear_on_a_long_single_line():
+    import time
+    from atlas_plus.redaction import redact
+
+    line = "The token: refreshing the page " * 8000                                   # 256 KB, no newline
+    t0 = time.perf_counter()
+    redact(line)
+    assert time.perf_counter() - t0 < 2.0                                           # 26 s before MN43
+
+
+def test_bitset_table_holds_indexes_and_hebrew_punctuation_survives_the_fold():
+    from atlas_plus.curation import duplicates as dup
+    from atlas_plus.mcp.memory_server import fts
+
+    src = inspect.getsource(dup)
+    assert "shared_bit[tok] = len(shared_bit)" in src and "b |= 1 << bit" in src
+    assert fts._fold_marks("\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8") == "\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8"   # maqaf kept
+    assert fts._fold_marks("\u05e9\u05c1\u05b8\u05dc\u05d5\u05b9\u05dd") == "\u05e9\u05dc\u05d5\u05dd"                     # points folded
+    assert fts.INDEX_FORMAT == "3"
+
+
+def test_unchanged_large_save_condition_is_live_and_breaker_clears_on_any_answer():
+    from atlas_plus.web import app as web
+
+    src = inspect.getsource(web)
+    assert 'if len(content.encode("utf-8")) > 1_048_576 and not _same_bytes_as_disk(content, safe_path):' in src
+    assert "self._down.pop(host, None)" in src
+    assert "-m atlas_plus.brain.server</code>" not in src
+
+
+def test_echo_needs_two_markers_and_fences_and_back_to_back_entries():
+    from atlas_plus.summarizer.cli import _is_prompt_echo
+    from atlas_plus.summarizer.renderer import remove_session_entry, remove_updates_entry
+
+    assert not _is_prompt_echo({"completed": ["removed 'Think step by step' from the prompt"]})
+    assert _is_prompt_echo({"completed": ["You are summarizing", "things that were finished"]})
+    quoted = "~~~\n## x\n<!-- session:abc turns:1 -->\n~~~\n"
+    real = "## real\n<!-- session:abc turns:1 -->\nbody\n"
+    out = remove_session_entry(quoted + real, "<!-- session:abc")
+    assert quoted in out and "## real" not in out
+    out = remove_session_entry("```\nq\n```\n" + real, "<!-- session:abc")
+    assert "## real" not in out                                                    # a file that starts with a fence
+    a = "-----\n<!-- session:abc turns:8 -->\n2026-11-13 | A\n-----\nCOMPLETED:\n  - x\n"
+    b = "-----\n<!-- session:def turns:8 -->\n2026-11-13 | B\n-----\nCOMPLETED:\n  - y\n"
+    out = remove_updates_entry(a + b, "<!-- session:abc")
+    assert out == b                                                                # the second entry keeps its opening rule
+    assert remove_updates_entry(out, "<!-- session:def") == ""
+
+
+# ---------------------------------------------------------------- MN44, MN45, MN47
+def test_stopped_page_does_not_retry_and_garbled_payload_is_refused(monkeypatch, capsys):
+    import io
+    from atlas_plus.summarizer import hook_entry
+    from atlas_plus.web import app as web
+
+    src = inspect.getsource(web)
+    assert "if(!window._sextantExpired&&!window._sextantStopped)setTimeout(cwS,3000);" in src
+    assert 'not in ("on", "1", "true")' in src
+    hook_entry._PAYLOAD["seen"] = False
+    hook_entry._PAYLOAD["garbled"] = False
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{session_id:m7,transcript_path:garbled}"))
+    assert hook_entry._transcript_root_from_payload() == ""
+    assert hook_entry._payload_seen() and hook_entry._PAYLOAD["garbled"]
+
+
+def test_unreadable_cert_bundle_is_named_by_the_sync_client(tmp_path, monkeypatch):
+    from atlas_plus.sync.client import SyncClient, SyncClientError
+
+    bad = tmp_path / "nope.pem"
+    monkeypatch.setenv("SSL_CERT_FILE", str(bad))
+    with pytest.raises(SyncClientError) as e:
+        SyncClient("https://hub.example:8443", token="t")
+    assert "SSL_CERT_FILE" in str(e.value) and "Traceback" not in str(e.value)
+    bad.write_text("not a certificate", encoding="utf-8")
+    with pytest.raises(SyncClientError):
+        SyncClient("https://hub.example:8443", token="t")
 

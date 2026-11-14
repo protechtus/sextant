@@ -337,7 +337,7 @@ def check_stop_hook() -> dict:
     try:
         from atlas_plus import activity as _act
         for ev in reversed(_act.tail(limit=200)):  # tail is oldest-first: the NEWEST event is the one that matters (MN33)
-            if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped", "suggest_facts_failed", "fact_needs_review"):  # the facts stage too (AG50)
+            if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped", "suggest_facts_failed", "suggest_facts_skipped", "fact_needs_review"):  # the facts stage too (AG50, MN45)
                 result["last_event"] = f"{ev.get('event')} at {str(ev.get('ts') or ev.get('time') or '')[:16]} UTC {' '.join(str(ev.get('reason') or '').split())[:200]}".strip()  # one line, labelled (AG43); the 404 hint fits (MN39)
                 break
     except Exception:  # noqa: BLE001
@@ -1787,7 +1787,7 @@ def render_text(data: dict) -> str:
         if sh.get("gate"):
             gate = "on"
         elif _raw and _raw.lower() not in ("off", "0", "false", "no"):
-            gate = f"off: ATLAS_SESSION_AUTONOMOUS={_raw!r} is not one of on/1/true"  # name the bad value (AG50)
+            gate = f"off: ATLAS_SESSION_AUTONOMOUS={(_raw if len(_raw) <= 60 else _raw[:60] + chr(8230))!r} is not one of on/1/true"  # name the bad value (AG50), cut at 60 characters (MN43)
         else:
             gate = "off in this shell (the hook needs --env ATLAS_SESSION_AUTONOMOUS=on on its command)"
         if not sh.get("reachable"):

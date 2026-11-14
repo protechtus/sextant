@@ -85,7 +85,7 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     m = None
     for cand in pat.finditer(text):
         # a match inside a fenced code block is a user's quotation, not the entry (AG50: the quoted pair was cut)
-        if text.count("\n```", 0, cand.start()) % 2 == 0 and not text.startswith("```"):
+        if len(_re.findall(r"(?m)^[ \t]{0,3}(?:```|~~~)", text[:cand.start()])) % 2 == 0:  # ``` and ~~~ fences, at the file start too (MN43: a file opening with a fence never had its entry replaced)
             m = cand
             break
     if not m:
@@ -128,10 +128,14 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
     start = m.start()
     end = m.end()
     first = True
-    for line in text[m.end():].splitlines(keepends=True):
+    _lines = text[m.end():].splitlines(keepends=True)
+    for _i, line in enumerate(_lines):
         if not line.strip():
             end += len(line)  # the blank separator goes with the entry
             break
+        _next = _lines[_i + 1] if _i + 1 < len(_lines) else ""
+        if not first and _re.match(r"^-{5,}\s*$", line) and (_next.startswith("<!-- session:") or _re.match(r"^\d{4}-\d{2}-\d{2} \| ", _next)):
+            break  # the next entry's opening rule, with no blank line between (MN43: it was eaten and the entry could never be matched again)
         if not first and _re.match(r"^\d{4}-\d{2}-\d{2} \| ", line):
             break  # a second `date | title` line is another entry (AG50)
         first = False

@@ -193,7 +193,12 @@ def _transcript_root_from_payload() -> str:
         if not raw.strip():
             return ""
         import json as _json
-        payload = _json.loads(raw)
+        try:
+            payload = _json.loads(raw)
+        except ValueError:
+            _PAYLOAD["seen"] = True  # something arrived on stdin that is not a payload: refuse, never summarise the whole day (MN45: PowerShell 5.1 mangles the quoted JSON)
+            _PAYLOAD["garbled"] = True
+            return ""
         if isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
             _SESSION["id"] = payload["session_id"].strip()[:120]
         _PAYLOAD["seen"] = True
@@ -219,6 +224,7 @@ def main() -> int:
     project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     _SESSION["id"] = ""
     _PAYLOAD["seen"] = False  # per run: a previous payload in this process must not stand in (the sweep-14 test)
+    _PAYLOAD["garbled"] = False
 
     if not is_session_autonomous():
         _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
@@ -241,7 +247,7 @@ def main() -> int:
     if not _SESSION.get("id") and _payload_seen():
         # a payload without a session id would summarise the whole day on every Stop, one more entry each
         # time (AG50); Claude Code always sends session_id, so a missing one is a broken payload
-        _sys.stderr.write("Sextant: the Stop payload carries no session_id; nothing summarised.\n")
+        _sys.stderr.write("Sextant: the Stop payload is not JSON (a shell mangled the quotes?); nothing summarised.\n" if _PAYLOAD.get("garbled") else "Sextant: the Stop payload carries no session_id; nothing summarised.\n")
         try:
             from atlas_plus import activity as _act
             _act.record("hook", "summarizer_skipped", reason="payload has no session_id")
