@@ -251,6 +251,12 @@ def _read_note(src: Path) -> tuple[str | None, str | None]:
 _TRUNCATED: list[str] = []  # notes cut at MAX_IMPORT_CHARS during this run, for the report (AG35)
 
 
+def _note_would_truncate(name: str, text: str) -> None:
+    """A dry run names the notes `--yes` would cut (AG66: the plan said `truncated: []` and the cut came only after writing)."""
+    if len(text) > MAX_IMPORT_CHARS:
+        _TRUNCATED.append(f"{name}: {len(text):,} characters would be cut at {MAX_IMPORT_CHARS:,}")
+
+
 def _write_lf(target: Path, text: str) -> None:
     """Write an imported note: LF line endings (write_text made CRLF on Windows, AG14), control
     characters and lone surrogates scrubbed (a lone surrogate left a zero-byte note and aborted
@@ -726,6 +732,7 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
         writes.append(target.relative_to(root).as_posix())
         if not execute:
             would += 1
+            _note_would_truncate(target.name, raw)  # AG66
             continue
         stamped = _stamp_existing_frontmatter(raw, "obsidian", rel_src, body_hash) if _has_frontmatter(raw) else None
         out_text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src, body_hash) + raw
@@ -935,6 +942,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
             continue
         if not execute:
             would += 1
+            _note_would_truncate(dest.name, text)  # AG66
             continue
         target = _collision_free(dest)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1034,6 +1042,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
             continue
         if not execute:
             would += 1
+            _note_would_truncate(dest.name, text_out)  # AG66
             continue
         target = _collision_free(dest)
         target.parent.mkdir(parents=True, exist_ok=True)

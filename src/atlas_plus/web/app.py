@@ -1552,7 +1552,7 @@ async def session_expired_page():
     """Where a stale tab lands after a 401: sessions live in memory, so a restart, a key rotation
     or the 12-hour limit ends them (AG31, sweep 14)."""
     return HTMLResponse(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sextant: session expired</title>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sextant: sign in</title>"
         "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#cbd5e1;padding:3rem;max-width:40rem}"
         "code{color:#67e8f9}</style></head><body><h1>Sign in</h1>"  # MN60: a first visit is not an expired session; the body explains both
         "<p>You have not signed in from this browser yet, or the dashboard restarted, its key was rotated, or the session reached its 12-hour limit.</p>"

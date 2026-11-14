@@ -1017,3 +1017,22 @@ def test_ambiguous_bare_ticket_id_is_refused(tmp_path, monkeypatch):
     t = store.get_ticket("alpha/ALP-001", root)
     assert t is not None and store.ambiguous_hint() == ""
 
+
+# ---------------------------------------------------------------- AG66
+def test_dry_run_import_lists_truncation(tmp_path, monkeypatch):
+    from atlas_plus import import_cmd
+
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(mem))
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "big.md").write_text("x" * 5000, encoding="utf-8")
+    (vault / "small.md").write_text("short", encoding="utf-8")
+    monkeypatch.setattr(import_cmd, "MAX_IMPORT_CHARS", 1000)
+    dry = import_cmd.import_obsidian(vault, "reference/obsidian", execute=False)
+    assert [s.split(":")[0] for s in dry["truncated"]] == ["big.md"] and "would be cut" in dry["truncated"][0]
+    assert not (mem / "reference").exists()                                   # the dry run wrote nothing
+    real = import_cmd.import_obsidian(vault, "reference/obsidian", execute=True)
+    assert [s.split(":")[0] for s in real["truncated"]] == ["big.md"]          # the same note, now really cut
+

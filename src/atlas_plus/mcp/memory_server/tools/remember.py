@@ -254,7 +254,7 @@ def memory_remember(
         except Exception:  # noqa: BLE001
             _rel = target.name
         return {"ok": False, "file": None, "version_copy": None,
-                "error": f"{_rel} is unmerged in git (a modify/delete or add/add conflict): resolve it and `git add` it first; sextant doctor names such paths"}
+                "error": f"{_rel} is unmerged in git (a modify/delete or add/add conflict): resolve it and `git add` it first (for a modify/delete conflict, `git add` keeps the file and `git rm` deletes it: that is the choice); sextant doctor names such paths"}
     if target.exists() and _has_conflict_markers(target):
         # a git merge left markers in this note: writing into it grows a half-resolved note
         # and search would index the markers (MN27, sweep 14)
