@@ -40,6 +40,7 @@ def _reset_web_panel_cache(monkeypatch):
     swap roots and monkeypatch the finders mid-test, so the cache is off and cleared per test."""
     import sys as _sys
     monkeypatch.setenv("ATLAS_WEB_PANEL_CACHE", "off")
+    monkeypatch.setenv("ATLAS_WEB_REPORT_SUBPROCESS", "off")  # tests monkeypatch module roots a worker process cannot see
     mod = _sys.modules.get("atlas_plus.web.app")
     if mod is not None and hasattr(mod, "_PANEL_CACHE"):
         mod._PANEL_CACHE.clear()

@@ -2552,7 +2552,7 @@ async def memory_curation_report_panel(request: Request):
     def _get_counts() -> dict:
         import re as _re
         from atlas_plus.curation.weekly_report import generate_report
-        report_text, _ = _cached_panel("curation-report", lambda: generate_report(dry_run=True))
+        report_text, _ = _cached_panel("curation-report", _generate_report_isolated)
 
         from atlas_plus.curation.weekly_report import curation_counts
         counts = curation_counts(report_text)
@@ -2644,6 +2644,23 @@ def _cached_panel(key: str, build, ttl: float = _PANEL_TTL):
         value = build()
         _PANEL_CACHE[key] = (sig, _time.monotonic(), value)
         return value
+
+
+def _generate_report_isolated():
+    """The dry-run curation report from a spawned worker process (`ATLAS_WEB_REPORT_SUBPROCESS=off`
+    runs it in this process). CPU-bound Python in a thread holds the GIL: while a report ran, a
+    search took 23 to 60 s and abandoned requests piled up (AG42, sweep 15)."""
+    from atlas_plus.curation._report_worker import report_dry_run
+    if os.environ.get("ATLAS_WEB_REPORT_SUBPROCESS", "on").strip().lower() in ("off", "0", "false"):
+        return report_dry_run()
+    try:
+        import concurrent.futures as _cf
+        import multiprocessing as _mp
+        with _cf.ProcessPoolExecutor(max_workers=1, mp_context=_mp.get_context("spawn")) as ex:
+            return ex.submit(report_dry_run).result(timeout=900)
+    except Exception as exc:  # noqa: BLE001 - a worker that cannot start (frozen app, sandbox) is not a lost report
+        log.warning("curation report worker failed (%s); running in-process", exc)
+        return report_dry_run()
 
 
 def _build_topic_index(memory_root) -> dict[str, list[str]]:
@@ -6133,7 +6150,7 @@ async function saveMemoryFile(){{
   try{{
     const r=await fetch('/api/memory/file',{{method:'POST',
       headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify({{path:_mfEditPath,content:(function(){{let v=ta.value;if(_mfEol==='crlf')v=v.replace(/\r?\n/g,'\r\n');if(_mfBom==='1'&&v.charCodeAt(0)!==0xFEFF)v='\uFEFF'+v;return v;}})(),base_etag:_mfBaseEtag}})}});
+      body:JSON.stringify({{path:_mfEditPath,content:(function(){{let v=ta.value;if(_mfEol==='crlf')v=v.replace(/\\r?\\n/g,'\\r\\n');if(_mfBom==='1'&&v.charCodeAt(0)!==0xFEFF)v='\\uFEFF'+v;return v;}})(),base_etag:_mfBaseEtag}})}});
     const d=await r.json().catch(()=>({{}}));
     if(d.ok){{
       showToast((d.unchanged?'No change: ':'Saved: ')+_mfEditPath.split('/').pop(),'done');

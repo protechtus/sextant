@@ -461,3 +461,39 @@ def test_agents_route_has_a_connect_timeout():
     from atlas_plus.web import app as web
 
     assert "httpx.AsyncClient(timeout=20.0)" not in inspect.getsource(web)
+
+
+def test_curation_report_runs_in_a_worker_process(tmp_path, monkeypatch):
+    """The worker inherits the environment: the report it returns is the one for ATLAS_MEMORY_ROOT."""
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ATLAS_WEB_REPORT_SUBPROCESS", "on")
+    from atlas_plus import init_cmd
+
+    init_cmd.run_init()
+    (tmp_path / "mem" / "reference" / "w.md").write_text("---\nid: w\n---\n\n- worker fact one\n- worker fact one\n", encoding="utf-8")
+    from atlas_plus.web import app as web
+
+    text, _ = web._generate_report_isolated()
+    assert "Curation Report" in text and "Repeated facts (" in text
+
+
+def test_dashboard_inline_script_has_no_raw_newline_in_a_regex(monkeypatch):
+    """The page is an f-string: a CRLF regex written with single backslashes renders as real line
+    breaks inside a JS regex literal and the whole inline script fails to parse (MN36, sweep 15:
+    every tab dead in every browser)."""
+    import re
+
+    from fastapi.testclient import TestClient
+
+    from atlas_plus.web import app as web
+
+    monkeypatch.setattr(web, "API_KEY", "k" * 40, raising=False)
+    client = TestClient(web.app, raise_server_exceptions=False)
+    r = client.get("/", headers={"Authorization": "Bearer " + "k" * 40})
+    html = r.text
+    assert r.status_code == 200 and "editMemoryFile" in html
+    # every regex literal opened by `.replace(/` must close on the same line
+    for m in re.finditer(r"\.replace\(/([^\n]*)", html):
+        assert "/" in m.group(1), m.group(0)[:80]
+    assert "v=v.replace(/\\r?\\n/g,'\\r\\n')" in html
