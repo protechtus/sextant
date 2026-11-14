@@ -193,9 +193,13 @@ def _transcript_root_from_payload() -> str:
     """``<root>`` from the Stop payload's ``transcript_path`` (``<root>/<project>/<session>.jsonl``), or ''."""
     try:
         if sys.stdin is None or sys.stdin.isatty():
+            _PAYLOAD["seen"] = True
+            _PAYLOAD["empty"] = True  # a terminal, no payload: never summarise the whole day (MN51)
             return ""
         raw = sys.stdin.read()
         if not raw.strip():
+            _PAYLOAD["seen"] = True
+            _PAYLOAD["empty"] = True
             return ""
         import json as _json
         try:
@@ -230,6 +234,7 @@ def main() -> int:
     _SESSION["id"] = ""
     _PAYLOAD["seen"] = False  # per run: a previous payload in this process must not stand in (the sweep-14 test)
     _PAYLOAD["garbled"] = False
+    _PAYLOAD["empty"] = False
 
     if not is_session_autonomous():
         _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
@@ -252,10 +257,10 @@ def main() -> int:
     if not _SESSION.get("id") and _payload_seen():
         # a payload without a session id would summarise the whole day on every Stop, one more entry each
         # time (AG50); Claude Code always sends session_id, so a missing one is a broken payload
-        _sys.stderr.write("Sextant: the Stop payload is not JSON (a shell mangled the quotes?); nothing summarised.\n" if _PAYLOAD.get("garbled") else "Sextant: the Stop payload carries no session_id; nothing summarised.\n")
+        _sys.stderr.write("Sextant: no Stop payload arrived on stdin; run the hook the way Claude Code does (echo '{\"session_id\": ..., \"transcript_path\": ...}' | <stop command>); nothing summarised.\n" if _PAYLOAD.get("empty") else "Sextant: the Stop payload is not JSON (a shell mangled the quotes?); nothing summarised.\n" if _PAYLOAD.get("garbled") else "Sextant: the Stop payload carries no session_id; nothing summarised.\n")
         try:
             from atlas_plus import activity as _act
-            _act.record("hook", "summarizer_skipped", reason=("payload is not JSON" if _PAYLOAD.get("garbled") else "payload has no session_id"))  # the recorded reason matches stderr (AG60)
+            _act.record("hook", "summarizer_skipped", reason=("no payload on stdin" if _PAYLOAD.get("empty") else "payload is not JSON" if _PAYLOAD.get("garbled") else "payload has no session_id"))  # the recorded reason matches stderr (AG60)
         except Exception:  # noqa: BLE001
             pass
         return 0
@@ -276,6 +281,17 @@ def main() -> int:
                 activity.record("hook", "summarizer_skipped", reason=reason)
             except Exception:  # noqa: BLE001
                 pass
+    _dry_log = None
+    if _dry_run_flag() and not reason:
+        try:
+            from atlas_plus import activity as _act2
+            _dry_path = atlas_paths.state_dir() / "logs" / "summarizer-dry-run.log"
+            _dry_path.parent.mkdir(parents=True, exist_ok=True)
+            _dry_log = open(_dry_path, "a", encoding="utf-8")  # the child's output has somewhere to go (MN51: it went to DEVNULL)
+            _act2.record("hook", "summarizer_dry_run", log=str(_dry_path), session=_SESSION.get("id") or "")
+            _sys.stderr.write(f"Sextant: ATLAS_SUMMARIZER_DRY_RUN is on: the model is called, nothing is written; the entry goes to {_dry_path}\n")
+        except Exception:  # noqa: BLE001
+            _dry_log = None
     if os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes") and not reason:
         subprocess.Popen(
             [
@@ -289,11 +305,13 @@ def main() -> int:
             cwd=project_dir,
             start_new_session=True,
             env=_child_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=_dry_log or subprocess.DEVNULL,
+            stderr=_dry_log or subprocess.DEVNULL,
         )
 
     # --- 2. Suggest-facts (auto mode: only writes confidence >= 0.85) ---
+    if _dry_run_flag():
+        reason = reason or "dry run"  # a dry run writes nothing: the facts stage is skipped (MN51: it wrote a fact and a .done marker)
     if os.environ.get("ATLAS_DISABLE_SUGGEST_FACTS", "").lower() not in ("1", "true", "yes") and not reason:  # no model, no facts stage (MN31)
         exe = _find_script("atlas-suggest-facts")
         if not exe:

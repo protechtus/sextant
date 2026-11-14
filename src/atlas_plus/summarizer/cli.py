@@ -423,7 +423,8 @@ def main(
         summary["pending"].append("Incomplete: " + "; ".join(rejected) + " could not be summarised (unusable model reply); retried at the next Stop")
         console.print(f"[yellow]{len(rejected)} of {len(chunks)} chunks could not be summarised; the entry says so and is retried at the next Stop.[/yellow]")
         if marker:
-            marker = marker[:-4] + " partial:1 -->"
+            from atlas_plus.summarizer.renderer import MEMORY_SESSIONS_DIR as _sdir2, partial_count as _pc
+            marker = marker[:-4] + f" partial:{_pc(_sdir2, safe_id) + 1} -->"  # the count caps the retries (MN49)
     # --- 5. Render ---
     for _k in ("worked_on", "completed", "pending", "decisions", "files_touched"):
         if isinstance(summary.get(_k), list):
@@ -440,6 +441,7 @@ def main(
         uhead, _, urest = updates_text.partition("\n")
         updates_text = uhead + "\n" + marker + "\n" + urest  # the updates entry is found and replaced by its marker too (AG43)
         updates_text = updates_text.rstrip("\n") + f"\n<!-- end session:{safe_id} -->\n"  # AG58: the entry's last line, so removal ends exactly here
+        session_log_text = session_log_text.rstrip("\n") + f"\n<!-- end session:{safe_id} -->\n"  # the day log too (MN49, MN51: a hand-written line under the entry was deleted)
 
     # --- 6. Review ---
     if auto_commit or dry_run:

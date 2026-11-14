@@ -182,7 +182,9 @@ def _delegate(main_func, name: str, args: list[str]) -> None:
     import sys
 
     sys.argv = [name] + list(args)
-    main_func()
+    rc = main_func()
+    if isinstance(rc, int) and rc:
+        raise typer.Exit(rc)  # `sextant doctor --strict` printed FAIL and exited 0 (MN53)
 
 
 # help_option_names=[]: `sextant import --help` must reach the real importer's help instead of
@@ -722,3 +724,31 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------- guessed command names redirect in one bounce (MN54: `install` suggested `uninstall`)
+_REDIRECTS = {
+    "install": "To set up: `sextant init`, then `sextant setup --client <name>`. To remove: `sextant uninstall`.",
+    "save": "Did you mean `sextant remember \"<fact>\"`?",
+    "store": "Did you mean `sextant remember \"<fact>\"`?",
+    "recall": "Did you mean `sextant search <words>` or `sextant context`?",
+    "list": "Did you mean `sextant search <words>` (facts) or `sextant components` (what is installed)?",
+    "forget": "Facts are plain Markdown: edit or delete the line in the note `sextant search` names. `sextant uninstall` removes the whole corpus.",
+    "update": "Facts are plain Markdown: edit the line in the note `sextant search` names. To upgrade the package: `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`.",
+    "status": "Did you mean `sextant doctor` (health) or `sextant components` (what is installed)?",
+}
+
+
+def _make_redirect(name: str, sentence: str):
+    def _redirect() -> None:
+        console.print(f"[yellow]No such command '{name}'.[/yellow] {sentence}")
+        raise typer.Exit(2)
+    _redirect.__name__ = f"_redirect_{name}"
+    _redirect.__doc__ = sentence
+    return _redirect
+
+
+for _name, _sentence in _REDIRECTS.items():
+    if _name not in {c.name for c in app.registered_commands}:
+        app.command(_name, hidden=True)(_make_redirect(_name, _sentence))
+

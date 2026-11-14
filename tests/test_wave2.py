@@ -621,6 +621,7 @@ def test_web_and_brain_module_entry_serve_the_configured_app_object(monkeypatch)
     monkeypatch.setattr(web_app.app, "add_middleware", lambda *a, **k: None)
     monkeypatch.setattr(brain.app, "add_middleware", lambda *a, **k: None)
     monkeypatch.setattr(web_app, "WEB_HOST", "127.0.0.1")
+    monkeypatch.setattr(web_app, "_port_free", lambda *_: True)  # the pre-bind check (MN54) would see the machine's live dashboard on the default port
     monkeypatch.setattr(web_app, "API_KEY", "")
     monkeypatch.setattr(sys, "argv", ["sextant-web", "--no-auth"])
     web_app.main()

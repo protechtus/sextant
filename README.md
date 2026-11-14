@@ -12,7 +12,7 @@
 > Every LLM session should start with the context of every previous session -- without manual priming.
 
 ```text
-python -m venv .venv                                  # then activate it: . .venv/bin/activate  (PowerShell: .venv\Scripts\Activate.ps1)
+python -m venv .venv                                  # then activate it: . .venv/bin/activate  (Git Bash on Windows: . .venv/Scripts/activate; PowerShell: .venv\Scripts\Activate.ps1)
 pip install git+https://github.com/protechtus/sextant
 sextant init                                          # a corpus (plain Markdown) and a state dir
 sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it
@@ -53,7 +53,7 @@ machines; if that has never bothered you, the built-in is the right call.
 - 30 MCP tools -- memory read/write, hybrid search (keyword full-text search fused with local semantic embeddings), temporal knowledge graph, tickets, project state
 - Local Brain -- a background task agent running on Ollama (a free local-model runtime; any OpenAI-compatible server works too) with a durable task queue, worker leases, and retries
 - Telegram bot for full mobile control; scheduled nightly memory-hygiene jobs
-- Session hooks for Claude Code (other clients get the same priming text from `sextant-session-start` to paste into their instructions file, and the MCP server tells every client's agent to search memory first): automatic priming at session start (`deploy/session_start_hook.json` -- memory highlights and open work injected before your first message, read-only, safe to enable immediately) and summarization at session end (`deploy/stop_hook.json` -- activates once you enable background writes with `ATLAS_AUTONOMOUS=on`; inert until then, and the summary itself needs a reachable model: Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`)
+- Session hooks for Claude Code (other clients get the same priming text from `sextant-session-start` to paste into their instructions file, and the MCP server tells every client's agent to search memory first): automatic priming at session start (`deploy/session_start_hook.json` -- your identity notes, house rules, the clock and the current project's note injected before your first message, read-only, safe to enable immediately; facts saved with `sextant remember` come back through search, not through the hook) and summarization at session end (`deploy/stop_hook.json` -- activates once you enable background writes with `ATLAS_AUTONOMOUS=on`; inert until then, and the summary itself needs a reachable model: Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`)
 - Thousands of automated tests, run in CI on Linux, macOS, and Windows on every push
 
 ## What it does

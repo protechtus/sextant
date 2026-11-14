@@ -102,6 +102,7 @@ def run(args: Sequence[str], cwd: Path | str | None = None, *, timeout: float = 
         **kwargs) -> subprocess.CompletedProcess:
     """subprocess.run for git with every config-driven exec path neutralized."""
     kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("stdin", subprocess.DEVNULL)  # a git child that inherits the MCP stdio pipe hangs until the timeout (MN53: every write 5 s, the guard failed open)
     kwargs.setdefault("text", True)
     if kwargs.get("text"):
         kwargs.setdefault("encoding", "utf-8")

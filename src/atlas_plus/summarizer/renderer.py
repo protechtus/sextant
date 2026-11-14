@@ -24,7 +24,15 @@ def _atomic_write(path: Path, text: str) -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        import time as _time
+        for _attempt in range(6):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if _attempt == 5:
+                    raise
+                _time.sleep(0.05 * (_attempt + 1))  # a scanner holding the file for a moment (Windows sharing violation: MN51)
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -53,7 +61,8 @@ def _version_file(path: Path) -> Path | None:
     return dest
 
 
-_MARKER_RE_TMPL = r"<!-- session:{sid}(?: turns:(\d+))?( partial:1)? -->"  # `partial:1` = a chunk was rejected: the next Stop retries
+_MARKER_RE_TMPL = r"<!-- session:{sid}(?: turns:(\d+))?(?: partial:(\d+))? -->"  # `partial:N` = a chunk was rejected N times: retried at the next Stop while N < 3 (MN49: an unsummarisable chunk was retried for ever)
+_PARTIAL_RETRIES = 3
 
 
 def find_session_entry(sessions_dir: Path, safe_id: str, days: int = 3):
@@ -71,7 +80,8 @@ def find_session_entry(sessions_dir: Path, safe_id: str, days: int = 3):
         except OSError:
             continue
         if m:
-            return f, (0 if m.group(2) else int(m.group(1) or 0))  # a partial entry is always retried
+            _partial = int(m.group(2) or 0)
+            return f, (0 if 0 < _partial < _PARTIAL_RETRIES else int(m.group(1) or 0))  # a partial entry is retried at the next Stop, at most twice without new turns (MN49, MN51)
     return None
 
 
@@ -81,7 +91,7 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     section, is left alone (MN37: a user's notes that quoted the marker were deleted). The prefix must
     end the id (`<!-- session:abc` never matches `abc-def`: AG44)."""
     import re as _re
-    pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:1)? -->\n", _re.M)
+    pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:\d+)? -->\n", _re.M)
     m = None
     for cand in pat.finditer(text):
         # a match inside a fenced code block is a user's quotation, not the entry (AG50: the quoted pair was cut)
@@ -93,6 +103,14 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     start = m.start()
     end = text.find("\n## ", m.end())
     end = len(text) if end == -1 else end + 1
+    # the entry written since MN49 ends with `<!-- end session:ID -->`: removal stops there, so a line the user typed
+    # under the entry survives the refresh (it was deleted with the entry: MN49, MN51)
+    _sid = marker_prefix.split("session:", 1)[1] if "session:" in marker_prefix else ""
+    if _sid:
+        _em = _re.compile(r"^<!-- end session:" + _re.escape(_sid) + r" -->[ \t]*\n?", _re.M)
+        _m2 = _em.search(text, m.end(), end)
+        if _m2:
+            end = _m2.end()
     return (text[:start] + text[end:]).lstrip("\n")
 
 
@@ -122,6 +140,21 @@ def _remove_entry_elsewhere(current: Path, marker_prefix: str, days: int = 3) ->
                     _atomic_write(f, "")
 
 
+def _day_log_unmerged(session_file) -> bool:
+    """True when git holds the day log as unmerged (the corpus is a repo and the file is in `ls-files -u`)."""
+    import subprocess as _sp
+    root = Path(session_file).parent.parent
+    if not (root / ".git").exists():
+        return False
+    try:
+        rel = Path(session_file).resolve().relative_to(root.resolve()).as_posix()
+        out = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z", "--", rel], cwd=str(root), capture_output=True,
+                      stdin=_sp.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=5).stdout
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(out.strip())
+
+
 def _inside_fence(text: str, pos: int) -> bool:
     """True when `pos` lies inside a CommonMark code fence. A fence opens with three or more backticks or tildes
     indented at most three spaces and closes only on the same character with at least the opening length; a
@@ -142,7 +175,7 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
     entry ends at the next blank line OR the next line that starts a new entry (a date, a heading),
     so hand-written lines appended without a blank line survive (MN37)."""
     import re as _re
-    pat = _re.compile(r"^[^\n]+\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:1)? -->\n", _re.M)
+    pat = _re.compile(r"^[^\n]+\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:\d+)? -->\n", _re.M)
     m = pat.search(text)
     if not m:
         return text
@@ -181,7 +214,25 @@ def remove_updates_entry(text: str, marker_prefix: str) -> str:
     return text[:start] + text[end:]
 
 
-def _write_lock(timeout: float = 60.0, stale: float = 120.0):
+def partial_count(sessions_dir: Path, safe_id: str, days: int = 3) -> int:
+    """How many Stops in a row have written this session's entry as partial (0 when the entry is clean or absent)."""
+    import re as _re
+    try:
+        dated = sorted(sessions_dir.glob("20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"))[-days:]
+    except OSError:
+        return 0
+    pat = _re.compile(_MARKER_RE_TMPL.format(sid=_re.escape(safe_id)))
+    for f in reversed(dated):
+        try:
+            m = pat.search(f.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if m:
+            return int(m.group(2) or 0)
+    return 0
+
+
+def _write_lock(timeout: float = 60.0, stale: float = 60.0):
     """AG58: one writer at a time across SESSIONS (`<state>/summarizer/write.lock`). Four sessions stopping
     together each read the day's log, prepended and replaced it: one died on a Windows PermissionError with its
     output discarded (no event) and the others could overwrite each other's entry."""
@@ -209,6 +260,10 @@ def _write_lock(timeout: float = 60.0, stale: float = 120.0):
                     except OSError:
                         pass
                     if _time.time() > deadline:
+                        try:
+                            lock.unlink()  # a crashed holder's lock is broken after the wait, not left for the next Stop to wait on again (MN51, MN49)
+                        except OSError:
+                            pass
                         break  # never block the hook for ever: write without the lock
                     _time.sleep(0.05 + random.random() * 0.1)
         except OSError:
@@ -269,6 +324,8 @@ def _write_locked(session_file, session_log_text, updates_text, replace_session,
         from atlas_plus.mcp.memory_server.routing import has_conflict_markers as _hcm
         if _hcm(existing):
             raise RuntimeError(f"{session_file.name} holds git conflict markers (two people summarised the same day): resolve the merge first; this summary was not written")  # the writer wrote above the markers (AG57)
+        if _day_log_unmerged(session_file):
+            raise RuntimeError(f"{session_file.name} is unmerged in git (resolve it and `git add` it first); this summary was not written")  # markers hand-deleted but not staged (MN53)
         if replace_session:
             # Claude Code fires Stop after every reply, so the session's entry is refreshed in place
             # when it grew (MN33: the first summary froze and every later Stop was skipped)

@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+import sys
 import re
 import re as _re
 import signal
@@ -1554,7 +1555,7 @@ async def session_expired_page():
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sextant: session expired</title>"
         "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#cbd5e1;padding:3rem;max-width:40rem}"
         "code{color:#67e8f9}</style></head><body><h1>Session expired</h1>"
-        "<p>The dashboard restarted, its key was rotated, or this session reached its 12-hour limit.</p>"
+        "<p>You have not signed in from this browser yet, or the dashboard restarted, its key was rotated, or the session reached its 12-hour limit.</p>"
         "<p>Open it again with your key: <code>http://&lt;host&gt;:&lt;port&gt;/?key=&lt;ATLAS_WEB_API_KEY&gt;</code></p>"
         "<p>Sessions are held in memory on purpose. Saved notes and tickets are untouched; text typed in the editor but not saved is gone with the page.</p></body></html>"
     )
@@ -1921,7 +1922,7 @@ async def routing_stats_panel(request: Request):
         r.raise_for_status()
         data = r.json()
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-slate-500 text-xs">Routing stats unavailable: {type(exc).__name__}</div>')
+        return HTMLResponse(f'<div class="text-slate-500 text-xs">Routing stats unavailable: Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)} (start it with <code>sextant-brain</code>, or set ATLAS_BRAIN_URL).</div>')  # the bare exception name said nothing (MN50)
 
     smart = data.get("smart_routing", False)
     local = data.get("local_only", False)
@@ -4622,6 +4623,7 @@ async def ws_chat(websocket: WebSocket, session_id: str):
         client_ip, cf_ip = _client_ip(websocket)
         _ws_loopback = (not cf_ip) and client_ip in _LOOPBACK_HOSTS
         if not _ws_loopback and AUTH_FAILURES.is_rate_limited(cf_ip or client_ip):
+            _warn_lockout(cf_ip or client_ip, client_ip)  # the WebSocket path refused silently while the HTTP path logged (MN50)
             await websocket.close(code=4429)
             return
         if "key" in websocket.query_params:
@@ -4844,6 +4846,9 @@ button{{font-family:inherit;cursor:pointer}}
 .palette-item{{padding:.4rem 1rem;cursor:pointer;font-size:.75rem;color:var(--text-m);display:flex;align-items:center;gap:.75rem}}
 .palette-item:hover,.palette-item.active{{background:var(--border);color:var(--text)}}
 .palette-item .k{{color:var(--text-d);font-size:.65rem;margin-left:auto}}
+/* the Memory search box shares a 288 px column with four buttons: 26 px wide on every desktop (MN50); it takes its own row */
+div:has(> #mem-q){{flex-wrap:wrap}}
+#mem-q{{flex:1 1 100%!important;min-width:0}}
 @media(max-width:768px){{
   body{{height:100dvh}}
   #tab-dash{{flex-direction:column!important}}
@@ -4874,7 +4879,7 @@ button{{font-family:inherit;cursor:pointer}}
 }}
 /* phone (AG45): the ticket, task and inbox detail panes were 320 px fixed beside a 0 px list;
    the tab bar scrolled sideways with no sign of it */
-@media (max-width: 640px) {{
+@media (max-width: 768px) {{  /* through tablet portrait: at 641-768 px the 768 block made the detail pane full width beside a 0 px list (MN50) */
   div:has(> .detail-panel), div:has(> #inbox-detail) {{ flex-wrap: wrap; }}
   .detail-panel, #inbox-detail {{ width: 100% !important; flex: 1 1 100% !important; }}
   nav, .tabs, [role=tablist] {{ flex-wrap: wrap; }}
@@ -6780,6 +6785,18 @@ async def stop(request: Request):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _port_free(host: str, port: int) -> bool:
+    """True when a listening socket can be bound there right now (checked before uvicorn starts: MN54)."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+        return True
+    except OSError:
+        return False
+
+
 def main() -> None:
     """Entry point for `python -m atlas_plus.web.app`.
 
@@ -6844,6 +6861,10 @@ def main() -> None:
     # The app OBJECT, not an import string: `python -m atlas_plus.web.app --no-auth` imports
     # a second module instance whose _ALLOW_NO_AUTH is still False and every route 503s
     # (wave-2 2026-11-09, SEC-02). The console script and this path serve the same instance.
+    if not _port_free(WEB_HOST, WEB_PORT):
+        print(f"Port {WEB_PORT} is already in use on {WEB_HOST}: another dashboard, or another program. Set ATLAS_WEB_PORT to a free port "
+              f"(GETTING-STARTED, Troubleshooting: port already in use).", file=sys.stderr)  # the raw uvicorn bind error named nothing (MN54)
+        raise SystemExit(3)
     uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, reload=False, access_log=False, proxy_headers=False)
 
 

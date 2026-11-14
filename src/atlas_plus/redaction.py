@@ -74,7 +74,8 @@ _KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|clien
              r"|access[_-]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
              r"|パスワード|トークン|シークレット|秘密鍵|秘密|鍵|APIキー"
              r"|비밀번호|비밀|비밀키|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰|暗証番号"
-             r"|รหัสผ่าน|รหัสลับ|โทเคน|पासवर्ड|टोकन|गुप्त[ _]कुंजी"
+             r"|รหัสผ่าน|รหัสลับ|โทเคน|คีย์[ _]API|กุญแจ[ _]API|पासवर्ड|टोकन|गुप्त[ _]कुंजी|एपीआई[ _]कुंजी|कूटशब्द"
+             r"|API-Schlüssel|Geheimnis|מפתח[ _]API|קוד[ _]גישה|توکن|کلید[ _]API|رمز[\u200c _]عبور|گذرواژه|رمز|سرّ?"  # MN52
              r"|пароль|токен|секрет|passwort|kennwort|mot[ _]de[ _]passe|contraseña|contrasena|senha|şifre"  # AG55: Russian, German, French, Spanish, Portuguese, Turkish
              r"|رمز[ _]عبور|گذرواژه|کلمه[ _]عبور" + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
@@ -207,14 +208,14 @@ _URL_CRED_RE = re.compile(r"(://[^/\s:@]+:)([^\s/]+)(@)(?=[^\s/@]+)")  # user:pa
 # ---- AG55 (sweep 18): shapes the key=value rule cannot see ------------------------------------------------------
 _NAME_ASCII = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|passphrase|client[_-]?secret|private[_-]?key"
                r"|access[_-]?key|auth[_-]?token|credentials?)")
-_NAME_FULL = r"(?:(?:[A-Za-z0-9]{1,32}[_-]){0,4}" + _NAME_ASCII + r"(?:[_-]?[A-Za-z0-9]{1,8})?)"
+_NAME_FULL = r"(?:(?:[A-Za-z0-9]{1,32}[_.-]){0,4}" + _NAME_ASCII + r"(?:[_-]?[A-Za-z0-9]{1,8})?)"  # dotted names too: `spring.datasource.password` (MN49)
 _ANY_NAME = r"(?:" + _NAME_FULL + r"|" + _KV_NAMES[3:-1] + r")"
 _VAL = r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[^\s'\"<>]{6,})"
 # Kubernetes / compose / CI env lists: `- name: API_TOKEN` then `value: V` on the next line
 _K8S_RE = re.compile(r"(?i)(^[ \t]*-?[ \t]*name[ \t]*:[ \t]*[\"']?(?:[A-Za-z0-9]{1,32}[_.-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX
                      + r"[\"']?[ \t]*\r?\n[ \t]*value[ \t]*:[ \t]*)" + _VAL, re.M)
 # .netrc (`machine h login u password V`, also newline separated) and `default login u password V`
-_NETRC_RE = re.compile(r"(?i)(\blogin[ \t]+\S+(?:\s+account\s+\S+)?\s+password[ \t]+)(\S{4,})")
+_NETRC_RE = re.compile(r"(?im)^[ \t]*((?:machine[ \t]+\S+[ \t]+|default[ \t]+)?login[ \t]+\S+(?:\s+account\s+\S+)?\s+password[ \t]+)(\S{4,})")  # a .netrc line, not prose about a login page (MN49)
 # .pgpass: host:port:database:user:password on a line of its own
 _PGPASS_RE = re.compile(r"(?m)^((?=[^:\s]*[A-Za-z.*])[^:\s#]{1,253}:(?:\d{1,5}|\*):[^:\s]{1,63}:[^:\s]{1,63}:)([^\s]{8,})(?=[ \t]*\r?$)")
 # npmrc / pip.conf style underscore keys: `//registry/:_authToken=V`, `_password=V`, `_auth=V`
@@ -235,7 +236,7 @@ _COOKIE_ATTRS = frozenset({"path", "domain", "expires", "max-age", "samesite", "
 _COOKIE_PAIR_RE = re.compile(r"(?<![^\s;])([A-Za-z0-9_.%-]{1,64}=)([^\s;]{6,})")
 _WEBHOOK_RE = re.compile(r"(hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9]{6,}/[A-Za-z0-9]{6,}/)([A-Za-z0-9]{12,})|(discord(?:app)?\.com/api/webhooks/\d{6,}/)([A-Za-z0-9_-]{20,})")
 _AZURE_RE = re.compile(r"(?i)\b((?:AccountKey|SharedAccessKey|SharedAccessSignature|client_secret)=)([A-Za-z0-9+/%=_.-]{16,})|([?&;]sig=)([A-Za-z0-9%+/=_-]{16,})")
-_MYSQL_P_RE = re.compile(r"(\b(?:mysql|mysqldump|mysqladmin|mariadb|mysqlsh)\b[^\n|;&]{0,200}?[ \t]-p)([^\s\-][^\s]{2,})")
+_MYSQL_P_RE = re.compile(r"((?:^|[|;&(`]|\$\()[ \t]*(?:sudo[ \t]+)?(?:mysql|mysqldump|mysqladmin|mariadb|mysqlsh)\b[^\n|;&]{0,200}?[ \t]-p)([^\s\-][^\s]{2,})", re.M)  # the command itself, not `*.mysql` in a find (MN49: `-print` was masked)
 _DOCKER_P_RE = re.compile(r"(\b(?:docker|podman|nerdctl)[ \t]+login\b[^\n|;&]{0,200}?[ \t](?:-p|--password)[ =]+)([^\s\-]\S*)")
 _SSHPASS_RE = re.compile(r"(\bsshpass[ \t]+(?:-\w+[ \t]+)*-p[ \t]*)(?!-)(\S+)")
 _TOKEN_SHAPES_RE = re.compile(r"\b(npm_[A-Za-z0-9]{36}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|whsec_[A-Za-z0-9]{20,}|rk_live_[A-Za-z0-9]{10,}|shp(?:at|ss|ca)_[a-f0-9]{32})")
@@ -244,12 +245,25 @@ _PROSE_RE = re.compile(r"(?i)\b((?:(?:my|your|the|his|her|their|our|new|old|temp
 
 
 # the same sentence in Russian, German, French, Spanish, Portuguese, Turkish, Persian, Japanese, Korean, Chinese (`mein Passwort ist V`, `パスワードは V`)
+_PROSE_I18N2_RE = re.compile(
+    r"(?i)("
+    r"(?:รหัสผ่าน|โทเคน)(?:ของ(?:ฉัน|เรา|ผม))?คือ[ \t]*"                                        # Thai: my password is
+    r"|(?:मेरा|हमारा|मेरी)?[ \t]*(?:पासवर्ड|टोकन|कूटशब्द)[ \t]+(?:है[ \t]+)?"                     # Hindi: mera password (hai) V (hai)
+    r"|" + _marked("كلمة", _AR_MARKS) + r"[ \t]" + _marked("السر", _AR_MARKS) + r"(?:[ \t]" + _marked("الخاصة", _AR_MARKS) + r"[ \t]" + _marked("بي", _AR_MARKS) + r")?[ \t]" + _marked("هي", _AR_MARKS) + r"[ \t]*"
+    r"|ה?" + _marked("סיסמ", _HE_MARKS) + r"[אה][\u0591-\u05c7]*(?:[ \t]שלי)?[ \t]היא[ \t]*"                 # Hebrew: ha-sisma sheli hi V
+    r"|(?:رمز[\u200c \t]عبور|گذرواژه|توکن)(?:[ \t]من)?[ \t]+"                                  # Persian: ramz-e obur(-e man) V ast
+    r"|(?:мой[ \t]+|наш[ \t]+)?(?:пароль|токен)[ \t]+"                                        # Russian without a dash: moy parol V
+    r"|(?:mein|das|unser)[ \t]+passwort[ \t]+(?:lautet|ist)[ \t]+"                            # German: mein Passwort lautet V
+    r"|(?:meu|minha|o|a)[ \t]+(?:token|senha|chave)[ \t]+(?:é[ \t]+)?"                        # Portuguese: meu token V
+    r")([!-~]{8,})"
+)
 _PROSE_I18N_RE = re.compile(r"(?i)((?:пароль|токен|passwort|kennwort|mot[ \t]de[ \t]passe|contraseña|contrasena|senha|şifre|رمز[ \t]عبور|パスワード|비밀번호|密码)(?:[ \t]+(?:мой|моя|mein|mon|mi|minha|من|my))?(?:[ \t]+(?:is|est|ist|es|é|-|—|است|:)|[はがは는은是:：])[ \t]*)([!-~]{8,})")
 
 
 def _secretish(v: str) -> bool:
     """8+ chars, two or more of lower/upper/digit/symbol, and a digit, symbol or inner capital; not a path, URL or code."""
-    if len(v) < 8 or _CODE_VALUE_RE.match(v) or _PATH_VALUE_RE.match(v) or "://" in v:
+    v = v.strip("\"'`.,;:!?()[]{} ")  # `the token is "expired"`: the quotes made a prose word look mixed-class (MN49)
+    if len(v) < 8 or _CODE_VALUE_RE.match(v) or _PATH_VALUE_RE.match(v) or "://" in v or _PROSE_WORD_RE.search(v.lower()):
         return False
     if re.match(r"\d{4}-\d{2}-\d{2}", v) or re.fullmatch(r"[A-Za-z]+(?:-[A-Za-z]+)+", v):
         return False  # a date or a hyphenated English compound (`out-of-date`, `case-sensitive`) is prose
@@ -335,9 +349,9 @@ def _extra_redact(out: str) -> str:
     if "ookie" in out:
         out = _COOKIE_RE.sub(_cookie_mask, out)
     if "hooks." in out or "webhooks" in out:
-        out = _WEBHOOK_RE.sub(lambda m: (m.group(1) or m.group(3)) + "[REDACTED]", out)
+        out = _WEBHOOK_RE.sub(lambda m: m.group(0) if _PLACEHOLDER_RE.search(m.group(2) or m.group(4) or "") else (m.group(1) or m.group(3)) + "[REDACTED]", out)
     if "=" in out:
-        out = _AZURE_RE.sub(lambda m: (m.group(1) or m.group(3)) + "[REDACTED]", out)
+        out = _AZURE_RE.sub(lambda m: m.group(0) if _PLACEHOLDER_RE.search(m.group(2) or m.group(4) or "") else (m.group(1) or m.group(3)) + "[REDACTED]", out)  # `AccountKey=xxxx` is a placeholder (MN49)
     if " -p" in out:
         out = _MYSQL_P_RE.sub(r"\1[REDACTED]", out)
         out = _DOCKER_P_RE.sub(r"\1[REDACTED]", out)
@@ -345,6 +359,7 @@ def _extra_redact(out: str) -> str:
     out = _TOKEN_SHAPES_RE.sub("[REDACTED:provider-key]", out)
     out = _sub_value(_PROSE_RE, out, 2, ok=_secretish)
     out = _sub_value(_PROSE_I18N_RE, out, 2, ok=_secretish)
+    out = _sub_value(_PROSE_I18N2_RE, out, 2, ok=_secretish)  # the word orders of Thai, Hindi, Arabic, Hebrew, Persian, bare Russian, German `lautet`, Portuguese (MN52)
     return out
 
 

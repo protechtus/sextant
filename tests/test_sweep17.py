@@ -567,3 +567,189 @@ def test_day_log_with_markers_is_refused_by_the_writer(tmp_path, monkeypatch):
         renderer.write_outputs("## new\n<!-- session:zzz turns:2 -->\nbody\n", "x", "2026-11-14", session_marker="<!-- session:zzz")
     assert "conflict markers" in str(e.value)
 
+
+# ---------------------------------------------------------------- MN54: the newcomer
+def test_guessed_commands_redirect_in_one_bounce():
+    from typer.testing import CliRunner
+    from atlas_plus.cli import app
+
+    r = CliRunner()
+    res = r.invoke(app, ["install"])
+    assert res.exit_code == 2 and "sextant init" in res.output and "uninstall" in res.output
+    for guess in ("save", "store"):
+        res = r.invoke(app, [guess])
+        assert res.exit_code == 2 and "remember" in res.output, guess
+    assert "remember" in r.invoke(app, ["recall"]).output or "search" in r.invoke(app, ["recall"]).output
+
+
+def test_report_before_init_refuses_and_port_check_and_expired_text(tmp_path, monkeypatch):
+    import socket
+    from typer.testing import CliRunner
+    from atlas_plus.curation import cli as ccli
+    from atlas_plus.mcp.memory_server import routing as _routing
+    from atlas_plus.web import app as web
+
+    monkeypatch.setattr(_routing, "MEMORY_ROOT", tmp_path / "nope", raising=False)
+    res = CliRunner().invoke(ccli.app, ["report"])
+    assert res.exit_code == 1 and not (tmp_path / "nope").exists()
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+        assert not web._port_free("127.0.0.1", port)
+    assert web._port_free("127.0.0.1", 0)
+    assert "You have not signed in from this browser yet" in inspect.getsource(web)
+
+
+# ---------------------------------------------------------------- MN53
+def test_git_children_never_inherit_stdin_and_delegate_propagates_rc(monkeypatch):
+    import subprocess
+    import typer
+    from atlas_plus import cli, gitsafe
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", list(sys.argv))  # _delegate rewrites argv[0]; a leaked 'sextant doctor' flipped the banner for later tests
+    gitsafe.run(["--version"])
+    assert seen.get("stdin") == subprocess.DEVNULL
+    with pytest.raises(typer.Exit) as e:
+        cli._delegate(lambda: 1, "sextant doctor", ["--strict"])
+    assert e.value.exit_code == 1
+    cli._delegate(lambda: 0, "sextant doctor", [])                                # a clean run raises nothing
+
+
+def test_verify_never_follows_a_redirect_with_the_token():
+    import http.server
+    import threading
+    from atlas_plus import roundtrip
+
+    captured = []
+
+    class Target(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            captured.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+
+        def do_GET(self):
+            self.do_POST()
+
+        def log_message(self, *a):
+            pass
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(301)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/elsewhere")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    target = http.server.HTTPServer(("127.0.0.1", 0), Target)
+    redir = http.server.HTTPServer(("127.0.0.1", 0), Redirector)
+    for srv in (target, redir):
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        skipped: list[str] = []
+        rpc, close = roundtrip._http_rpc(f"http://127.0.0.1:{redir.server_address[1]}/mcp", "SECRET-TOKEN-1", 5, skipped)
+        with pytest.raises(RuntimeError) as e:
+            rpc("initialize", {})
+        assert "redirected to" in str(e.value) and "token was not sent" in str(e.value)
+        assert captured == []                                                     # nothing reached the redirect target
+    finally:
+        target.shutdown()
+        redir.shutdown()
+
+
+# ---------------------------------------------------------------- MN49, MN51
+def test_search_keeps_hindi_vowel_signs_inside_words(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.mcp.memory_server import fts
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "search.sqlite", raising=False)
+    monkeypatch.setattr(fts, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    memory_remember("reference:hindi-din", "आज का दिन अच्छा था", source="agent")
+    memory_remember("reference:hindi-daan", "उसने दान दिया", source="agent")
+    fts.rebuild(force=True)
+    paths = [r["path"] for r in fts.search("दिन", limit=5)]
+    assert any("hindi-din" in p for p in paths) and not any("hindi-daan" in p for p in paths)   # MN49: the donation note came first
+
+
+def test_day_log_hand_line_survives_and_partial_retry_is_capped(tmp_path):
+    from atlas_plus.summarizer.renderer import find_session_entry, remove_session_entry
+
+    entry = "## 2026-11-14 - work\n<!-- session:abc turns:12 -->\nWorked on: x\n<!-- end session:abc -->\n"
+    text = entry + "MY OWN LINE under the entry\n\n## 2026-11-13 - older\nbody\n"
+    out = remove_session_entry(text, "<!-- session:abc")
+    assert "MY OWN LINE under the entry" in out and "Worked on: x" not in out
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    for n, want in ((1, 0), (2, 0), (3, 12), (0, 12)):
+        marker = f"<!-- session:abc turns:12 partial:{n} -->" if n else "<!-- session:abc turns:12 -->"
+        (sessions / "2026-11-14.md").write_text(f"## t\n{marker}\nbody\n", encoding="utf-8")
+        assert find_session_entry(sessions, "abc")[1] == want, n
+
+
+def test_facts_rewording_vs_correction_and_redaction_fixes(tmp_path, monkeypatch):
+    _pin_corpus(tmp_path, monkeypatch)
+    from atlas_plus.curation import suggest_facts as sf
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+    from atlas_plus.redaction import redact
+
+    memory_remember("reference:standup", "The daily standup is at 10am in room B", source="agent")
+    assert sf._fact_already_there("reference:standup", "the daily standup is at 10am in room B", 0.8)          # the same fact
+    assert sf._fact_already_there("reference:standup", "Daily standup is at 10am in the room B", 0.8)          # function words differ: a rewording
+    assert not sf._fact_already_there("reference:standup", "The daily standup is at 10am in room C", 0.8)      # a content word differs: a correction (MN49)
+    v = "Hx9kQ2mZp77Qq"
+    assert v not in redact(f'<property name="spring.datasource.password" value="{v}"/>')
+    assert redact("AccountKey=xxxxxxxxxxxxxxxxxxxxxxxx") == "AccountKey=xxxxxxxxxxxxxxxxxxxxxxxx"
+    for s in ('the token is "expired"', "Your password is 'incorrect'.", "The login page password field is required.",
+              "find /var/lib -name '*.mysql' -print", "After login type password twice."):
+        assert redact(s) == s, s
+    assert v not in redact(f"mysql -u root -p{v} shop") and v not in redact(f"machine h login u password {v}")
+
+
+def test_empty_stdin_payload_is_refused(monkeypatch):
+    import io
+    from atlas_plus.summarizer import hook_entry
+
+    hook_entry._PAYLOAD["seen"] = False
+    hook_entry._PAYLOAD["empty"] = False
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    assert hook_entry._transcript_root_from_payload() == ""
+    assert hook_entry._payload_seen() and hook_entry._PAYLOAD["empty"]                                  # MN51: it summarised the whole day
+
+
+# ---------------------------------------------------------------- MN52
+def test_sara_am_recomposed_and_more_key_names():
+    from atlas_plus.mcp.memory_server import fts
+    from atlas_plus.redaction import redact
+
+    assert "\u0e33" in fts._norm_index_text("\u0e19\u0e49\u0e33") and "\u0e4d\u0e32" not in fts._norm_index_text("\u0e17\u0e33")
+    assert "\u0e33" in fts._prepare_query("\u0e17\u0e33")
+    v = "Xk9#mQ2vLp7Zt"
+    for s in (f"API-Schlüssel={v}", f"Geheimnis: {v}", f"คีย์ API={v}", f"एपीआई कुंजी: {v}", f"कूटशब्द={v}", f"מפתח API: {v}", f"קוד גישה={v}",
+              f"توکن: {v}", f"کلید API={v}", f"رمز\u200cعبور={v}", f"رمز: {v}", f"سرّ={v}",
+              f"รหัสผ่านของฉันคือ {v}", f"मेरा पासवर्ड {v} है", f"मेरा पासवर्ड है {v}", f"كلمة السر الخاصة بي هي {v}", f"הסיסמה שלי היא {v}",
+              f"رمز عبور من {v} است", f"мой пароль {v}", f"Mein Passwort lautet {v}", f"meu token {v}"):
+        assert v not in redact(s), s
+    for s in ("รหัสผ่านของฉันคือ ความลับ", "मेरा पासवर्ड गलत है", "мой пароль неверный", "Mein Passwort lautet geheim", "meu token expirou"):
+        assert redact(s) == s, s
+
+
+# ---------------------------------------------------------------- MN50 (CSS only reachable by a browser lane; the rule text is pinned here, the next browser lane measures it)
+def test_memory_search_row_and_tablet_wrap_in_css():
+    from atlas_plus.web import app as web
+
+    src = inspect.getsource(web)
+    assert "div:has(> #mem-q){{flex-wrap:wrap}}\n#mem-q{{flex:1 1 100%!important;min-width:0}}\n@media(max-width:768px)" in src
+    assert "@media (max-width: 768px) {{  /* through tablet portrait" in src
+    assert "Routing stats unavailable: Brain not running or not reachable at" in src
+

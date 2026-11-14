@@ -113,7 +113,7 @@ NON_DERIVED_STATE = (
     ("brain", "Brain working data"),
     ("intake", "intake provenance ledger (never trimmed)"),
     ("sync", "sync device registry"),
-    ("reports", "research reports"),
+    ("reports", "curation and research reports"),
     ("logs", "activity log (only copy)"),
     ("cli-history", "Brain CLI chat history (only copy)"),
     ("security", "security audit reports"),

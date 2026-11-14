@@ -42,6 +42,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
@@ -131,6 +133,14 @@ def _sse_payloads(content_type: str, body: str) -> list[str]:
     return [body] if body.strip() else []
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None  # a 3xx surfaces as HTTPError and is named; the token is never sent elsewhere (MN53)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect())
+
+
 def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
     """A JSON-RPC sender over Streamable HTTP (one POST per message, the session id echoed),
     so an HTTP install can be proven from the client machine (AG4, pipeline sweep 2026-11-11)."""
@@ -157,7 +167,7 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
         req = urllib.request.Request(url, data=json.dumps(msg).encode("utf-8"), headers=_headers(),
                                      method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _OPENER.open(req, timeout=timeout) as resp:  # never follows a redirect: urllib carried the bearer token to the redirect target (MN53)
                 sid = resp.headers.get("mcp-session-id")
                 if sid:
                     state["session"] = sid
@@ -172,15 +182,16 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
                 hint = " (this source is locked out after failed attempts; wait, or see ATLAS_MCP_TRUSTED_PEERS)"
             elif exc.code == 404:
                 hint = " (the MCP path is /mcp, without a trailing slash)" if url.rstrip("/") != url else " (the MCP path is /mcp)"
-            elif exc.code in (301, 302, 307, 308):
-                hint = " (the server redirected: check the path, /mcp without a trailing slash)"
+            elif exc.code in (301, 302, 303, 307, 308):
+                _loc = (exc.headers.get("Location") or "?")[:120]
+                hint = f" (the server redirected to {_loc}; the token was not sent there: check the URL, the MCP path is /mcp without a trailing slash)"
             elif exc.code >= 500 and "<html" in detail.lower():
                 hint = " (this does not look like an MCP server: the reply is an HTML page)"
                 detail = detail.split("\n", 1)[0][:80]
             raise RuntimeError(f"{method}: HTTP {exc.code}{hint}: {detail}") from exc
         except (urllib.error.URLError, OSError) as exc:
             _s = str(exc)
-            if "WRONG_VERSION_NUMBER" in _s or "SSL" in _s.upper() and "wrong version" in _s.lower():
+            if "WRONG_VERSION_NUMBER" in _s or "record layer failure" in _s or ("[SSL" in _s and "CERTIFICATE" not in _s.upper()):  # OpenSSL words differ per build (MN53: Windows says record layer failure)
                 raise RuntimeError(f"{method}: {url} answered plain HTTP to a TLS handshake: use http:// for this server, or put it behind a TLS proxy") from exc  # AG56
             if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower():
                 raise RuntimeError(f"{method}: {url} presented a certificate this client does not trust (a private CA or `tls internal`): point SSL_CERT_FILE at the CA certificate") from exc
@@ -339,7 +350,10 @@ def _main_lines(argv: list[str]) -> int:
     fact = args.fact or f"Sextant install verified on {date.today().isoformat()} at {datetime.now():%H:%M:%S} (sextant verify)."
 
     if args.url and not args.url.lower().startswith(("http://", "https://")):
-        print(f"verify: only http:// and https:// URLs are supported (got {args.url.split(':', 1)[0]}://)", file=sys.stderr)  # an ftp:// URL hung (AG56)
+        if "://" not in args.url:
+            print(f"verify: the URL has no scheme: use http://{args.url} (or https://)", file=sys.stderr)  # MN53
+        else:
+            print(f"verify: only http:// and https:// URLs are supported (got {args.url.split('://', 1)[0]}://)", file=sys.stderr)  # an ftp:// URL hung (AG56)
         return 2
     if args.url:
         skipped_http: list[str] = []

@@ -45,26 +45,29 @@ def _is_unmerged(target: Path) -> bool:
     """True when git holds this path as unmerged (status UU/AA/UD/DU). The list is cached for two seconds
     per process so a burst of writes costs one `git ls-files -u` (AG57)."""
     import time as _time
-    root = Path(MEMORY_ROOT)
+    root = Path(_routing_root())  # the writer's root, not the import-time constant (MN49)
     if not (root / ".git").exists():
         return False
     now = _time.monotonic()
-    if now - _UNMERGED_CACHE["at"] > 2.0:
+    if now - _UNMERGED_CACHE["at"] > 2.0 or _UNMERGED_CACHE.get("root") != str(root):
         try:
             import subprocess as _sp
-            out = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=5).stdout
+            out = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True, stdin=_sp.DEVNULL,
+                          text=True, encoding="utf-8", errors="replace", timeout=5).stdout  # never the server's stdin (MN53)
             paths = frozenset(e.split("\t", 1)[1] for e in out.split("\0") if "\t" in e)
         except Exception:  # noqa: BLE001
             paths = frozenset()
-        _UNMERGED_CACHE.update(at=now, paths=paths)
+        _UNMERGED_CACHE.update(at=now, paths=paths, root=str(root))
     if not _UNMERGED_CACHE["paths"]:
         return False
     try:
         rel = target.resolve().relative_to(root.resolve()).as_posix()
     except Exception:  # noqa: BLE001
         return False
-    return rel in _UNMERGED_CACHE["paths"]
+    hit = rel in _UNMERGED_CACHE["paths"]
+    if hit:
+        _UNMERGED_CACHE["at"] = float("-inf")  # a refusal re-checks git on the next call: `git add` then a write within two seconds was refused again (MN53)
+    return hit
 
 
 def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT) -> str:
@@ -173,11 +176,11 @@ def _find_duplicate(fact: str, written_to: Path) -> Optional[dict]:
 def _same_file_repeat(fact: str, written_to: Path) -> Optional[dict]:
     """The fact's text already stood in this note before the write (two or more copies now)."""
     try:
-        needle = " ".join(fact.split())
+        needle = " ".join(fact.split()).lower()  # case-insensitive (MN53)
         if len(needle) < 8:
             return None
         lines = written_to.read_text(encoding="utf-8", errors="replace").splitlines()
-        hits = sum(1 for ln in lines if needle in " ".join(ln.split()))
+        hits = sum(1 for ln in lines if needle in " ".join(ln.split()).lower())
         if hits >= 2:
             try:
                 rel = written_to.resolve().relative_to(Path(_routing_root()).resolve()).as_posix()

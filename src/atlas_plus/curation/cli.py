@@ -1963,6 +1963,10 @@ def cmd_report(
     dry_run: bool = typer.Option(False, "--dry-run", "-n"),
 ):
     """Generate weekly curation report (no auto-edits)."""
+    from atlas_plus.mcp.memory_server import routing as _routing
+    if not Path(_routing.MEMORY_ROOT).exists():
+        typer.echo(f"No corpus yet at {_routing.MEMORY_ROOT}: run sextant-init first (nothing was created).", err=True)  # a clean-looking report was written for a corpus that did not exist (MN54)
+        raise typer.Exit(1)
     if ":" in scope:
         typer.echo(f"note: --scope is a folder path (reference, reference/obsidian); '{scope}' looks like a remember() route and matches no folder", err=True)  # a silent empty report (MN42)
     from atlas_plus.curation.weekly_report import generate_report

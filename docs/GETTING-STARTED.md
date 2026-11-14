@@ -200,7 +200,8 @@ note is imported under its new name). Every stale corpus copy is named: older
 copies of edited notes and notes that are no longer in the vault. Stale copies
 still show up in search until you move them: `--yes --archive-stale` moves
 them into `archive/` inside the corpus (never deleted; search ignores that
-folder), or move them there by hand. Links are never followed, binary and
+folder), or move them there by hand. Folders whose name starts with a dot (`.obsidian`, `.git`,
+`.trash`, your own `.drafts`) are skipped and not counted. Links are never followed, binary and
 undecodable files are skipped, a top-level `Templates/` folder is skipped,
 non-markdown files (canvas, images, PDFs) are counted but not imported, and
 the first twenty files `--yes` would write are listed. A ChatGPT or claude.ai
@@ -457,7 +458,7 @@ are mangled and the hook refuses the payload; use Git Bash for this test.
 A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
 activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`,
 `summarizer_skipped`, `summarizer_chunk_rejected` when one part of a long session came back unusable and
-the entry says so until the next Stop retries it, and for the facts stage `suggest_facts_failed`,
+the entry says so until the next Stop retries it (twice at most without new turns), `summarizer_dry_run`, and for the facts stage `suggest_facts_failed`,
 `suggest_facts_skipped` and `fact_needs_review`) say what happened; `sextant doctor` has a "Stop hook" block with the
 model, the endpoint and the newest summary. Claude Code fires Stop after every reply, not
 only at the end: the session's entry is written once and then refreshed in place (in the
@@ -578,7 +579,9 @@ still reads the new index if you roll back.
   `identity/*.md` as UTF-8 without a BOM (PowerShell 5.1's `Set-Content -Encoding utf8` adds
   one; it is tolerated now, but `-Encoding ascii` or an editor is safer). Reference facts are not injected automatically; ask for them
   with the search tool or run `atlas-prime <task>`, which adds the facts that match the
-  task words (any scope) and the project note when a word is a project name.
+  task words (any scope) and the project note when a word is a project name. A fact saved with the default
+  scope (`reference:notes`) is therefore found by `sextant search` but is not pasted into every session; save
+  what should always be in context with `--scope identity` or `--scope preference:<topic>`.
 - **`ATLAS_WORKSPACE_ROOT` re-roots everything.** It moves `.memory/` and `.atlas/` too, so
   set it once, before `sextant-init`, or your corpus will appear to vanish. A specific
   variable (`ATLAS_MEMORY_ROOT`, `ATLAS_STATE_DIR`, `ATLAS_PROJECTS_ROOT`) wins over it when

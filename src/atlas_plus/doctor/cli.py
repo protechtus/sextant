@@ -715,7 +715,7 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         # a modify/delete conflict has no markers: `git ls-files -u` is the only trace (MN41)
         try:
             import subprocess as _sp
-            _u = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+            _u = _sp.run(["git", "-c", "core.quotePath=false", "ls-files", "-u", "-z"], cwd=str(root), capture_output=True, stdin=_sp.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
             unmerged = sorted({e.split("\t", 1)[1] for e in _u.stdout.split("\0") if "\t" in e})  # NUL-separated, unquoted: CJK paths were octal escapes (AG49)
         except Exception:  # noqa: BLE001
             unmerged = []

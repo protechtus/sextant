@@ -386,6 +386,14 @@ def _fact_tokens(text: str) -> set[str]:
     return set(_w.findall((text if text.isascii() else _ud.normalize("NFC", text)).lower()))  # letters of every script with their marks (AG52, AG60)
 
 
+_FUNCTION_WORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "is", "it", "that", "this", "for", "be", "with", "on", "at", "by", "from",
+    "are", "was", "were", "as", "but", "all", "has", "have", "had", "do", "does", "did", "will", "would", "can", "could",
+    "should", "may", "might", "must", "shall", "our", "we", "us", "its", "their", "they", "them", "there", "here", "now",
+    "also", "just", "still", "very", "so", "then", "than", "into", "over", "under", "about", "which", "who", "whom",
+    "der", "die", "das", "und", "ist", "le", "la", "les", "et", "est", "el", "los", "las", "y", "es", "и", "в", "на",
+    "の", "は", "が", "を", "に", "と", "で", "も", "은", "는", "이", "가", "을", "를", "的", "了", "是", "在", "和",
+})
 _NEGATIONS = {"not", "no", "never", "dont", "doesnt", "isnt", "cannot", "cant", "without", "stop", "avoid", "disable", "disabled", "off", "instead", "replaced", "replaces"}
 
 
@@ -425,7 +433,7 @@ def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:
                 # MN31: a correction differs from its original by ONE token that carries the meaning (a digit,
                 # a negation): that line is not a duplicate however similar the rest is
                 diff = want ^ have
-                if not any(re.search(r"\d", t) or t in _NEGATIONS for t in diff):
+                if not (diff - _FUNCTION_WORDS):  # only function words differ: a rewording (MN49: `room B` to `room C` had been dropped as a duplicate)
                     return True
     except Exception:  # noqa: BLE001
         return False
@@ -574,7 +582,7 @@ def _review_candidates(
 
         if dry_run:
             try:
-                _present = _fact_already_there(cand.get("scope", ""), _redact_text(str(cand.get("fact", ""))))
+                _present = _fact_already_there(cand.get("scope", ""), _redact_text(str(cand.get("fact", ""))), _near_dup_threshold())  # the same rule --auto applies (MN52: the dry run named exact repeats only)
             except Exception:  # noqa: BLE001
                 _present = False
             _print(("[dim](dry-run; already in memory, --auto would skip it)[/dim]" if _present else "[dim](dry-run)[/dim]") if console else ("(dry-run; already in memory, --auto would skip it)" if _present else "(dry-run)"))  # MN46

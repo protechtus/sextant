@@ -37,7 +37,7 @@ def _tokenize(text: str) -> set[str]:
     text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
     if not text.isascii():
         import unicodedata as _ud
-        text = _ud.normalize("NFC", text)  # one form for a letter with its marks (MN46); ASCII skips it (AG60: the fold was half of tokenize time)
+        text = _fold_marks(_ud.normalize("NFC", text))  # one form for a letter with its marks (MN46); Arabic and Hebrew points folded like search does, so a pointed copy still pairs with its plain one (MN49); ASCII skips it (AG60)
     words = _WORD_RE.findall(text.lower())  # letters of every script with their combining marks attached (AG60: deleting the marks merged Hindi words)
     # CJK, Thai, Lao, Khmer and Burmese body text has no spaces: without bigrams every Japanese note looked identical (MN23)
     for run in re.findall(_CJK_RE.pattern + "+", text):
@@ -101,9 +101,9 @@ _NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
 
 
 # the same run classes search uses: CJK, Hangul and the space-less South-East Asian scripts (MN46)
-from atlas_plus.mcp.memory_server.fts import _CJK_RE, _WORD_RE  # noqa: E402
+from atlas_plus.mcp.memory_server.fts import _CJK_RE, _WORD_RE, _fold_marks  # noqa: E402
 
-_BITSET_MAX_TOKENS = 16384  # shared tokens; above this the set intersection is cheaper and bounded in memory (MN48)
+_BITSET_MAX_TOKENS = 131072  # shared tokens; with bit indexes and a bytearray build the bitsets stay cheap to here (MN49: 10 s vs 16 s at 100,000); above it the set intersection bounds memory
 
 
 def _weight(s: str) -> int:

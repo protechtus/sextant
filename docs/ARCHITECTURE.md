@@ -121,7 +121,7 @@ The MCP server exposes these tools to all connected clients:
 | `memory_list_tool` | List .memory/ files with frontmatter metadata |
 | `memory_read_tool` | Read a file's full content + frontmatter |
 | `memory_frontmatter_tool` | Read only the YAML frontmatter |
-| `memory_search_tool` | FTS5 full-text search; returns `{confidence, results}` |
+| `memory_search_tool` | FTS5 full-text search; returns `{confidence, results, retrieval}` (`retrieval` names the path taken: `fts-only`, or the semantic index) |
 | `memory_remember_tool` | Write a fact to the appropriate .memory/ file |
 | `memory_remember_tool_v2` | Write with explicit confidence + source provenance |
 | `memory_confirm_tool` | Update last_confirmed without adding content |
@@ -142,7 +142,7 @@ The MCP server exposes these tools to all connected clients:
 | `skills_invoke_tool` | Invoke a skill by name |
 | `tickets_create_tool` | Create a ticket |
 | `tickets_list_tool` | List tickets with filters |
-| `tickets_open_tool` | Open a ticket file for reading |
+| `tickets_open_tool` | List a project's open tickets (todo and in-progress) |
 | `tickets_status_tool` | Update a ticket status |
 | `temporal_build_tool` | Ingest sessions into the temporal graph |
 | `temporal_search_tool` | Search the temporal knowledge graph |

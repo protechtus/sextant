@@ -42,8 +42,22 @@ CREATE TABLE IF NOT EXISTS atlas_meta (
 # unicode61 folds case and, with remove_diacritics, accents: 'zurich' finds "Zürich" (AG8,
 # sweep 10; the old 'porter ascii' tokenizer did not). A changed tokenizer is detected at
 # connect time and the index is rebuilt, since the virtual table bakes the tokenizer in.
-_TOKENIZER = "porter unicode61 remove_diacritics 2"
-_TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1"   # SQLite before 3.27
+# unicode61 treats every combining mark as a separator, so a Devanagari word with vowel signs was indexed as its
+# bare consonants and `दिन` matched `दान` (MN49). The marks of the scripts whose words carry them are listed as
+# token characters; Arabic and Hebrew points are folded away before indexing instead (a plain query must meet a
+# vocalised note). A changed string here rebuilds every index (the tokenizer tag).
+_INDIC_MARK_RANGES = (
+    (0x0900, 0x0903), (0x093A, 0x093C), (0x093E, 0x094F), (0x0951, 0x0957), (0x0962, 0x0963), (0x0981, 0x0983), (0x09BC, 0x09C4),
+    (0x09C7, 0x09C8), (0x09CB, 0x09CD), (0x0A01, 0x0A03), (0x0A3C, 0x0A51), (0x0A70, 0x0A71), (0x0A81, 0x0A83), (0x0ABC, 0x0ACD),
+    (0x0B01, 0x0B03), (0x0B3C, 0x0B57), (0x0B82, 0x0B82), (0x0BBE, 0x0BCD), (0x0C00, 0x0C04), (0x0C3E, 0x0C56), (0x0C81, 0x0C83),
+    (0x0CBC, 0x0CCD), (0x0D00, 0x0D03), (0x0D3E, 0x0D4D), (0x0DCA, 0x0DDF), (0x0E31, 0x0E31), (0x0E34, 0x0E3A), (0x0E47, 0x0E4E),
+    (0x0EB1, 0x0EB1), (0x0EB4, 0x0EBC), (0x0EC8, 0x0ECD), (0x0F71, 0x0F84), (0x0F86, 0x0F87), (0x102B, 0x103E), (0x1056, 0x1059),
+    (0x105E, 0x1060), (0x1062, 0x1064), (0x1067, 0x106D), (0x1071, 0x1074), (0x1082, 0x108D), (0x108F, 0x108F), (0x109A, 0x109D),
+    (0x17B4, 0x17D3), (0x17DD, 0x17DD), (0x200C, 0x200D),
+)
+_TOKENCHARS = "".join(chr(c) for a, b in _INDIC_MARK_RANGES for c in range(a, b + 1))
+_TOKENIZER = "porter unicode61 remove_diacritics 2 tokenchars ''" + _TOKENCHARS + "''"
+_TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1 tokenchars ''" + _TOKENCHARS + "''"   # SQLite before 3.27
 # Index text format tag, stored with the tokenizer name in atlas_meta: a change here rebuilds
 # every existing index once (the format is baked into the stored text, like the tokenizer).
 _INDEX_TAG = " +cjk2"
@@ -103,13 +117,21 @@ _MARK_CLASS = "".join(chr(a) + "-" + chr(b) if a != b else chr(a) for a, b in _M
 _WORD_RE = re.compile("[\\w" + _MARK_CLASS + "]+")  # a word of any script with its marks attached (AG60)
 
 
+def _recompose(text: str) -> str:
+    """NFKC decomposes Thai sara am (U+0E33) into nikhahit + sara aa and Lao am (U+0EB3) likewise; the index and
+    the snippets then showed `ทํา` for `ทำ` and `น้ำ` met `นา` (MN52). Put them back."""
+    if "\u0e4d\u0e32" in text or "\u0ecd\u0eb2" in text:
+        text = text.replace("\u0e4d\u0e32", "\u0e33").replace("\u0ecd\u0eb2", "\u0eb3")
+    return text
+
+
 def _fold_marks(text: str) -> str:
     return _MARKS_RE.sub("", text)
 
 
 def _norm_index_text(text: str) -> str:
     broken = _BREAK_RE.sub(lambda m: " " + _SENTINEL + " ", text)
-    return _cjk_split(_fold_marks(unicodedata.normalize("NFKC", broken)))
+    return _cjk_split(_fold_marks(_recompose(unicodedata.normalize("NFKC", broken))))
 
 
 def _fm_values(obj) -> list[str]:
@@ -174,7 +196,7 @@ def _bigram_fallback(raw: str) -> str:
 def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
-    q = _fold_marks(unicodedata.normalize("NFKC", query)).replace(_SENTINEL, " ")
+    q = _fold_marks(_recompose(unicodedata.normalize("NFKC", query))).replace(_SENTINEL, " ")
     q = re.sub(r"(?<=\S):(?=\S)", " ", q)  # `alpha:beta` is two words, not an FTS5 column filter (AG46: a silent miss)
     if not _CJK_RE.search(q):
         return q
