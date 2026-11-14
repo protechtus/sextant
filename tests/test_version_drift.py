@@ -24,7 +24,10 @@ def test_version_is_repeated_consistently():
 def test_private_version_is_plain_semver_and_public_build_may_add_dev_suffix():
     bump = _bump_module()
     v = bump.pyproject_version()
-    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
+    m = re.fullmatch(r"(\d+\.\d+\.\d+)(?:\.dev\d+)?", v)
+    assert m, v
+    if m.group(0) != m.group(1):
+        assert bump.BUILD_STAMP.exists(), "a dev suffix belongs to a stamped public build only"  # AG53: this assertion ran before the skip and failed the public suite on a stamped tree
     # the public builder's stamp is a valid PEP 440 dev release of the SAME base version
     import pytest
     if not (REPO / "scripts" / "build_public_repo.py").exists():
@@ -78,7 +81,7 @@ def test_bump_moves_the_unreleased_section(tmp_path, monkeypatch):
     assert 'version = "0.1.1"' in py.read_text(encoding="utf-8")
     assert 'return "0.1.1"' in ini.read_text(encoding="utf-8")
     text = cl.read_text(encoding="utf-8")
-    assert re.search(r"## \[Unreleased\]\n\n## \[0\.1\.1\] - \d{4}-\d{2}-\d{2}\n- one thing\n- another\n", text), text
+    assert re.search(r"## \[Unreleased\]\n\n## \[0\.1\.1\] - \d{4}-\d{2}-\d{2}\n\n- one thing\n- another\n", text), text
     assert bump.drift() == []
     # drift is detected when one copy is edited by hand
     ini.write_text('def _installed_version():\n    return "0.1.0"\n', encoding="utf-8")

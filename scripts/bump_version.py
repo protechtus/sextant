@@ -111,8 +111,21 @@ def _version_copy(path: Path) -> None:
     shutil.copy2(path, dest_dir / f"{path.name}_{date.today().isoformat()}_v{n}")
 
 
+def _refuse_stamped(action: str) -> None:
+    """A stamped public build (`X.Y.Z.devN` + _build.py) is never bumped in place: the version lives in
+    the source tree (AG53: --part and --set crashed, --release closed the section under a dev heading)."""
+    v = pyproject_version()
+    if _STAMPED.match(v):
+        raise SystemExit(f"{action}: pyproject says {v}, a stamped public build; versions change in the source tree, not in a build")
+
+
+def _newline_of(path: Path) -> str:
+    return "\r\n" if b"\r\n" in path.read_bytes()[:4096] else "\n"
+
+
 def close_unreleased(version: str, dry_run: bool = False) -> None:
     """Move the `[Unreleased]` body under `## [version] - today` without changing the version."""
+    _refuse_stamped("--release")
     cl = CHANGELOG.read_text(encoding="utf-8")
     m = re.search(r"^## \[Unreleased\]\n", cl, re.M)
     if not m:
@@ -126,14 +139,15 @@ def close_unreleased(version: str, dry_run: bool = False) -> None:
         print(f"would close [Unreleased] ({len(body.splitlines())} lines) under {heading.strip()}")
         return
     _version_copy(CHANGELOG)
-    _nl = "\r\n" if b"\r\n" in CHANGELOG.read_bytes()[:4096] else "\n"  # keep the file's line endings (MN37)
-    CHANGELOG.write_text(cl[:m.end()] + "\n" + heading + body.lstrip("\n") + cl[nxt.start() if nxt else len(cl):], encoding="utf-8", newline=_nl)
+    _nl = _newline_of(CHANGELOG)  # keep the file's line endings (MN37)
+    CHANGELOG.write_text(cl[:m.end()] + "\n" + heading + "\n" + body.lstrip("\n") + cl[nxt.start() if nxt else len(cl):], encoding="utf-8", newline=_nl)  # a blank line after the heading (AG53)
     print(f"closed [Unreleased] under [{version}]; tag v{version} on the mirror after publishing")
 
 
 def bump(new: str, dry_run: bool = False) -> None:
     if not _SEMVER.match(new):
         raise SystemExit(f"{new!r} is not X.Y.Z")
+    _refuse_stamped("bump")
     old = pyproject_version()
     if tuple(map(int, new.split("."))) <= tuple(map(int, old.split("."))):
         raise SystemExit(f"{new} is not newer than {old}")
@@ -150,15 +164,15 @@ def bump(new: str, dry_run: bool = False) -> None:
     if not body.strip():
         raise SystemExit("CHANGELOG `[Unreleased]` is empty: nothing to release (write the entry first)")
     heading = f"## [{new}] - {date.today().isoformat()}\n"
-    cl2 = cl[:m.end()] + "\n" + heading + body.lstrip("\n") + cl[nxt.start() if nxt else len(cl):]
+    cl2 = cl[:m.end()] + "\n" + heading + "\n" + body.lstrip("\n") + cl[nxt.start() if nxt else len(cl):]
     if dry_run:
         print(f"would bump {old} -> {new}; CHANGELOG [Unreleased] ({len(body.splitlines())} lines) -> {heading.strip()}")
         return
     for p in (PYPROJECT, INIT, CHANGELOG):
         _version_copy(p)
-    PYPROJECT.write_text(py2, encoding="utf-8", newline="\n")
-    INIT.write_text(ini2, encoding="utf-8", newline="\n")
-    CHANGELOG.write_text(cl2, encoding="utf-8", newline="\n")
+    PYPROJECT.write_text(py2, encoding="utf-8", newline=_newline_of(PYPROJECT))  # each file keeps its own line endings (AG53)
+    INIT.write_text(ini2, encoding="utf-8", newline=_newline_of(INIT))
+    CHANGELOG.write_text(cl2, encoding="utf-8", newline=_newline_of(CHANGELOG))
     print(f"bumped {old} -> {new}")
     print("next (maintainer steps; the publisher lives in the private source tree, so a contributor stops here and opens a pull request; see docs/RELEASING.md):\n"
           f"  git add pyproject.toml src/atlas_plus/__init__.py CHANGELOG.md && git commit -m 'Release {new}'\n"
@@ -190,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.set_version:
         new = a.set_version
     else:
+        _refuse_stamped("--part")
         major, minor, patch = map(int, pyproject_version().split("."))
         new = {"patch": f"{major}.{minor}.{patch + 1}", "minor": f"{major}.{minor + 1}.0", "major": f"{major + 1}.0.0"}[a.part]
     bump(new, dry_run=a.dry_run)

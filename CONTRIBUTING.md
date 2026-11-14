@@ -6,6 +6,8 @@ differently than in a committee-run project: issues, bug reports, and small
 focused PRs are very welcome; large feature PRs are best discussed in an issue
 first so effort is not wasted on a direction the engine will not take.
 
+Versions, dev builds and the release procedure are described in [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Getting set up
 
 ```bash
