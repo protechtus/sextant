@@ -2576,7 +2576,10 @@ async def memory_curation_report(request: Request, dry_run: bool = True):
     def _run() -> dict:
         import re as _re
         from atlas_plus.curation.weekly_report import generate_report
-        report_text, output_path = generate_report(dry_run=dry_run)
+        if dry_run:
+            report_text, output_path = _cached_panel("curation-report", _generate_report_isolated)  # the panel's worker and cache (AG48: this sibling ran in-process and stalled search)
+        else:
+            report_text, output_path = generate_report(dry_run=dry_run)
 
         from atlas_plus.curation.weekly_report import curation_counts
         counts = curation_counts(report_text)
@@ -2844,7 +2847,7 @@ async def memory_untagged_scopes(request: Request):
         return check_untagged_by_scope()
 
     try:
-        scope_counts = await asyncio.to_thread(_gather)
+        scope_counts = await asyncio.to_thread(lambda: _cached_panel("untagged-scopes", _gather))  # 1.6 s per poll before (AG48)
     except Exception:
         return HTMLResponse('<div class="text-slate-600 text-xs">unavailable</div>')
 

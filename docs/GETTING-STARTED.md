@@ -181,7 +181,7 @@ sextant remember "I take my coffee black" --scope preference:coffee   # store a 
 sextant search "coffee"                                               # find it (shows the confidence band)
 sextant --help                 # the CLI family
 atlas-review-memory summary    # corpus health at a glance (counts)
-sextant review report          # the weekly check: repeated facts, never-confirmed notes, stale notes, decisions to revisit
+sextant review report          # the weekly check: repeated facts, never-confirmed notes, stale notes, decisions to revisit (minutes on thousands of notes; the dashboard's panel caches it)
 ```
 
 ## 5b. Bring your existing knowledge

@@ -49,6 +49,39 @@ def _event(kind: str, **fields) -> None:
         pass
 
 
+def _chunk_key(redacted_text: str) -> str:
+    import hashlib as _hl
+    return _hl.sha256(redacted_text.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _chunk_cache_path(safe_id: str):
+    from atlas_plus import paths as _paths
+    return _paths.state_dir() / "summarizer" / f"chunks-{safe_id or 'anon'}.json"
+
+
+def _load_chunk_cache(safe_id: str) -> dict:
+    try:
+        import json as _json
+        p = _chunk_cache_path(safe_id)
+        if p.exists() and p.stat().st_size < 8 * 1024 * 1024:
+            data = _json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+def _save_chunk_cache(safe_id: str, cache: dict) -> None:
+    """Only the chunks of the current run are kept (the last partial chunk is replaced as it grows)."""
+    try:
+        import json as _json
+        p = _chunk_cache_path(safe_id)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _min_new_turns() -> int:
     import os as _os
     try:
@@ -195,10 +228,23 @@ def main(
     console.print(f"Split into [bold]{len(chunks)}[/bold] chunk(s).")
 
     # --- 3. Map ---
+    # A refresh re-summarises only the chunks whose text changed: the cache is keyed by the chunk's
+    # redacted text (AG48: a 5,000-turn session paid 78 model calls per six new turns)
+    chunk_cache = _load_chunk_cache(safe_id) if safe_id else {}
+    used_cache: dict[str, str] = {}
     chunk_summaries: list[str] = []
+    reused = 0
     for chunk in chunks:
+        red = _redact(chunk.text)
+        key = _chunk_key(red)
+        cached = chunk_cache.get(key)
+        if cached:
+            chunk_summaries.append(cached)
+            used_cache[key] = cached
+            reused += 1
+            continue
         console.print(f"Summarizing chunk {chunk.index + 1}/{len(chunks)}...")
-        prompt = map_prompt(_redact(chunk.text), chunk.index, len(chunks))  # keys never reach the model (MN28)
+        prompt = map_prompt(red, chunk.index, len(chunks))  # keys never reach the model (MN28)
         try:
             text, provider = complete(prompt)
             console.print(f"  [dim]via {provider}[/dim]")
@@ -207,6 +253,11 @@ def main(
             _event("summarizer_failed", reason=str(e)[:200], conversation_id=conversation_id or "")
             raise typer.Exit(1)
         chunk_summaries.append(text)
+        used_cache[key] = text
+    if reused:
+        console.print(f"[dim]{reused} of {len(chunks)} chunk summaries reused from the last run.[/dim]")
+    if safe_id:
+        _save_chunk_cache(safe_id, used_cache)
 
     # --- 4. Reduce ---
     if needs_reduce(chunks):

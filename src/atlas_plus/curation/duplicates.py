@@ -208,6 +208,9 @@ def find_fact_duplicates(
     return out[:limit]
 
 
+_OVERFLOWED = [False]  # set when the working threshold rose past the caller's (more than the cap was found)
+
+
 def find_duplicates(
     memory_root: Optional[Path] = None,
     threshold: float = DEFAULT_THRESHOLD,
@@ -264,29 +267,40 @@ def find_duplicates(
     # candidate then gets the exact set intersection.
     df = {tok: len(ix) for tok, ix in index.items()}
     found: list[tuple[float, int, int]] = []
+    # Postings are appended in ascending i, so they are sorted: bisect to the entries with j > i
+    # instead of walking the whole list (AG48: 80 million set.add on 5,000 notes, 135 s). Once more
+    # than the cap has been found, the working threshold rises to the cap's weakest pair: the
+    # output is the best _MAX_FILE_PAIRS pairs either way, so the result stays exact.
+    from bisect import bisect_right
+    thr = threshold
     for i in range(len(file_list)):
         si = sizes[i]
         if si == 0:
             continue
         toks1 = tokens[file_list[i]]
-        need = int(-(-(threshold * si) // 1))            # ceil(t * |A|)
+        need = int(-(-(thr * si) // 1))                  # ceil(t * |A|)
         prefix = sorted(toks1, key=lambda t: (df[t], t))[:max(1, si - need + 1)]
         cand: set[int] = set()
         for tok in prefix:
-            for j in index[tok]:
-                if j > i:
-                    cand.add(j)
+            post = index[tok]
+            cand.update(post[bisect_right(post, i):])
         for j in cand:
             sj = sizes[j]
-            if min(si, sj) < threshold * max(si, sj):
+            if min(si, sj) < thr * max(si, sj):
                 continue                              # size band: Jaccard <= min/max
             common = len(toks1 & tokens[file_list[j]])
             sim = common / (si + sj - common)
-            if sim >= threshold:
+            if sim >= thr:
                 found.append((sim, i, j))
+        if len(found) >= 2 * _MAX_FILE_PAIRS:
+            found.sort(key=lambda t: t[0], reverse=True)
+            del found[_MAX_FILE_PAIRS:]
+            thr = max(thr, found[-1][0])
+            _OVERFLOWED[0] = True
     found.sort(key=lambda t: t[0], reverse=True)
     global _LAST_CAPPED
-    _LAST_CAPPED = len(found) > _MAX_FILE_PAIRS
+    _LAST_CAPPED = len(found) > _MAX_FILE_PAIRS or _OVERFLOWED[0]
+    _OVERFLOWED[0] = False
     for sim, i, j in found[:_MAX_FILE_PAIRS]:
         f1, f2 = file_list[i], file_list[j]
         pairs.append(DuplicatePair(
