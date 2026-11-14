@@ -122,7 +122,13 @@ def _main(
     """Show the overview when invoked without a subcommand."""
     if version:
         _, prefix = _brand()
-        typer.echo(f"{'sextant' if prefix == 'sextant' else _dist_name()} {__version__}")
+        suffix = ""
+        try:
+            from atlas_plus import _build as _b  # written by the public builder; absent in a checkout
+            suffix = f" (source {_b.SOURCE})"
+        except Exception:  # noqa: BLE001
+            pass
+        typer.echo(f"{'sextant' if prefix == 'sextant' else _dist_name()} {__version__}{suffix}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         _overview()
