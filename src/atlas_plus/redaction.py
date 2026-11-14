@@ -46,18 +46,26 @@ _TELEGRAM_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
 # Optional quotes around the key name's close and the value's open ("api_key": "v", token='v')
 # so JSON and quoted assignments redact too; the trailing quote is left in place, preserving
 # structure: {"api_key": "[REDACTED]"}.
+_KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|client[_-]?secret|private[_-]?key"
+             r"|access[_-]?key|auth[_-]?token|session[_-]?key|パスワード|トークン|秘密鍵|秘密|鍵|APIキー)")
+# Exact key NAMES with a bounded prefix (`DB_`, `AWS_SECRET_`) and a short known suffix: the open
+# `[A-Za-z0-9_-]*name[A-Za-z0-9_-]*` form was quadratic on long identifier runs and matched
+# `tokenizer`, `max_tokens`, `secret_santa`, `password_policy` (MN31). Separators include the
+# full-width `＝` and `：` a Japanese IME types (MN36). The value stops at `&` (a query string).
 _KV_RE = re.compile(
-    # `_` is a word character, so `\b` never matched DATABASE_PASSWORD= or AWS_SECRET_ACCESS_KEY=
-    # (AG38, sweep 15): the name may carry a prefix and a suffix joined with `_` or `-`
-    r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_-]*(?:api[_-]?key|apikey|secret|token|password|passwd|client[_-]?secret|bearer|private[_-]?key|access[_-]?key)[A-Za-z0-9_-]*)"
-    r"(['\"]?\s*[=:]\s*['\"]?)"
-    r"([^\s'\"]{6,})"
+    r"(?i)(?<![A-Za-z0-9_])((?:[A-Za-z0-9]{1,32}[_-]){0,4}" + _KV_NAMES + r"(?:[_-](?:key|token|secret|value|str|string|id))?)"
+    r"(?![A-Za-z0-9])"
+    r"(['\"]?\s*[=:：＝]\s*r?['\"]?)"
+    r"([^\s'\"&]{6,})"
 )
 # Provider-prefixed key shapes (distinctive prefixes -> low false-positive risk).
 _PROVIDER_KEY_RE = re.compile(
     r"\b(sk-[A-Za-z0-9_-]{16,}|sk_(?:live|test)_[A-Za-z0-9]{10,}|gh[opsru]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}"
     r"|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})")
-_PEM_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)
+# a PEM or PGP private-key block, terminated or cut off at the end of the text (MN31)
+_PEM_RE = re.compile(r"-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----(?:.*?-----END [A-Z ]*(?:PRIVATE KEY|PRIVATE KEY BLOCK)-----|.*\Z)", re.S)
+_URL_CRED_RE = re.compile(r"(://[^/\s:@]+:)([^@\s/]+)(@)")  # user:password@host (MN31/MN33)
 
 _MIN_VALUE_LEN = 6  # do not mask very short env values (avoid masking "on"/"off"/ports)
 
@@ -79,6 +87,11 @@ def redact(text: str | None, *, env: dict | None = None) -> str | None:
     out = _BEARER_RE.sub(r"\1[REDACTED]", out)
     out = _TELEGRAM_RE.sub("[REDACTED:telegram-token]", out)
     out = _KV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", out)
+    import unicodedata as _ud
+    _norm = _ud.normalize("NFKC", out)
+    if _norm != out and _KV_RE.search(_norm):
+        out = _KV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", _norm)  # full-width names and separators (MN36)
+    out = _URL_CRED_RE.sub(r"\1[REDACTED]\3", out)
     out = _PROVIDER_KEY_RE.sub("[REDACTED:provider-key]", out)
     out = _PEM_RE.sub("[REDACTED:private-key]", out)
     return out

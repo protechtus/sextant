@@ -44,6 +44,7 @@ services:
       ATLAS_WEB_HOST: 0.0.0.0
       HEALTH_PORT: "8766"
       ATLAS_BRAIN_URL: http://brain:8767   # the dashboard's Brain rows (profile brain)
+      ATLAS_MCP_TRUSTED_PEERS: ${ATLAS_MCP_TRUSTED_PEERS:-}   # the dashboard counts failures per forwarded client only when the proxy (the compose gateway) is listed here too
     ports:
       - "127.0.0.1:8766:8766"
 

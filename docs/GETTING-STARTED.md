@@ -450,9 +450,14 @@ echo '{"session_id":"test-1","transcript_path":"/path/to/.claude/projects/<slug>
 A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
 activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`
 or `summarizer_skipped`) say what happened; `sextant doctor` has a "Stop hook" block with the
-model, the endpoint and the newest summary. A re-fired Stop for the same session writes
-nothing twice (summary and facts), and never calls the model again. The gate variable also
-covers the facts stage; facts proposed for `identity` are never written unreviewed.
+model, the endpoint and the newest summary. Claude Code fires Stop after every reply, not
+only at the end: the session's entry is written once and then refreshed in place each time
+the session has grown by `ATLAS_SUMMARIZER_MIN_NEW_TURNS` turns (default 6); a Stop with
+nothing new calls no model. The gate variable also covers the facts stage; facts proposed
+for `identity` are never written unreviewed, they wait in
+`<state>/suggest-facts/review.ndjson`. With Claude Code on Windows and Sextant in WSL, the
+printed Stop command runs through `wsl -d <distro> -- env ...`: put
+`ATLAS_SESSION_AUTONOMOUS=on` right after `env` (there is no `--env` slot in that form).
 
 ## Updating Sextant
 

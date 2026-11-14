@@ -72,7 +72,9 @@ side's copy is parked under `_atlas/sync-conflicts/<date>/...` with a
 plus `sextant-doctor` show the pending count. The hub parks a copy too when a
 push arrives against a file it changed meanwhile (its `status` counts it the
 same way, and your side parks the hub's copy in the same sync, so one run
-shows both). Resolving means making your canonical file agree with the other
+shows both). A device cannot push `_atlas/routing.yaml` or any other file directly under
+`_atlas/`: that is the hub's configuration and it flows from the hub to the devices only
+(the hub answers "hub configuration (edit it on the hub)"). Resolving means making your canonical file agree with the other
 side, byte for byte (edit it, or copy the parked copy over it); to KEEP both
 sides' facts, write the union into your file AND into the hub's live file (a
 union on one side alone stays a conflict on every sync, and copying the parked

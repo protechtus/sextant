@@ -401,9 +401,14 @@ def render(info: dict, client: str = "all") -> str:
                              "baked-in variables as --env flags; nothing to set user-wide.")
             lines.append("   Claude Code runs hook commands through bash (Git Bash on Windows), "
                          "which these are written for.")
-        lines.append("   The session-start hook prints the corpus it read; the Stop hook writes "
-                     "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
-                     "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command.")  # printed for --client hooks too (AG39/AG40)
+        _hint = ("   The session-start hook prints the corpus it read; the Stop hook writes "
+                 "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
+                 "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command; "
+                 "in the Windows-to-WSL form below, put `ATLAS_SESSION_AUTONOMOUS=on` right after `env` instead.")
+        if client == "all":
+            lines.append(_hint)
+        else:
+            print(_hint.strip(), file=sys.stderr)  # stdout stays the JSON block (MN32/MN33: `> hooks.json` was not JSON)
         if info.get("settings_json"):
             lines += [json.dumps(info["settings_json"], indent=2), ""]
         if info.get("hooks_from_windows"):

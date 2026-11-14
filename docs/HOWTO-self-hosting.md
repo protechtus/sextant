@@ -163,7 +163,9 @@ sudo ufw enable
 sextant.example.com {
     # Sync hub under its own path prefix
     handle /sync/* {
-        reverse_proxy 127.0.0.1:8768
+        reverse_proxy 127.0.0.1:8768 {
+            header_up Cf-Connecting-Ip {remote_host}
+        }
     }
 
     # MCP server for remote MCP clients (optional -- omit if unused).

@@ -24,6 +24,8 @@ def _console_output_encoding() -> str:
     """
     if os.environ.get("PYTHONIOENCODING"):
         return ""
+    if os.environ.get("MSYSTEM"):
+        return "utf-8"  # Git Bash / MSYS2 terminals decode UTF-8 whatever GetConsoleOutputCP says (MN36: every Japanese character was `?`)
     try:
         import ctypes
         cp = int(ctypes.windll.kernel32.GetConsoleOutputCP())  # type: ignore[attr-defined]
@@ -39,6 +41,41 @@ def _console_output_encoding() -> str:
         return f"cp{cp}"
     except LookupError:
         return "utf-8"
+
+
+def write_text_out(text: str) -> None:
+    """Write a block of text to stdout: UTF-8 when piped (hooks, redirects), the console's code
+    page when a Windows console is attached (MN36: `sextant context` printed raw UTF-8 bytes on a
+    cp932 console while `search` followed the console)."""
+    data = text.encode("utf-8")
+    if os.name == "nt":
+        try:
+            if sys.stdout is not None and sys.stdout.isatty():
+                enc = _console_output_encoding() or "utf-8"
+                if enc.lower().replace("-", "") != "utf8":
+                    data = text.encode(enc, errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.write(b"\n")
+    sys.stdout.buffer.flush()
+
+
+def fix_argv_surrogates() -> None:
+    """A C/POSIX locale hands argv over as surrogate escapes; re-decode them as UTF-8 so every
+    entry point gets the words the user typed (MN36: `atlas-prime` and `sextant-transcripts`
+    crashed where `sextant` had been fixed)."""
+    for i, a in enumerate(sys.argv):
+        try:
+            a.encode("utf-8")
+        except UnicodeEncodeError:
+            try:
+                sys.argv[i] = a.encode("utf-8", "surrogateescape").decode("utf-8")
+            except UnicodeDecodeError:
+                pass
+
+
+fix_argv_surrogates()  # at import: every console entry point imports this module
 
 
 def utf8_stdout_when_piped() -> None:

@@ -132,9 +132,17 @@ def _bigram_fallback(raw: str) -> str:
         pairs = [run[i:i + 2] for i in range(len(run) - 1)]
         return "(" + " OR ".join('"' + _CJK_SEP.join(p) + '"' for p in pairs) + ")"
 
-    out = _CJK_RUN_OR_CHAR_RE.sub(
-        lambda m: " " + (_group(m.group(0)) if len(m.group(0)) >= 3 else '"' + _CJK_SEP.join(m.group(0)) + '"') + " ", q)
-    return " ".join(out.split())
+    # FTS5 refuses an implicit AND before a parenthesised group (`Sextant ("a" OR "b")` is a syntax
+    # error, MN36), so every Latin word is quoted and the parts are joined with AND
+    parts: list[str] = []
+    pos = 0
+    for m in _CJK_RUN_OR_CHAR_RE.finditer(q):
+        parts += ['"' + w.replace('"', '""') + '"' for w in q[pos:m.start()].split()]
+        run = m.group(0)
+        parts.append(_group(run) if len(run) >= 3 else '"' + _CJK_SEP.join(run) + '"')
+        pos = m.end()
+    parts += ['"' + w.replace('"', '""') + '"' for w in q[pos:].split()]
+    return " AND ".join(parts)
 
 
 def _prepare_query(query: str) -> str:

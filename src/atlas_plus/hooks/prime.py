@@ -344,9 +344,8 @@ def main() -> None:
         sys.exit(1 if len(sys.argv) < 2 else 0)
     task = " ".join(sys.argv[1:])
     context = build_prime_context(task)
-    sys.stdout.buffer.write(context.encode("utf-8"))
-    sys.stdout.buffer.write(b"\n")
-    sys.stdout.buffer.flush()
+    from atlas_plus._console import write_text_out
+    write_text_out(context)  # UTF-8 when piped, the console's code page on a Windows console (MN36)
 
 
 if __name__ == "__main__":

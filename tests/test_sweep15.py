@@ -38,7 +38,7 @@ def test_redaction_covers_env_style_keys_and_cloud_tokens():
     text = (
         "DATABASE_PASSWORD=hunter2hunter2 AWS_SECRET_ACCESS_KEY=" + aws + " GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234 "
         "\"db_password\": \"s3cretv4lue\" AKIAIOSFODNN7EXAMPLE xoxb-1234567890-abcdefghij " + stripe + " "
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----"
+        "-----BEGIN OPENSSH " + "PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH " + "PRIVATE KEY-----"
     )
     out = redact(text)
     for secret in ("hunter2hunter2", aws[:13], "ghp_abcdefghij", "s3cretv4lue", "AKIAIOSFODNN7EXAMPLE",
@@ -209,17 +209,18 @@ def test_summarizer_gate_and_marker_come_before_the_model(tmp_path, monkeypatch)
     monkeypatch.delenv("ATLAS_SESSION_AUTONOMOUS", raising=False)
     monkeypatch.setenv("ATLAS_AUTONOMOUS", "off")
     called = []
-    monkeypatch.setattr(scli, "load_turns", lambda **kw: called.append("load") or [])
+    fake_turns = [SimpleNamespace(role="user", content="t1"), SimpleNamespace(role="assistant", content="t2"), SimpleNamespace(role="user", content="t3")]
+    monkeypatch.setattr(scli, "load_turns", lambda **kw: called.append("load") or list(fake_turns))
     res = CliRunner().invoke(scli.app, ["--conversation-id", "sess-1"])
-    assert res.exit_code == 2 and called == [] and "ATLAS_SESSION_AUTONOMOUS" in res.output
+    assert res.exit_code == 2 and called == [] and "ATLAS_SESSION_AUTONOMOUS" in res.output   # the gate, before any load
     monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
     sdir = tmp_path / "sessions"
     sdir.mkdir()
     monkeypatch.setattr(renderer, "MEMORY_SESSIONS_DIR", sdir)
     from datetime import datetime
-    (sdir / (datetime.now().astimezone().strftime("%Y-%m-%d") + ".md")).write_text("## t\n<!-- session:sess-1 -->\nbody\n", encoding="utf-8")
+    (sdir / (datetime.now().astimezone().strftime("%Y-%m-%d") + ".md")).write_text("## t\n<!-- session:sess-1 turns:3 -->\nbody\n", encoding="utf-8")
     res2 = CliRunner().invoke(scli.app, ["--conversation-id", "sess-1"])
-    assert res2.exit_code == 0 and called == [] and "already summarised" in res2.output
+    assert res2.exit_code == 0 and called == ["load"] and "nothing new" in res2.output      # same turns: no model call (MN33)
 
 
 def test_provider_names_the_missing_model(monkeypatch):
@@ -339,7 +340,7 @@ def test_raw_load_reports_eol_and_bom_and_json_rules():
     from atlas_plus.web import app as web
 
     src = inspect.getsource(web)
-    assert '"X-Sextant-Eol": "crlf" if b"\\r\\n" in data else "lf"' in src
+    assert '"X-Sextant-Eol": ("mixed" if' in src
     assert "_mfEol==='crlf'" in src and "_mfBom==='1'" in src
 
     def req(raw: bytes):
@@ -497,3 +498,191 @@ def test_dashboard_inline_script_has_no_raw_newline_in_a_regex(monkeypatch):
     for m in re.finditer(r"\.replace\(/([^\n]*)", html):
         assert "/" in m.group(1), m.group(0)[:80]
     assert "v=v.replace(/\\r?\\n/g,'\\r\\n')" in html
+
+
+# --- manual wave 15 (MN31, MN32, MN33, MN35, MN36) ---
+
+
+def test_redaction_is_linear_exact_and_covers_more_shapes():
+    import time
+
+    from atlas_plus.redaction import redact
+
+    # false positives that mangled ordinary text (MN31)
+    plain = "Raised max_tokens: 4096; tokenizer: bert; password_policy: strict for the secretary=bob; token_count=12; secret_santa: ann; my_tokenizer_config=bert-base-uncased"
+    assert redact(plain) == plain
+    # true positives, old and new shapes
+    assert "hunter2hunter2" not in redact("DATABASE_PASSWORD=hunter2hunter2")
+    assert "s3cretPass" not in redact("DATABASE_URL=postgres://admin:s3cretPass@db.internal:5432/app")
+    assert "django-abcdef" not in redact("SECRET_KEY = r'django-abcdefghijk'")
+    out = redact("?access_token=abcdefgh12345&x=1")
+    assert "abcdefgh12345" not in out and "&x=1" in out
+    assert "[REDACTED:private-key]" in redact("-----BEGIN PGP " + "PRIVATE KEY BLOCK-----\nabc\n-----END PGP " + "PRIVATE KEY BLOCK-----")
+    assert "[REDACTED:private-key]" in redact("-----BEGIN OPENSSH " + "PRIVATE KEY-----\nb3BlbnNz cut off")
+    assert "glpat-" + "x" * 24 not in redact("token glpat-" + "x" * 24)
+    # Japanese key names and full-width separators (MN36)
+    for s in ("パスワード=ほげ1234abc", "パスワード：hunter2hunter2", "ＤＢ＿ＰＡＳＳＷＯＲＤ＝abc123xyz", "APIキー=abcdef123456", "トークン: abcdef123456789"):
+        r = redact(s)
+        assert "[REDACTED]" in r, (s, r)
+    # linear on a long identifier run (MN31: 40k characters took 35 s)
+    big = "x_" * 40_000
+    t0 = time.perf_counter()
+    redact(big)
+    assert time.perf_counter() - t0 < 2.0
+
+
+def test_fact_dedupe_is_exact_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus.mcp.memory_server import config as _config, routing as _routing, versioning as _versioning
+    monkeypatch.setattr(_config, "MEMORY_ROOT", tmp_path / "mem")
+    monkeypatch.setattr(_routing, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    monkeypatch.setattr(_routing, "ROUTING_CONFIG", tmp_path / "mem" / "_atlas" / "routing.yaml", raising=False)
+    monkeypatch.setattr(_versioning, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    from atlas_plus import init_cmd
+    from atlas_plus.curation import suggest_facts as sf
+    from atlas_plus.mcp.memory_server.tools.remember import memory_remember
+
+    init_cmd.run_init()
+    memory_remember("project:infra", "The deploy target is web2.", source="agent")
+    memory_remember("project:infra", "Backups run nightly at 02:00 to the NAS.", source="agent")
+    assert sf._fact_already_there("project:infra", "the deploy target is web2")
+    assert not sf._fact_already_there("project:infra", "The deploy target is not web2.")       # a correction (MN31)
+    assert not sf._fact_already_there("project:infra", "Backups run nightly at 03:00 to the NAS.")
+
+
+def test_suggest_facts_marks_done_only_after_the_model_answered(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    from atlas_plus.mcp.memory_server import config as _config, routing as _routing, versioning as _versioning
+    monkeypatch.setattr(_config, "MEMORY_ROOT", tmp_path / "mem")
+    monkeypatch.setattr(_routing, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    monkeypatch.setattr(_routing, "ROUTING_CONFIG", tmp_path / "mem" / "_atlas" / "routing.yaml", raising=False)
+    monkeypatch.setattr(_versioning, "MEMORY_ROOT", tmp_path / "mem", raising=False)
+    from atlas_plus import init_cmd
+    from atlas_plus.curation import suggest_facts as sf
+
+    init_cmd.run_init()
+    monkeypatch.setattr(sf, "_load_transcript_text", lambda **kw: "USER: one\nASSISTANT: two\nUSER: three")
+
+    def boom(text, confidence_threshold=None):
+        raise RuntimeError("LLM provider error: HTTP 500")
+    monkeypatch.setattr(sf, "_extract_candidates", boom)
+    import pytest as _pt
+    with _pt.raises(RuntimeError):
+        sf.suggest_facts(since="today", auto=True, conversation_id="sess-F")
+    assert not sf._session_done_marker("sess-F").exists()                       # a failed run leaves no marker (MN31)
+    monkeypatch.setattr(sf, "_extract_candidates", lambda text, confidence_threshold=None: ([], 0))
+    sf.suggest_facts(since="today", auto=True, conversation_id="sess-F")
+    assert sf._session_done_marker("sess-F").read_text(encoding="utf-8").strip() == "3"
+    r = sf.suggest_facts(since="today", auto=True, conversation_id="sess-F")
+    assert r.get("already_done")                                                  # same turns: nothing new
+    monkeypatch.setattr(sf, "_load_transcript_text", lambda **kw: "\n".join(f"USER: t{i}" for i in range(20)))
+    r2 = sf.suggest_facts(since="today", auto=True, conversation_id="sess-F")
+    assert not r2.get("already_done")                                             # the session grew: run again (MN33)
+
+
+def test_summary_entry_is_replaced_when_the_session_grew(tmp_path, monkeypatch):
+    from atlas_plus.summarizer import renderer as r
+
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    monkeypatch.setattr(r, "MEMORY_SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(r, "UPDATES_TXT", tmp_path / "updates.txt")
+    monkeypatch.setattr(r, "_version_file", lambda p: None)
+    r.write_outputs("## 2026-11-13 - first\n<!-- session:S1 turns:6 -->\nsix turns\n", "e1\n", "2026-11-13", session_marker="<!-- session:S1 turns:6 -->")
+    r.write_outputs("## 2026-11-13 - other\n<!-- session:S2 turns:3 -->\nother\n", "e2\n", "2026-11-13", session_marker="<!-- session:S2 turns:3 -->")
+    found = r.find_session_entry(tmp_path / "sessions", "S1")
+    assert found is not None and found[1] == 6
+    r.write_outputs("## 2026-11-13 - first, grown\n<!-- session:S1 turns:30 -->\nthirty turns\n", "e3\n", "2026-11-13",
+                    session_marker="<!-- session:S1 turns:30 -->", replace_session="<!-- session:S1")
+    text = (tmp_path / "sessions" / "2026-11-13.md").read_text(encoding="utf-8")
+    assert text.count("<!-- session:S1") == 1 and "thirty turns" in text and "six turns" not in text
+    assert "<!-- session:S2 turns:3 -->" in text                                  # the other entry survived
+    assert r.find_session_entry(tmp_path / "sessions", "S1")[1] == 30
+
+
+def test_summarizer_helpers_lock_and_junk_guard(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus.summarizer import cli as scli
+
+    assert scli._acquire_session_lock("S9") is True
+    assert scli._acquire_session_lock("S9") is False                            # a second Stop in the same second waits (MN33)
+    assert scli._looks_like_summary({"title": "Fixed the build", "completed": ["x"], "pending": []})
+    assert not scli._looks_like_summary({"title": "things that were finished and confirmed working Pending: ...\nJSON:", "completed": []})
+    assert not scli._looks_like_summary("not a dict")
+
+
+def test_wsl_payload_path_and_no_facts_without_a_model(monkeypatch):
+    from atlas_plus.summarizer import hook_entry as he
+
+    monkeypatch.setattr(he, "_posix_path_for", he._posix_path_for)
+    import os
+    if os.name != "nt":
+        assert he._posix_path_for("E:\\x\\sess.jsonl") == "/mnt/e/x/sess.jsonl"
+    else:
+        assert he._posix_path_for("E:\\x\\sess.jsonl") == "E:\\x\\sess.jsonl"
+    import inspect
+    src = inspect.getsource(he.main)
+    assert "and not reason:  # no model, no facts stage" in src
+    assert "ATLAS_OLLAMA_URL;" in inspect.getsource(he._summarizer_unavailable_reason)
+
+
+def test_trusted_peer_matcher_and_sync_hub_config_is_not_pushable():
+    from atlas_plus.auth import trusted_peer_matcher
+    from atlas_plus.sync import policy
+
+    m = trusted_peer_matcher("192.168.96.1, 10.0.0.0/8")
+    assert m("192.168.96.1") and m("10.1.2.3") and not m("172.30.32.1") and not m("")
+    assert trusted_peer_matcher("")("192.168.96.1") is False
+    import inspect
+    src = inspect.getsource(policy)
+    assert 'direction == "write":' in src and "hub configuration (edit it on the hub)" in src
+
+
+def test_bigram_fallback_is_valid_fts5_for_mixed_script():
+    from atlas_plus.mcp.memory_server import fts
+
+    q = fts._bigram_fallback("Sextantで東京の会議")
+    assert q and " AND " in q and q.startswith('"Sextant"')
+    assert fts._bigram_fallback("ab 東京の会議").startswith('"ab" AND (')
+
+
+def test_conflict_marker_rule_sees_crlf():
+    from atlas_plus.mcp.memory_server.routing import has_conflict_markers
+
+    assert has_conflict_markers("x\r\n>>>>>>>\r\ny")
+
+
+def test_corpus_signature_changes_on_rename(tmp_path, monkeypatch):
+    from atlas_plus.web import app as web
+
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    (root / "reference" / "a.md").write_text("---\nid: a\n---\nx\n", encoding="utf-8")
+    monkeypatch.setattr(web, "MEMORY_ROOT", root)
+    s1 = web._corpus_signature()
+    (root / "reference" / "a.md").rename(root / "reference" / "b.md")
+    assert web._corpus_signature() != s1
+
+
+def test_legacy_ticket_prefix_collision_stops_growing(tmp_path):
+    from atlas_plus.tickets import store
+
+    for proj in ("alpha-api", "alpine-ui"):
+        (tmp_path / proj).mkdir(parents=True)
+        (tmp_path / proj / "ALP-001.md").write_text("---\nid: ALP-001\ntitle: t\nproject: " + proj + "\nstatus: todo\n---\n", encoding="utf-8")
+    a = store.create_ticket(title="new alpha", project="alpha-api", tickets_root=tmp_path, interactive=True)
+    b = store.create_ticket(title="new alpine", project="alpine-ui", tickets_root=tmp_path, interactive=True)
+    assert a.id.startswith("ALP-") and not b.id.startswith("ALP-") and a.id != b.id   # the later project lengthens (MN32)
+
+
+def test_auth_panel_shows_refusals_and_msys_is_utf8(monkeypatch):
+    from atlas_plus import _console
+    from atlas_plus.web import app as web
+
+    html = web._locked_out_html({"locked_out_refusals": {"203.0.113.9": 21}})
+    assert "203.0.113.9: 21" in html
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    monkeypatch.setenv("MSYSTEM", "MINGW64")
+    assert _console._console_output_encoding() == "utf-8"

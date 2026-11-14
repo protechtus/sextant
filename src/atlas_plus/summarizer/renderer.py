@@ -53,12 +53,49 @@ def _version_file(path: Path) -> Path | None:
     return dest
 
 
+_MARKER_RE_TMPL = r"<!-- session:{sid}(?: turns:(\d+))? -->"
+
+
+def find_session_entry(sessions_dir: Path, safe_id: str, days: int = 3):
+    """(file, turns) of this session's newest entry in the newest ``days`` dated logs, or None
+    (MN33: a Stop after local midnight summarised the session a second time)."""
+    try:
+        dated = sorted(sessions_dir.glob("20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"))[-days:]
+    except OSError:
+        return None
+    import re as _re
+    pat = _re.compile(_MARKER_RE_TMPL.format(sid=_re.escape(safe_id)))
+    for f in reversed(dated):
+        try:
+            m = pat.search(f.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if m:
+            return f, int(m.group(1) or 0)
+    return None
+
+
+def remove_session_entry(text: str, marker_prefix: str) -> str:
+    """Drop the `## ...` entry that holds ``marker_prefix`` (from its heading to the next heading)."""
+    i = text.find(marker_prefix)
+    if i == -1:
+        return text
+    start = text.rfind("\n## ", 0, i)
+    start = 0 if start == -1 else start + 1
+    if start == 1 and not text.startswith("## "):
+        start = 0
+    end = text.find("\n## ", i)
+    end = len(text) if end == -1 else end + 1
+    return (text[:start] + text[end:]).lstrip("\n")
+
+
 def write_outputs(
     session_log_text: str,
     updates_text: str,
     date: str,
     dry_run: bool = False,
     session_marker: str = "",
+    replace_session: str = "",
 ) -> dict[str, str]:
     """Write session log and updates.txt. Returns paths written (or `skipped` when the session's
     marker is already in today's log: a re-fired Stop hook must not write twice, MN28)."""
@@ -89,7 +126,11 @@ def write_outputs(
     MEMORY_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     if session_file.exists():
         existing = session_file.read_text(encoding="utf-8")
-        _atomic_write(session_file, session_log_text + "\n\n" + existing)
+        if replace_session:
+            # Claude Code fires Stop after every reply, so the session's entry is refreshed in place
+            # when it grew (MN33: the first summary froze and every later Stop was skipped)
+            existing = remove_session_entry(existing, replace_session)
+        _atomic_write(session_file, session_log_text + ("\n\n" + existing if existing.strip() else "\n"))
     else:
         _atomic_write(session_file, session_log_text)
     result["session_log"] = str(session_file)

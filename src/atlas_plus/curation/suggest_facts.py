@@ -282,14 +282,50 @@ def _find_similar(fact_text: str, corpus: list[tuple[str, set[str]]]) -> list[tu
 # Fact writing
 # ---------------------------------------------------------------------------
 
+def _norm_fact(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9\u3040-\u30ff\u3400-\u9fff ]+", " ", text.lower()).split())
+
+
+def _redact_text(text: str) -> str:
+    try:
+        from atlas_plus.redaction import redact as _redact
+        return _redact(text) or text
+    except Exception:  # noqa: BLE001
+        return text
+
+
+def _min_new_turns() -> int:
+    try:
+        return max(1, int(os.environ.get("ATLAS_SUMMARIZER_MIN_NEW_TURNS", "6")))
+    except ValueError:
+        return 6
+
+
+_CURRENT_SESSION: dict[str, str] = {"id": ""}  # the session being processed, for the review queue
+
+
+def _queue_for_review(cand: dict, conversation_id: str | None) -> None:
+    """<state>/suggest-facts/review.ndjson plus an activity event: a held fact is kept, not dropped."""
+    try:
+        q = atlas_paths.state_dir() / "suggest-facts" / "review.ndjson"
+        q.parent.mkdir(parents=True, exist_ok=True)
+        with q.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"scope": cand.get("scope"), "fact": cand.get("fact"), "confidence": cand.get("confidence"),
+                                 "session": conversation_id or "", "reason": "identity facts need a human"}, ensure_ascii=False) + "\n")
+        from atlas_plus import activity
+        activity.record("hook", "fact_needs_review", scope=str(cand.get("scope")), fact=str(cand.get("fact"))[:200], conversation_id=conversation_id or "")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _fact_tokens(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def _fact_already_there(scope: str, fact: str, threshold: float = 0.8) -> bool:
-    """True when the target note already holds this fact as a line (exact after normalisation, or
-    token-set Jaccard >= threshold against one line). The whole-file similarity used before
-    never reached 0.8 for one short fact, so every re-fired Stop appended it again (AG40)."""
+def _fact_already_there(scope: str, fact: str, threshold: float = 1.0) -> bool:
+    """True when the target note already holds this fact as a line, EXACT after normalisation
+    (case, punctuation, provenance comment). A token-Jaccard 0.8 rule treated "not web2",
+    "3.12" and "03:00" as duplicates of their originals and dropped the corrections (MN31)."""
     try:
         from atlas_plus.mcp.memory_server.routing import resolve_target
         target, _ = resolve_target(scope)
@@ -305,9 +341,9 @@ def _fact_already_there(scope: str, fact: str, threshold: float = 0.8) -> bool:
             have = _fact_tokens(body)
             if not have:
                 continue
-            if body.lower() == fact.strip().lower():
+            if _norm_fact(body) == _norm_fact(fact):
                 return True
-            if len(want & have) / len(want | have) >= threshold:
+            if threshold < 1.0 and len(want & have) / len(want | have) >= threshold:
                 return True
     except Exception:  # noqa: BLE001
         return False
@@ -432,9 +468,12 @@ def _review_candidates(
                 )
                 skipped += 1
                 continue
+            cand["fact"] = _redact_text(str(cand.get("fact", "")))  # compare and write the redacted text (MN33: the unredacted fact never matched the redacted line)
             if str(cand.get("scope", "")).strip().lower().startswith("identity"):
-                # who the user is stays theirs: an injected transcript line must not rewrite it unreviewed (AG40)
-                _print("[yellow]Needs review: identity facts are never auto-written.[/yellow]" if console else "Needs review: identity facts are never auto-written.")
+                # who the user is stays theirs: an injected transcript line must not rewrite it unreviewed
+                # (AG40); it is kept for review instead of dropped (MN33)
+                _print("[yellow]Needs review: identity facts are never auto-written (kept in the review queue).[/yellow]" if console else "Needs review: identity facts are never auto-written (kept in the review queue).")
+                _queue_for_review(cand, _CURRENT_SESSION.get("id"))
                 skipped += 1
                 continue
             if _fact_already_there(cand["scope"], cand["fact"]):
@@ -569,24 +608,35 @@ def suggest_facts(
     """
     root = memory_root or MEMORY_ROOT
 
+    _CURRENT_SESSION["id"] = conversation_id or ""
     _done = _session_done_marker(conversation_id)
+    _prior_lines = None
     if _done is not None and _done.exists() and not dry_run:
-        print(f"Already ran for session {conversation_id}: nothing to do ({_done}).")
-        return {"approved": 0, "skipped": 0, "written": 0, "already_done": True}
+        try:
+            _prior_lines = int((_done.read_text(encoding="utf-8").strip() or "0").split()[0])
+        except (OSError, ValueError, IndexError):
+            _prior_lines = 0
     print(f"Loading transcript since '{since}'...", flush=True)
     transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
-    if _done is not None and not dry_run:
-        try:
-            _done.parent.mkdir(parents=True, exist_ok=True)
-            _done.write_text("", encoding="utf-8")
-        except OSError:
-            pass
+    _n_lines = transcript_text.count("\n") + (1 if transcript_text.strip() else 0)
+    if _prior_lines is not None and _n_lines - _prior_lines < _min_new_turns():
+        # Claude Code fires Stop after every reply: facts are re-extracted when the session grew
+        # (MN33); the marker is written only after the model answered (MN31: a failed first run
+        # cost the session its facts for good)
+        print(f"Already ran for session {conversation_id} at {_prior_lines} turns ({_n_lines} now): nothing new.")
+        return {"approved": 0, "skipped": 0, "written": 0, "already_done": True}
     if not transcript_text.strip():
         print("No transcript content found for the given window.")
         return {"candidates": 0, "approved": 0, "skipped": 0, "written": 0}
 
     print(f"Transcript: {len(transcript_text)} chars. Extracting facts...", flush=True)
     candidates, rejected_low_confidence = _extract_candidates(transcript_text, confidence_threshold=confidence_threshold)
+    if _done is not None and not dry_run:
+        try:
+            _done.parent.mkdir(parents=True, exist_ok=True)
+            _done.write_text(f"{_n_lines}\n", encoding="utf-8")  # the model answered: this many turns are covered
+        except OSError:
+            pass
     if rejected_low_confidence > 0:
         effective_threshold = confidence_threshold or float(os.environ.get("ATLAS_SUGGEST_CONFIDENCE_THRESHOLD", str(_DEFAULT_CONFIDENCE_THRESHOLD)))
         print(f"Rejected {rejected_low_confidence} low-confidence candidate(s) (below {effective_threshold:.2f}).", flush=True)

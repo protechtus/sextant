@@ -284,8 +284,8 @@ def check_temporal() -> dict:
                 data = _json.loads(manifest_path.read_text(encoding="utf-8"))
                 last_built = data.get("last_built")
                 if last_built:
-                    result["last_built"] = last_built[:10]
                     built_dt = datetime.fromisoformat(last_built.replace("Z", "+00:00"))
+                    result["last_built"] = (built_dt.astimezone().date().isoformat() if built_dt.tzinfo else last_built[:10])  # the user's day (MN32)
                     age_days = (datetime.now(timezone.utc) - built_dt).days
                     result["stale"] = age_days > 7
                     result["age_days"] = age_days
@@ -310,14 +310,20 @@ def check_stop_hook() -> dict:
         result["url"] = _prov.OLLAMA_URL
     except Exception:  # noqa: BLE001
         return result
-    result["gate"] = (_os.environ.get("ATLAS_SESSION_AUTONOMOUS") or _os.environ.get("ATLAS_AUTONOMOUS") or "off").strip().lower() in ("on", "1", "true")
+    try:
+        from atlas_plus.autonomous import is_session_autonomous as _gate
+        result["gate"] = bool(_gate())  # the same rule the hook applies (MN31)
+    except Exception:  # noqa: BLE001
+        result["gate"] = False
+    result["disabled"] = _os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() in ("1", "true", "yes")
     try:
         import urllib.request as _ur
         with _ur.urlopen(f"{result['url']}/api/tags", timeout=1.0) as resp:
             names = [str(m.get("name") or "") for m in (_json.loads(resp.read(200_000).decode("utf-8", "replace")) or {}).get("models", [])]
         result["reachable"] = True
         want = result["model"]
-        result["model_pulled"] = any(n == want or n.split(":")[0] == want.split(":")[0] for n in names)
+        want_full = want if ":" in want else want + ":latest"
+        result["model_pulled"] = any(n == want or n == want_full for n in names)  # the exact tag, like the hook's probe (MN31/MN33)
     except Exception:  # noqa: BLE001
         result["reachable"] = False
     try:
@@ -329,7 +335,7 @@ def check_stop_hook() -> dict:
         result["last_summary"] = None
     try:
         from atlas_plus import activity as _act
-        for ev in _act.tail(limit=200):
+        for ev in reversed(_act.tail(limit=200)):  # tail is oldest-first: the NEWEST event is the one that matters (MN33)
             if ev.get("event") in ("summary_written", "summarizer_failed", "summarizer_skipped"):
                 result["last_event"] = f"{ev.get('event')} {str(ev.get('ts') or ev.get('time') or '')[:16]} {str(ev.get('reason') or '')[:80]}".strip()
                 break
@@ -1764,7 +1770,7 @@ def render_text(data: dict) -> str:
             model_note = f"model {sh.get('model')} pulled at {sh.get('url')}"
         else:
             model_note = f"\033[33mmodel {sh.get('model')} NOT pulled at {sh.get('url')} (ollama pull {sh.get('model')}, or set ATLAS_SUMMARIZER_MODEL)\033[0m"
-        lines.append(f"  Gate: {gate}")
+        lines.append(f"  Gate: {gate}" + ("  (ATLAS_DISABLE_AUTOSUMMARIZE is set: no summaries)" if sh.get("disabled") else ""))
         lines.append(f"  Model: {model_note}")
         lines.append(f"  Last summary: {sh.get('last_summary') or 'none written yet'}" + (f"  Last event: {sh['last_event']}" if sh.get('last_event') else ""))
         lines.append("")

@@ -555,6 +555,7 @@ def test_piped_output_follows_the_console_code_page(monkeypatch):
     import ctypes
     from atlas_plus import _console
     monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    monkeypatch.delenv("MSYSTEM", raising=False)  # a plain console, not Git Bash (which is UTF-8 since sweep 15)
     for cp, want in ((932, "cp932"), (65001, "utf-8"), (0, "utf-8"), (1252, "cp1252"), (99999, "utf-8")):
         monkeypatch.setattr(ctypes.windll.kernel32, "GetConsoleOutputCP", lambda cp=cp: cp)
         assert _console._console_output_encoding() == want, cp

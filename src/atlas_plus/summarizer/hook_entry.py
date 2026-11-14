@@ -143,13 +143,24 @@ def _summarizer_unavailable_reason() -> str:
             return ""
         local_only = os.environ.get("ATLAS_LOCAL_ONLY", "on").strip().lower() not in ("off", "0", "false")
         if local_only:
-            return (f"no local model at {url} (start Ollama or set ATLAS_BRAIN_OLLAMA_URL; "
+            return (f"no local model at {url} (start Ollama or set ATLAS_OLLAMA_URL; "
                     "cloud providers need ATLAS_LOCAL_ONLY=off and a key)")
         if any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")):
             return ""
         return f"no local model at {url} and no provider key (ANTHROPIC_API_KEY / OPENAI_API_KEY)"
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _posix_path_for(path: str) -> str:
+    """A Windows path from a Windows Claude Code, received by a WSL install, as its /mnt form
+    (MN33: `E:\\x\\sess.jsonl` was one relative file name on Linux and the root became the cwd)."""
+    import os as _os
+    import re as _re
+    m = _re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+    if _os.name != "nt" and m:
+        return f"/mnt/{m.group(1).lower()}/" + m.group(2).replace("\\", "/")
+    return path
 
 
 def _transcript_root_from_payload() -> str:
@@ -168,7 +179,7 @@ def _transcript_root_from_payload() -> str:
         if not tp:
             return ""
         from pathlib import Path as _Path
-        root = _Path(str(tp)).resolve().parents[1]
+        root = _Path(_posix_path_for(str(tp))).resolve().parents[1]
         return str(root) if root.is_dir() else ""
     except Exception:  # noqa: BLE001 - a hook never fails the session over its payload
         return ""
@@ -201,6 +212,7 @@ def main() -> int:
     # Say so when it cannot run: the docs promise a summary, and a silent exit 0 let a user
     # believe sessions were being summarized when no model was reachable (persona rerun
     # 2026-11-10). One stderr line and one activity event, then the snapshot still runs.
+    reason = ""
     if os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes"):
         reason = _summarizer_unavailable_reason()
         if reason:
@@ -227,7 +239,7 @@ def main() -> int:
         )
 
     # --- 2. Suggest-facts (auto mode: only writes confidence >= 0.85) ---
-    if os.environ.get("ATLAS_DISABLE_SUGGEST_FACTS", "").lower() not in ("1", "true", "yes"):
+    if os.environ.get("ATLAS_DISABLE_SUGGEST_FACTS", "").lower() not in ("1", "true", "yes") and not reason:  # no model, no facts stage (MN31)
         exe = _find_script("atlas-suggest-facts")
         if exe:
             subprocess.Popen(

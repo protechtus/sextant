@@ -10,6 +10,7 @@ recovery.recover_all) with no new behavior.
 from __future__ import annotations
 
 import typer
+from atlas_plus import _console as _console_fix  # noqa: F401  (argv surrogates, MN36)
 from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
 from rich.table import Table

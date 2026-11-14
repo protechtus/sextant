@@ -357,9 +357,8 @@ def main() -> None:
         try:
             from atlas_plus.hooks.prime import build_prime_context
             context = build_prime_context(task_hint)
-            sys.stdout.buffer.write(context.encode("utf-8"))
-            sys.stdout.buffer.write(b"\n")
-            sys.stdout.buffer.flush()
+            from atlas_plus._console import write_text_out
+            write_text_out(context)  # MN36
             return
         except Exception as e:
             print(f"# [atlas-prime] fallback to full context: {e}", file=sys.stderr)

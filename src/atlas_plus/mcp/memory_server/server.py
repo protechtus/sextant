@@ -36,6 +36,11 @@ _HUMAN_SOURCES = frozenset({"human-direct", "human", "telegram"})
 _SNIPPET_COMMENT = re.compile(r"<!--\s*source:[^>\n]*-->")
 
 
+def _token_fingerprint() -> str:
+    import hashlib as _hl
+    return _hl.sha256(_MCP_TOKEN.encode("utf-8")).hexdigest()[:8] if _MCP_TOKEN else "none"
+
+
 def _agent_source(source: str) -> str:
     """An MCP caller is an agent and cannot claim the operator's own provenance.
 
@@ -781,6 +786,9 @@ def memory_health() -> dict:
         if _state.exists() and not _state.is_dir():
             health["status"] = "degraded"
             health["hint"] = f"state directory {_state} is a file, not a directory; move it aside (writes cannot be indexed)"  # AG39
+        elif _state.is_dir() and not os.access(str(_state), os.W_OK):
+            health["status"] = "degraded"
+            health["hint"] = f"state directory {_state} is not writable (writes cannot be indexed)"  # MN35
         from .fts import last_connect_error as _lce
         if _lce():
             health["status"] = "degraded"
@@ -1237,12 +1245,22 @@ class _HostHintMiddleware:
                     message = {**message, "headers": headers}
             elif message["type"] == "http.response.body" and state["status"] == 421 and not message.get("more_body"):
                 name = host.rsplit(":", 1)[0] if host and not host.endswith("]") and host.count(":") == 1 else host
-                hint = (
-                    "\nThis server accepts loopback Host headers only. Start it with "
-                    f"ATLAS_MCP_ALLOWED_HOSTS={name or '<public name>'} (comma-separated names or IPs), or with "
-                    "ATLAS_MCP_HOST=0.0.0.0 and no list to turn the Host check off behind the bearer token. "
-                    "See docs/CONFIGURATION.md.\n"
-                ).encode("utf-8")
+                import re as _re
+                name = _re.sub(r"[^A-Za-z0-9.\-:\[\]]", "", name)[:80]  # never echo a hostile Host verbatim (MN35)
+                allowed = os.environ.get("ATLAS_MCP_ALLOWED_HOSTS", "").strip()
+                if allowed:
+                    hint = (
+                        f"\nThis server's ATLAS_MCP_ALLOWED_HOSTS is `{allowed}`; the request named `{name or '?'}`. "
+                        "Add that name to the list (comma-separated) if it is yours, or set ATLAS_MCP_HOST=0.0.0.0 "
+                        "with no list to turn the Host check off behind the bearer token. See docs/CONFIGURATION.md.\n"
+                    ).encode("utf-8")
+                else:
+                    hint = (
+                        "\nThis server accepts loopback Host headers only. Start it with "
+                        f"ATLAS_MCP_ALLOWED_HOSTS={name or '<public name>'} (comma-separated names or IPs), or with "
+                        "ATLAS_MCP_HOST=0.0.0.0 and no list to turn the Host check off behind the bearer token. "
+                        "See docs/CONFIGURATION.md.\n"
+                    ).encode("utf-8")
                 log.warning("Invalid Host header %r: set ATLAS_MCP_ALLOWED_HOSTS (docs/CONFIGURATION.md)", host)
                 message = {**message, "body": (message.get("body") or b"") + hint}
             await send(message)
@@ -1297,7 +1315,7 @@ def _make_auth_middleware(token: str):
                 if not _trusted_local:
                     _record_auth_failure(ip, request.url.path)
                 return Response(
-                    "Unauthorized. Provide: Authorization: Bearer <ATLAS_MCP_TOKEN>",
+                    f"Unauthorized. Provide: Authorization: Bearer <ATLAS_MCP_TOKEN> (this server's token fingerprint: {_token_fingerprint()}; a shell-exported ATLAS_MCP_TOKEN overrides a .env value)",
                     status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
@@ -1319,7 +1337,7 @@ def _run_http_with_auth(token: str) -> None:
     if token:
         middleware_cls = _make_auth_middleware(token)
         asgi_app.add_middleware(middleware_cls)
-        log.info("HTTP auth: bearer token enabled (ATLAS_MCP_TOKEN is set)")
+        log.warning("HTTP auth: bearer token enabled; token fingerprint %s (sha256 prefix: compare with `sha256sum` of the token your clients hold)", _token_fingerprint())  # MN35: nothing said which token the container took
     else:
         log.warning(
             "HTTP auth: ATLAS_MCP_TOKEN is NOT set. "

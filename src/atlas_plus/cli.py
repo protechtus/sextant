@@ -684,7 +684,7 @@ def main() -> None:
                 pass
     if _sys.getfilesystemencoding().lower().replace("-", "") != "utf8" and not _sys.flags.utf8_mode:
         _sys.stderr.write("Note: this locale is not UTF-8, so notes with non-ASCII names may be invisible; "
-                          "set PYTHONUTF8=1 (or LANG=C.UTF-8).\n")
+                          + ("set PYTHONIOENCODING=utf-8 (Windows: the console code page decides the pipe encoding).\n" if _sys.platform == "win32" else "set PYTHONUTF8=1 (or LANG=C.UTF-8).\n"))
     # `sextant remember "---bad"` reached Click's option parser ("No such option: ---bad",
     # exit 2) instead of the documented refusal (FN2, final pass): say what to do.
     if len(_sys.argv) > 2 and _sys.argv[1] in ("remember", "search") and any(

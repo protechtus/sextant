@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import re as _re
 import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -90,6 +91,12 @@ _mcp_headers   = {"Authorization": f"Bearer {MCP_TOKEN}"} if MCP_TOKEN else {}
 AUTH_FAILURES = AuthFailureLog()
 
 
+from atlas_plus.auth import trusted_peer_matcher as _tpm
+# a proxy in another container (compose: the Docker gateway) is trusted to name the real client
+# when listed, like the MCP server (MN35)
+_WEB_TRUSTED_PEER = _tpm(os.environ.get("ATLAS_WEB_TRUSTED_PEERS") or os.environ.get("ATLAS_MCP_TRUSTED_PEERS", ""))
+
+
 def _client_ip(request: Request) -> tuple[str, str]:
     """Return (socket_peer_ip, forwarded_ip); either may be ''.
 
@@ -100,7 +107,7 @@ def _client_ip(request: Request) -> tuple[str, str]:
     """
     from atlas_plus.auth import forwarded_ip
     client_ip = request.client.host if request.client else ""
-    return client_ip, forwarded_ip(request.headers, client_ip)
+    return client_ip, forwarded_ip(request.headers, client_ip, trusted=_WEB_TRUSTED_PEER)
 
 
 def _new_session() -> str:
@@ -197,6 +204,8 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
     if not _is_loopback and AUTH_FAILURES.is_rate_limited(throttle_ip):
         try:
             AUTH_FAILURES.record(path=request.url.path, client_ip=client_ip, cf_ip=cf_ip, reason="locked_out")  # visible in the panel, not counted (MN29)
+            if AUTH_FAILURES.stats().get("locked_out_refusals", {}).get(throttle_ip) == 1:
+                log.warning("dashboard: %s is locked out after repeated auth failures; refusing with 429", throttle_ip)  # the log said nothing (MN35)
         except Exception:  # noqa: BLE001
             pass
         raise HTTPException(
@@ -473,7 +482,7 @@ async def auth_failures_panel(request: Request, limit: int = 25):
     limit = max(1, min(limit, 200))
     stats = AUTH_FAILURES.stats()
     rows = AUTH_FAILURES.recent(limit)
-    if not rows:
+    if not rows and not stats.get("locked_out_refusals"):
         return HTMLResponse('<p class="text-green-600">No auth failures recorded.</p>')
     cells = "".join(
         "<tr>"
@@ -488,7 +497,8 @@ async def auth_failures_panel(request: Request, limit: int = 25):
         f"<p>{stats['in_window']} in last {int(stats['window_seconds'])}s "
         f"from {stats['distinct_sources_in_window']} source(s); "
         f"{stats['total']} total recorded.</p>"
-        "<table class='text-xs'><thead><tr>"
+        + _locked_out_html(stats)
+        + "<table class='text-xs'><thead><tr>"
         "<th class='px-2 text-left'>time (UTC)</th><th class='px-2 text-left'>source</th>"
         "<th class='px-2 text-left'>path</th><th class='px-2 text-left'>reason</th>"
         "</tr></thead><tbody>" + cells + "</tbody></table>"
@@ -1449,7 +1459,7 @@ async def memory_file_read(request: Request, path: str = "", raw: str = ""):
             "X-Sextant-Etag": _hl.sha256(data).hexdigest(),
             # the textarea folds CRLF to LF and fetch().text() drops a BOM: the editor re-applies both
             # on save, so a no-edit Save is a no-op and a real edit keeps the note's shape (AG41)
-            "X-Sextant-Eol": "crlf" if b"\r\n" in data else "lf",
+            "X-Sextant-Eol": ("mixed" if (b"\r\n" in data and _re.search(rb"(?<!\r)\n", data)) else ("crlf" if b"\r\n" in data else "lf")),  # a mixed note is normalised on save, and the editor says so (MN31/MN32)
             "X-Sextant-Bom": "1" if data.startswith(b"\xef\xbb\xbf") else "0",
         })
     full = target.read_text(encoding="utf-8", errors="replace")
@@ -1504,8 +1514,8 @@ async def memory_file_write(request: Request):
                 # another writer (a CLI remember, a sync) changed the note since the editor loaded
                 # it; a save would silently drop that write (MN29)
                 raise HTTPException(status_code=409, detail="The note changed since you opened it (another writer). Reload it and re-apply your edit.")
-            if content.encode("utf-8") == current:
-                return {"ok": True, "unchanged": True, "path": safe_path}
+            if content.encode("utf-8") == current or content.replace("\r\n", "\n") == current.decode("utf-8", "replace").replace("\r\n", "\n"):
+                return {"ok": True, "unchanged": True, "path": safe_path}  # line endings alone are not an edit (MN34: a mixed note was rewritten)
             # A failed version copy aborts the write: never overwrite without
             # a way back.
             try:
@@ -1791,6 +1801,29 @@ async def routing_stats_panel(request: Request):
 # from the dashboard header poll. Cache for 60s; stale by at most one minute.
 _mem_file_count_cache: tuple[float, int] = (0.0, 0)  # (timestamp, count)
 _MEM_FILE_CACHE_TTL = 60.0
+
+
+_TTL_CACHE: dict[str, tuple[float, object]] = {}
+
+
+def _ttl_cached(key: str, build, ttl: float):
+    import time as _time
+    hit = _TTL_CACHE.get(key)
+    if hit and _time.monotonic() - hit[0] < ttl:
+        return hit[1]
+    value = build()
+    _TTL_CACHE[key] = (_time.monotonic(), value)
+    return value
+
+
+def _locked_out_html(stats: dict) -> str:
+    """Refusals made while a source was locked (counted outside the failure log since AG38; the HTML
+    panel never showed them: MN31/MN32)."""
+    ref = stats.get("locked_out_refusals") or {}
+    if not ref:
+        return ""
+    items = ", ".join(f"{_html_mod.escape(str(ip))}: {int(n)}" for ip, n in list(ref.items())[:20])
+    return f'<p class="text-amber-400">Refused while locked: {items}</p>'
 
 
 def _get_mem_file_count() -> int:
@@ -2289,7 +2322,7 @@ async def memory_next_actions(request: Request, limit: int = 5):
         return result
 
     try:
-        data = await asyncio.to_thread(lambda: _cached_panel(f"next-actions:{limit}", _gather))
+        data = await asyncio.to_thread(lambda: _cached_panel(f"next-actions:{max(1, min(int(limit), 50))}", _gather))
         return data
     except Exception as exc:
         return {"error": str(exc), "decayed": [], "orphans": [], "untagged": [], "gaps": []}
@@ -2604,8 +2637,10 @@ _PANEL_TTL = 300.0
 def _corpus_signature() -> str:
     """Note count and newest mtime under the corpus (history copies and state excluded): one
     directory walk, so a panel that costs seconds is recomputed only when a note changed."""
+    import zlib as _zlib
     count = 0
     newest = 0.0
+    names_crc = 0
     skip = {"versions", "_atlas", ".git", "_sync", "__pycache__"}
     try:
         for dirpath, dirnames, filenames in os.walk(MEMORY_ROOT):
@@ -2614,6 +2649,7 @@ def _corpus_signature() -> str:
                 if not name.endswith(".md"):
                     continue
                 count += 1
+                names_crc = _zlib.crc32((dirpath + "/" + name).encode("utf-8", "replace"), names_crc)
                 try:
                     m = os.stat(os.path.join(dirpath, name)).st_mtime
                 except OSError:
@@ -2622,7 +2658,7 @@ def _corpus_signature() -> str:
                     newest = m
     except OSError:
         pass
-    return f"{MEMORY_ROOT}|{count}:{newest:.3f}"  # two empty corpora are not the same corpus
+    return f"{MEMORY_ROOT}|{count}:{newest:.3f}:{names_crc & 0xFFFFFFFF:08x}"  # two empty corpora are not the same corpus; a rename changes the names (MN31)
 
 
 def _cached_panel(key: str, build, ttl: float = _PANEL_TTL):
@@ -3372,7 +3408,7 @@ async def services_list(request: Request):
     )
     # PowerShell takes seconds; run it off-loop or every SSE/poll client in
     # this single-process uvicorn stalls behind it (sweep finding #3).
-    rc, out = await asyncio.to_thread(_run_powershell, cmd, 20.0)
+    rc, out = await asyncio.to_thread(lambda: _ttl_cached("services-ps", lambda: _run_powershell(cmd, 20.0), ttl=30.0))  # 5 s per poll before (MN34)
     states: dict[str, str] = {}
     for line in out.splitlines():
         parts = line.split("\t")
@@ -3750,6 +3786,7 @@ async def create_ticket_endpoint(request: Request):
             priority=body.get("priority", "normal"),
             effort=body.get("effort", "M"),
             body=body.get("body", ""),
+            requires=(str(body.get("requires")).strip() or None) if body.get("requires") else None,  # it was validated and dropped (MN34)
             verified=(str(body.get("verified")).strip() or None) if body.get("verified") else None,  # READY needs it (MN29)
         )
         return t.as_dict()
@@ -5295,6 +5332,7 @@ function toggleTheme(){{
 async function stopServer(){{
   if(!confirm("Stop the Atlas Web UI server?"))return;
   try{{const r=await fetch("/stop",{{method:"POST",headers:{{}}}});if(!r.ok){{showToast('Stop refused (HTTP '+r.status+'): sign in again','failed');return;}}}}catch(e){{}}  // a dead socket means it stopped (MN29)
+  window._sextantStopped=true;
   document.body.innerHTML='<div style="color:#4ade80;font-family:monospace;padding:2rem;font-size:1rem">Server stopped. Close this tab.</div>';
 }}
 
@@ -6016,6 +6054,7 @@ async function jsonOrThrow(resp){{
 
 // ---- Toast notifications ----
 function showToast(msg,type){{
+  if(window._sextantStopped)return;  // the stopped page has no toast element (MN34)
   const t=document.createElement('div');
   t.className='toast toast-'+(type||'info');
   t.textContent=msg;
@@ -6125,7 +6164,7 @@ async function editMemoryFile(path){{
   const pre=document.getElementById('mf-content');
   if(!pre)return;
   let current=pre.textContent;
-  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
+  try{{const rr=await fetch('/api/memory/file?raw=1&path='+encodeURIComponent(path));if(rr.ok){{current=await rr.text();_mfBaseEtag=rr.headers.get('X-Sextant-Etag')||'';_mfEol=rr.headers.get('X-Sextant-Eol')||'lf';_mfBom=rr.headers.get('X-Sextant-Bom')||'0';if(_mfEol==='mixed')showToast('This note mixes CRLF and LF line endings; a save makes them LF','done');}}else{{showToast('Could not load the whole file (HTTP '+rr.status+'): '+(await rr.text()).slice(0,160),'failed');return;}}}}
   catch(e){{showToast('Could not load the whole file: '+e.message,'failed');return;}}
   const r=document.getElementById('mem-results');
   // Static skeleton via innerHTML; the PATH lands via textContent -- a

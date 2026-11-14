@@ -49,6 +49,53 @@ def _event(kind: str, **fields) -> None:
         pass
 
 
+def _min_new_turns() -> int:
+    import os as _os
+    try:
+        return max(1, int(_os.environ.get("ATLAS_SUMMARIZER_MIN_NEW_TURNS", "6")))
+    except ValueError:
+        return 6
+
+
+def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
+    """One summarizer per session at a time: `<state>/summarizer/<id>.lock`, released at exit."""
+    import atexit
+    import os as _os
+    import time as _time
+    try:
+        from atlas_plus import paths as _paths
+        lock = _paths.state_dir() / "summarizer" / f"{safe_id}.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if _time.time() - lock.stat().st_mtime > stale_s:
+                lock.unlink()
+        except OSError:
+            pass
+        fd = _os.open(str(lock), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
+        _os.close(fd)
+    except FileExistsError:
+        return False
+    except OSError:
+        return True  # no state dir to lock in: proceed
+
+    def _release():
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+    atexit.register(_release)
+    return True
+
+
+def _looks_like_summary(summary) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    title = summary.get("title")
+    if not isinstance(title, str) or not title.strip() or len(title) > 160 or "\n" in title or "JSON" in title:
+        return False
+    return any(isinstance(summary.get(k), list) and summary.get(k) for k in ("completed", "pending", "worked_on"))
+
+
 def _parse_json_response(text: str) -> dict:
     """Extract JSON object from LLM response, tolerating markdown fences."""
     text = text.strip()
@@ -105,18 +152,21 @@ def main(
             console.print("[yellow]Session summaries are off: ATLAS_SESSION_AUTONOMOUS=on (or ATLAS_AUTONOMOUS=on) must reach this process (the Stop hook's --env flag).[/yellow]")
             _event("summarizer_skipped", reason="ATLAS_SESSION_AUTONOMOUS is off", conversation_id=conversation_id or "")
             raise typer.Exit(2)
+    marker = ""
+    replace_prefix = ""
+    prior_turns = None
+    safe_id = ""
     if conversation_id:
-        from atlas_plus.summarizer.renderer import MEMORY_SESSIONS_DIR as _sdir
-        _marker = f"<!-- session:{''.join(ch for ch in conversation_id if ch.isalnum() or ch in '-_.')[:80]} -->"
-        _sfile = _sdir / f"{date}.md"
-        try:
-            if _sfile.exists() and _marker in _sfile.read_text(encoding="utf-8", errors="replace"):
-                console.print(f"[yellow]Session {conversation_id} is already summarised in {_sfile.name}; nothing to do.[/yellow]")
-                raise typer.Exit(0)  # before any model call (AG40: every re-fire paid for the map and reduce)
-        except OSError:
-            pass
+        from atlas_plus.summarizer.renderer import MEMORY_SESSIONS_DIR as _sdir, find_session_entry
+        safe_id = ''.join(ch for ch in conversation_id if ch.isalnum() or ch in '-_.')[:80]
+        found = find_session_entry(_sdir, safe_id)
+        if found is not None:
+            prior_turns = found[1]
         if since == "today":
             since = None  # the session is the unit: a session across midnight lost its first hour (AG40)
+        if not dry_run and not _acquire_session_lock(safe_id):
+            console.print(f"[yellow]Another summarizer run for session {conversation_id} is in progress; nothing to do.[/yellow]")
+            raise typer.Exit(0)  # four Stops in one second each paid for the model (MN33)
 
     # --- 1. Load ---
     console.print(f"Loading turns (source={source}, since={since})...")
@@ -130,6 +180,14 @@ def main(
         _event("summarizer_failed", reason="no turns found", conversation_id=conversation_id or "")
         raise typer.Exit(1)
     console.print(f"Loaded [bold]{len(turns)}[/bold] turns.")
+    if conversation_id:
+        # Claude Code fires Stop after every reply: the entry is refreshed when the session grew by
+        # ATLAS_SUMMARIZER_MIN_NEW_TURNS turns, and left alone otherwise (MN33: the first summary froze)
+        if prior_turns is not None and len(turns) - prior_turns < _min_new_turns():
+            console.print(f"[yellow]Session {conversation_id} is summarised at {prior_turns} turns and has {len(turns)} now: nothing new.[/yellow]")
+            raise typer.Exit(0)
+        marker = f"<!-- session:{safe_id} turns:{len(turns)} -->"
+        replace_prefix = f"<!-- session:{safe_id}" if prior_turns is not None else ""
 
     # --- 2. Chunk ---
     chunks = chunk_turns(turns, token_budget=token_budget)
@@ -163,15 +221,19 @@ def main(
         summary = _parse_json_response(final_text)
     else:
         summary = _parse_json_response(chunk_summaries[0])
+    if not _looks_like_summary(summary):
+        # a non-JSON reply used to be written as the session's summary and then protected by its
+        # marker (MN33: "things that were finished and confirmed working Pending: ...")
+        console.print("[red]The model's reply was not a summary; nothing written.[/red]")
+        _event("summarizer_failed", reason="model reply was not a summary", conversation_id=conversation_id or "")
+        raise typer.Exit(1)
 
     # --- 5. Render ---
     session_log_text = _redact(render_session_log(summary, date))
     updates_text = _redact(render_updates_entry(summary, date))
-    marker = ""
-    if conversation_id:
-        # the entry names its session, so a re-fired Stop writes nothing twice (MN28: four
-        # identical entries after four Stops)
-        marker = f"<!-- session:{''.join(ch for ch in conversation_id if ch.isalnum() or ch in '-_.')[:80]} -->"
+    if marker:
+        # the entry names its session and its turn count: a re-fired Stop writes nothing twice, a
+        # grown session replaces its entry (MN28, MN33)
         head, _, rest = session_log_text.partition("\n")
         session_log_text = head + "\n" + marker + "\n" + rest
 
@@ -185,7 +247,7 @@ def main(
         raise typer.Exit(0)
 
     # --- 7. Write ---
-    result = write_outputs(session_log_text, updates_text, date, dry_run=dry_run, session_marker=marker)
+    result = write_outputs(session_log_text, updates_text, date, dry_run=dry_run, session_marker=marker, replace_session=replace_prefix)
     if result.get("skipped"):
         console.print(f"[yellow]{result['skipped']}[/yellow]")
         raise typer.Exit(0)

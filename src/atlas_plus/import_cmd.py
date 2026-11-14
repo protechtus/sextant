@@ -630,6 +630,10 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
     what `--yes` will do (MN15, sweep 11: the dry run listed only renames). Stale corpus copies
     (older copies of edited notes, notes no longer in the vault) are named, and `--archive-stale`
     moves them to archive/ instead of leaving them in search."""
+    if (vault / "conversations.json").is_file():
+        import sys as _sys
+        print("note: this folder holds conversations.json (a ChatGPT or claude.ai export): pass that file, "
+              f"`sextant import {vault / 'conversations.json'}`", file=_sys.stderr)  # MN36: the folder was read as a vault
     _TRUNCATED.clear()
     _CURRENT_VAULT["id"] = _vault_id(vault)
     import hashlib
@@ -971,6 +975,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
             skipped_reasons.append(f"entry {index}: not a conversation object")
             continue
         title = (str(conv.get("name") or "untitled")).strip() or "untitled"
+        conv_uid = str(conv.get("uuid") or conv.get("id") or "").strip()[:80]
         created = str(conv.get("created_at") or "")
         try:
             stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
@@ -999,6 +1004,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
         text_out = (
             _fm_block({
                 "id": f"claude-{_slug(title)}",
+                **({"conversation_id": conv_uid} if conv_uid else {}),  # claude.ai exports carry `uuid` (MN32: a retitled export duplicated)
                 "title": title,
                 "type": "imported",
                 "imported_from": "claude",
@@ -1011,7 +1017,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
         if _chat_already_imported(dest, text_out, listing):
             already += 1
             continue
-        prior = known.get(_chat_fingerprint(text_out))
+        prior = known.get(_chat_fingerprint(text_out)) or (known.get(("conv:" + conv_uid, "")) if conv_uid else None)
         if prior is not None:
             already += 1
             older_build.append(f"{title!r} is already imported as {prior} (by an older build)")

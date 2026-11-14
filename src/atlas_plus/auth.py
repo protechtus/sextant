@@ -208,10 +208,36 @@ class AuthFailureLog:
     def clear(self) -> None:
         """Drop all records (used by tests)."""
         with self._lock:
+            self._refused.clear()
+        with self._lock:
             self._records.clear()
 
 
 LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def trusted_peer_matcher(raw: str):
+    """``trusted`` callable for ``forwarded_ip`` from a comma-separated list of IPs or CIDRs (the
+    MCP server's ATLAS_MCP_TRUSTED_PEERS rule, shared with the dashboard: MN35, behind compose the
+    dashboard saw every client as the Docker gateway and one bad client locked the operator out)."""
+    entries = [e.strip() for e in (raw or "").split(",") if e.strip()]
+
+    def _trusted(peer: str) -> bool:
+        if not entries or not peer:
+            return False
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(peer)
+        except ValueError:
+            return False
+        for entry in entries:
+            try:
+                if addr in ipaddress.ip_network(entry, strict=False):
+                    return True
+            except ValueError:
+                continue
+        return False
+    return _trusted
 
 
 def forwarded_ip(headers, peer: str, trusted=None) -> str:

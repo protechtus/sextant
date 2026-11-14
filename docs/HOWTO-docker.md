@@ -83,8 +83,10 @@ Two things about keys that only show up later:
   precedence). If `ATLAS_MCP_TOKEN` is exported in your profile, the container
   gets that one, not the file's: every client that reads the file then gets
   `401` and `claude mcp list` says Failed, with no warning from compose.
-  `docker compose config | grep TOKEN` shows which won; `unset ATLAS_MCP_TOKEN`
-  (or a fresh shell) before `up` fixes it.
+  `docker compose config | grep TOKEN | sha256sum` against `grep TOKEN .env | sha256sum` shows
+  which won without printing the secrets; the server's startup log also prints its token's
+  fingerprint (sha256 prefix), and a 401 body repeats it. `unset ATLAS_MCP_TOKEN` (or a fresh
+  shell) before `up` fixes it.
 - The doctor's Services rows mean little under compose: each container probes
   its own loopback, so the MCP row is up and every other service reads down
   even when it is running. Use `docker compose ps` and the curls for liveness,
@@ -94,7 +96,10 @@ Two things about keys that only show up later:
   "Session expired" and you open it again with `?key=`. Nothing is lost.
 - One stale client (an old registration with a wrong token) locks every client behind the
   same address out for five minutes after ten failures: set `ATLAS_MCP_TRUSTED_PEERS` to the
-  compose gateway (`docker network inspect <project>_default`) in `.env`.
+  compose gateway (`docker network inspect <project>_default`) in `.env`. Compose passes it to
+  the dashboard too (one bad browser otherwise locks the operator out of the dashboard for a
+  minute at a time). Restoring into a fresh stack: `docker volume create <project>_sextant-data`
+  before the tar, or compose warns that the volume "was not created by Docker Compose".
 
 Wire your MCP client at `http://127.0.0.1:8765/mcp` with the bearer token.
 For Claude Code that is one command; the token must come from the file, since

@@ -908,7 +908,7 @@ def resolve_target(scope: str, for_read: bool = False) -> tuple[Path, dict]:
     return target, fm_template
 
 
-_CONFLICT_RE = _re.compile(r"(?m)^(?:<<<<<<<|>>>>>>>)(?:[ \t]|$)")
+_CONFLICT_RE = _re.compile(r"(?m)^(?:<<<<<<<|>>>>>>>)(?:[ \t\r]|$)")  # CRLF too (MN31)
 
 
 def has_conflict_markers(text: str) -> bool:

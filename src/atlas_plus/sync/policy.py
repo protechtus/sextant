@@ -230,6 +230,10 @@ def deny_reason(
     # (self-hoster pass 2026-11-10: an archived parked copy was pushed to the hub).
     if norm_parts[0] == "_atlas" and len(norm_parts) > 2:
         return "sync-internal path"
+    if norm_parts[0] == "_atlas" and direction == "write":
+        # a device pushing _atlas/routing.yaml rewrote every route on the hub at once (MN35): the hub's
+        # configuration flows hub -> devices only; edit it on the hub
+        return "hub configuration (edit it on the hub)"
     if _matches_secret(rel):
         return "secret (tier 3) never syncs"
     if principal is not None:

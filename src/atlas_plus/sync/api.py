@@ -292,7 +292,9 @@ def main() -> None:
                 "pair a device first (atlas-sync pair <name>)"
             )
     # Single-worker only: the manifest cache + auth audit state are in-process.
-    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info", proxy_headers=False)
+    import os as _os
+    uvicorn.run(create_app(), host=args.host, port=args.port,
+                log_level=_os.environ.get("ATLAS_SYNC_LOG_LEVEL", "warning").lower(), access_log=False, proxy_headers=False)  # every request incl. file paths was logged at INFO (MN35)
 
 
 if __name__ == "__main__":

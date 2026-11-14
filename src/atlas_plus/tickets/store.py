@@ -156,8 +156,7 @@ def _prefix_for(project: str, tickets_root: Path) -> str:
         pass
     base = re.sub(r"[^A-Za-z0-9]", "", project).upper() or "TKT"
     default = base[:3]
-    if pdir.is_dir() and any(f.suffix == ".md" and not f.name.startswith("_") for f in pdir.iterdir()):
-        return default  # legacy project: its ids are already minted with these letters
+    legacy = pdir.is_dir() and any(f.suffix == ".md" and not f.name.startswith("_") for f in pdir.iterdir())
     taken: set[str] = set()
     try:
         for d in tickets_root.iterdir():
@@ -169,9 +168,14 @@ def _prefix_for(project: str, tickets_root: Path) -> str:
                     v = re.sub(r"[^A-Za-z0-9]", "", (d / ".prefix").read_text(encoding="utf-8")).upper()
             except OSError:
                 v = ""
-            taken.add(v or (re.sub(r"[^A-Za-z0-9]", "", d.name).upper() or "TKT")[:3])
+            other = v or (re.sub(r"[^A-Za-z0-9]", "", d.name).upper() or "TKT")[:3]
+            if legacy and not v and other == default and d.name > project:
+                continue  # two legacy projects share the letters: the one that sorts first keeps them (MN32)
+            taken.add(other)
     except OSError:
         pass
+    if legacy and default not in taken:
+        return default  # legacy project: its ids are already minted with these letters
     cand, k = default, 3
     while cand in taken and k < len(base):
         k += 1
@@ -413,8 +417,8 @@ def create_ticket(
     from atlas_plus.autonomous import require_write
     require_write("ticket_create", interactive=interactive)
     if not _is_safe_project(project):
-        raise ValueError(f"Invalid project name {project!r}: only letters, digits, dots, hyphens, underscores, plus allowed "
-                         f"(no leading or trailing dot, not a Windows device name).")
+        raise ValueError(f"Invalid project name {project!r}: only ASCII letters, digits, dots, hyphens, underscores, plus allowed "
+                         f"(no leading underscore or dot, no trailing dot, not a Windows device name).")
     from atlas_plus.mcp.memory_server.routing import _scrub_controls as _scrub
     title = _scrub(str(title or "")); body = _scrub(str(body or ""))   # ESC/BEL in a title (FN6)
     if not title or not title.strip():
