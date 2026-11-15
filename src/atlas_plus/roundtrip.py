@@ -532,6 +532,15 @@ def _main_lines(argv: list[str]) -> int:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+        try:  # MN78: the documented post-update path runs verify first, so the one-time index rebuild happened in
+            # this server, and its notice went to a log nobody read; pass those lines on
+            errlog.flush()
+            for _ln in _decode_log(Path(errlog.name).read_bytes()).splitlines():
+                if _ln.startswith(("Sextant: building the search index", "Sextant: search index built",
+                                   "Sextant: re-indexing")):
+                    print(_ln, file=sys.stderr)
+        except OSError:
+            pass
         _discard_log()
 
     print("ROUND-TRIP: " + ("OK" if ok else "FAILED"))

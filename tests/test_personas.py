@@ -757,6 +757,7 @@ def test_setup_prints_a_registration_for_this_install(monkeypatch, tmp_path):
     assert "-- wsl -d 'Ubuntu' -- " in wsl and "'WSLENV=ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR'" in wsl
     monkeypatch.setenv("WSLENV", "WT_SESSION")
     assert "'WSLENV=WT_SESSION:ATLAS_MEMORY_ROOT:ATLAS_STATE_DIR'" in setup_cmd.describe()["claude_code_from_windows"]
+    (root / "memory").mkdir(parents=True, exist_ok=True)  # an initialised install: setup before init warns on stderr (MN78)
     from atlas_plus.cli import app
     res = CliRunner().invoke(app, ["setup", "--json"])
     assert res.exit_code == 0 and json.loads(res.output)["verify"].endswith("-m atlas_plus verify")

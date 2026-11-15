@@ -555,7 +555,7 @@ Then restart whatever services you run. Docker users:
 to a commit, `git checkout main` first: a detached-HEAD `git pull` prints a
 help page (its exit code depends on the git version), and the build then rebuilds the OLD source). A later
 search rebuilds the keyword index only when a build changed the tokenizer
-(most updates do not; the log says so when it happens), and last week's image
+(several recent builds did; the first search, or `sextant verify`, says so on stderr when it happens), and last week's image
 still reads the new index if you roll back.
 
 ## Good to know (from fresh-install testing)

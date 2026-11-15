@@ -756,6 +756,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
     info = describe(name=args.name)
+    if not Path(info["memory_root"]).is_dir():  # MN78: setup before init printed a full registration and no word; the client then reported `degraded`
+        print(f"sextant setup: the memory root {info['memory_root']} does not exist yet: run `sextant init` first "
+              "(the registration below works once it does).", file=sys.stderr)
     if args.json and args.client not in ("all",):
         # `--client X --json` used to ignore --client and print everything (AG24, sweep 12).
         pieces = {"json": info.get("client_config_json"), "opencode": info.get("opencode_json"),
