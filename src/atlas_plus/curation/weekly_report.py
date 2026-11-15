@@ -220,6 +220,7 @@ def generate_report(
         *[f"- `{c['path']}` ({c['age_days']} days; `memory_confirm_tool` when still true, or archive)" for c in never[:30]],
         *([f"- ... and {len(never) - 30} more (`atlas-review-memory unconfirmed-decay --json`)"] if len(never) > 30 else []),
         "",
+        *([f"_The duplicate scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of {_dupmod._LAST_PARTIAL[1]:,} notes (ATLAS_DUPLICATES_BUDGET_SECONDS)._", ""] if _dupmod._LAST_PARTIAL[1] else []),
         f"## Potential Duplicates ({len(dups)}{'+' if _dupmod._LAST_CAPPED else ''} found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + ')' if _dupmod._LAST_CAPPED else ''}, threshold={dup_threshold})",
         "",
     ]

@@ -25,6 +25,7 @@ _NON_CURATABLE_DIRS = EXCLUDED_DIRS | {
 
 _MAX_FILE_PAIRS = 500  # the report shows a handful; snippets for more than this are wasted reads (AG32)
 _LAST_CAPPED = False   # True when the last file-level scan found more pairs than the cap (AG42: the count read as a total)
+_LAST_PARTIAL = [0, 0]  # [notes scanned, notes total] when the last scan stopped at its time budget (AG75)
 
 
 def _tokenize(text: str) -> set[str]:
@@ -303,8 +304,18 @@ def find_duplicates(
     # than the cap has been found, the working threshold rises to the cap's weakest pair: the
     # output is the best _MAX_FILE_PAIRS pairs either way, so the result stays exact.
     from bisect import bisect_right
+    import time as _time
+    try:
+        _budget = float(__import__("os").environ.get("ATLAS_DUPLICATES_BUDGET_SECONDS") or 60)
+    except ValueError:
+        _budget = 60.0
+    _deadline = _time.monotonic() + _budget if _budget > 0 else None
+    _LAST_PARTIAL[0] = _LAST_PARTIAL[1] = 0
     thr = threshold
     for i in range(len(file_list)):
+        if _deadline is not None and i % 64 == 0 and _time.monotonic() > _deadline:
+            _LAST_PARTIAL[0], _LAST_PARTIAL[1] = i, len(file_list)  # the strongest pairs so far; 20,000 notes took 250 s and 3 GB (AG75)
+            break
         si = sizes[i]
         if si == 0:
             continue

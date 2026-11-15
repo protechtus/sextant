@@ -69,6 +69,9 @@ def cmd_duplicates(
         table.add_row(p.file1, p.file2, f"{p.similarity:.2f}")
     console.print(table)
     from atlas_plus.curation import duplicates as _dupmod
+    if _dupmod._LAST_PARTIAL[1]:
+        console.print(f"[yellow]The scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of {_dupmod._LAST_PARTIAL[1]:,} notes: "
+                      "the pairs below are the strongest found so far. Use --scope <folder>, or raise ATLAS_DUPLICATES_BUDGET_SECONDS (0 = no limit).[/yellow]")  # AG75
     console.print(f"\n[yellow]{len(pairs)}{'+' if _dupmod._LAST_CAPPED else ''} pair(s) found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + '; the strongest pairs are shown: raise the threshold for fewer, or use --scope <folder> for one part of the corpus)' if _dupmod._LAST_CAPPED else ''}.[/yellow]")
 
 

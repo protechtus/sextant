@@ -92,3 +92,15 @@ def test_doctor_names_cloud_drive_conflict_copies(tmp_path):
         result = check_memory_corpus()
     assert result.get("conflict_copies") == ["projects/orca (1).md"] and "keep one" in result["conflict_copies_hint"]
 
+
+def test_duplicate_scan_stops_at_its_budget(tmp_path, monkeypatch):
+    from atlas_plus.curation import duplicates as d
+    for i in range(300):
+        (tmp_path / f"n{i}.md").write_text("alpha beta gamma delta epsilon zeta eta theta iota kappa " + f"w{i % 7}", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_DUPLICATES_BUDGET_SECONDS", "0.000001")
+    d.find_duplicates(memory_root=tmp_path)
+    assert d._LAST_PARTIAL[1] == 300 and d._LAST_PARTIAL[0] < 300           # stopped early and said where
+    monkeypatch.setenv("ATLAS_DUPLICATES_BUDGET_SECONDS", "0")
+    pairs = d.find_duplicates(memory_root=tmp_path)
+    assert d._LAST_PARTIAL == [0, 0] and pairs                                  # no limit: the full scan
+
