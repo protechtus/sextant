@@ -644,6 +644,7 @@ def test_verify_never_follows_a_redirect_with_the_token():
 
     class Redirector(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))  # read the body first: answering early reset the socket on a busy machine (flaky on CI and Windows)
             self.send_response(301)
             self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/elsewhere")
             self.end_headers()

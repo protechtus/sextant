@@ -195,12 +195,25 @@ def _cheap_snippet(conn, rowid, query: str, width: int = 90) -> str:
     except Exception:  # noqa: BLE001
         return ""
     terms = [t for t in re.findall(r"[^\s\"()*:^+]+", query) if t.upper() not in ("AND", "OR", "NOT", "NEAR")]
-    low = body.casefold()
+    # `low` is the folded text and `pos` the body index of each folded character: casefold lengthens
+    # some letters (U+01F0 -> 2) and the index keeps U+2060 between CJK characters, so an index found in
+    # `low` was not an index into `body` (AG73: 400 such letters gave `...[]`; a CJK term never bracketed)
+    low_parts: list = []
+    pos: list = []
+    for k, ch in enumerate(body):
+        if ch == _CJK_SEP:
+            continue
+        f = ch.casefold()
+        low_parts.append(f)
+        pos.extend([k] * len(f))
+    low = "".join(low_parts)
     for t in terms:
-        i = low.find(t.casefold().replace(_CJK_SEP, ""))
-        if i >= 0:
-            a, b = max(0, i - width), min(len(body), i + len(t) + width)
-            return ("..." if a else "") + body[a:i] + "[" + body[i:i + len(t)] + "]" + body[i + len(t):b] + ("..." if b < len(body) else "")
+        needle = t.casefold().replace(_CJK_SEP, "")
+        j = low.find(needle) if needle else -1
+        if j >= 0:
+            i, e = pos[j], pos[j + len(needle) - 1] + 1
+            a, b = max(0, i - width), min(len(body), e + width)
+            return ("..." if a else "") + body[a:i] + "[" + body[i:e] + "]" + body[e:b] + ("..." if b < len(body) else "")
     return body[: 2 * width] + ("..." if len(body) > 2 * width else "")
 
 

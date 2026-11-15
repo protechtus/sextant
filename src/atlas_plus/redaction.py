@@ -624,7 +624,10 @@ _PW_WORDS_ASCII = tuple(w for w in _PW_WORDS_STRIPPED if w.isascii())  # the ASC
 _PRODUCT_RE = re.compile(r"^[A-Za-z]{2,}[0-9]{1,4}(?:-\w+)?$")  # Windows11, iPhone15, Office365, Ubuntu24: names, not values (MN62: 35 of 69 ordinary sentences)
 
 
-def _secret_shaped(tok: str) -> bool:
+_VALUE_CUE_RE = re.compile(r"(?:\b(?:is|was|ist|lautet|est|es|era|é|är|er)\b|[:=])[ \t]*['\"`(\[]?$", re.IGNORECASE)
+
+
+def _secret_shaped(tok: str, value_slot: bool = False) -> bool:
     if "://" in tok or "/" in tok or "\\" in tok or "=" in tok or tok.startswith("[REDACTED"):  # `token_count=12` is a key=value pair: the kv rule judges it
         return False
     low = tok.casefold()
@@ -632,8 +635,8 @@ def _secret_shaped(tok: str) -> bool:
         return False  # an identifier (`getPassword2`, `SecretAccessKey`), not a value
     if not any(c.isdigit() for c in tok) or not any(c.isalpha() for c in tok):
         return False
-    if _PRODUCT_RE.match(tok):
-        return False
+    if _PRODUCT_RE.match(tok) and not value_slot:
+        return False  # `on Windows11` is a name; `password is Summer2024` is the value (AG73)
     return (any(c.isupper() for c in tok) and any(c.islower() for c in tok)) or any(c in _PW_SYMBOLS for c in tok)
 
 
@@ -643,12 +646,16 @@ def _keyword_line_redact(text: str) -> str:
         if not any(w in low_all for w in _PW_WORDS_ASCII):
             return text
 
-    def _mask(m):
+    def _mask(m, carried=False):
         tok = m.group(0)
         core = tok.rstrip(".,;:!?)]}\"'")
         lead = len(core) - len(core.lstrip("(\"'[{"))
         core2 = core[lead:]
-        if len(core2) >= 8 and _secret_shaped(core2):
+        if len(core2) >= 8 and _PRODUCT_RE.match(core2):  # the cue look-back is bounded and only for Word+digits: the whole prefix per token was quadratic
+            slot = carried or bool(_VALUE_CUE_RE.search(m.string[max(0, m.start() - 24):m.start()].rstrip(" \t")))
+        else:
+            slot = carried
+        if len(core2) >= 8 and _secret_shaped(core2, value_slot=slot):
             return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
         return tok
 
@@ -658,11 +665,14 @@ def _keyword_line_redact(text: str) -> str:
         probe = _strip_marks(line).casefold()
         if any(w in probe for w in _PW_WORDS_STRIPPED):
             new = _PW_TOKEN_RE.sub(_mask, line)
-            carry = new == line
+            carry = new == line and "[REDACTED" not in line  # an already-masked value does not carry to the next line (AG73)
             out_lines.append(new)
             continue
+        if carry and (not line.strip() or line.strip().startswith(("```", "~~~"))):
+            out_lines.append(line)  # `password is below:`, a blank line or a fence, then V: the value leaked (AG73)
+            continue
         if carry and line.strip() and len(line.split()) == 1:
-            out_lines.append(_PW_TOKEN_RE.sub(_mask, line))
+            out_lines.append(_PW_TOKEN_RE.sub(_mask, line))  # a carried line keeps the name exemption: `Change the password` then a heading `Installation2`
         else:
             out_lines.append(line)
         carry = False

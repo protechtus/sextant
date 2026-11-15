@@ -114,7 +114,8 @@ def _parse_ticket(path: Path) -> Optional[Ticket]:
         if split is None:
             return None
         lines, end = split
-        fm = yaml.safe_load("".join(lines[1:end])) or {}
+        from atlas_plus._yaml import fast_safe_load as _fsl
+        fm = _fsl("".join(lines[1:end])) or {}  # the C loader: 9.9 of 10.9 s listing 5,000 tickets was the pure one (AG75)
         if not isinstance(fm, dict):
             return None
         body = "".join(lines[end + 1:]).strip()

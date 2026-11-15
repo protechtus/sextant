@@ -1161,7 +1161,7 @@ async def task_detail(task_id: str, request: Request):
     from atlas_plus.brain import tasks as ts
     task = ts.get_task(task_id)
     if not task:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Task {task_id} not found</div>')
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Task {_html_mod.escape(task_id)} not found</div>')  # reflected markup ran in the page (AG73)
     sc = {
         "done": "text-green-400", "running": "text-yellow-400", "failed": "text-red-400",
         "pending": "text-blue-400", "blocked": "text-orange-400",
@@ -3639,6 +3639,9 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
 
     if not tickets_list:
         return HTMLResponse('<div class="text-slate-500 text-xs">No tickets.</div>')
+    _BOARD_CAP = 500
+    _board_more = max(0, len(tickets_list) - _BOARD_CAP)
+    tickets_list = tickets_list[:_BOARD_CAP]  # 5,000 tickets made a 3 MB board and 40,586 DOM nodes (AG75)
 
     # Batch-query Brain tasks linked to tickets (dispatch + verify badges).
     # Dispatch: session_id = 'ticket-{ID}'; Verify: session_id = 'verify-ticket-{ID}'
@@ -3738,6 +3741,8 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
             f'{verify_badge}'
             f'</div>'
         )
+    if _board_more:
+        rows.append(f'<div class="text-slate-500 text-xs mt-2">{_board_more} more ticket(s) not shown: pick a project or a status filter to narrow the board.</div>')
     return HTMLResponse("\n".join(rows))
 
 
@@ -3993,7 +3998,7 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
     from atlas_plus.tickets.store import get_ticket as _get, update_ticket_status as _update_status, ambiguous_hint as _ah, LAST_AMBIGUOUS as _la
 
     _la.clear()
-    _tid = ticket_id if "/" in ticket_id else ticket_id.upper()
+    _tid = _norm_ref(ticket_id)  # `alpha/alp-001` answered 404 here and 200 on status/detail (AG73)
     ticket = _get(_tid)
     if not ticket:
         if _ah():  # one id in two projects: the first match was dispatched and neither status changed (MN64)
@@ -4141,7 +4146,7 @@ async def ticket_detail(ticket_id: str, request: Request):
         if _get_ticket(ticket_id.upper()) is None and _tstore.ambiguous_hint():  # a bare id in several project folders showed whichever the walk met first (AG67, sibling of MN56's 409)
             return HTMLResponse(f'<div class="text-red-400 text-xs">{_html_mod.escape(_tstore.ambiguous_hint())}</div>', status_code=409)
     if not ticket:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Ticket {ticket_id} not found</div>')
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Ticket {_html_mod.escape(ticket_id)} not found</div>')  # reflected markup ran in the page (AG73)
     body_text = getattr(ticket, "body", "") or ""
     escaped_body = _html_mod.escape(body_text)
     sc = {
@@ -4453,7 +4458,7 @@ async def session_read(name: str, request: Request):
         safe_name += ".md"
     session_file = MEMORY_ROOT / "sessions" / safe_name
     if not session_file.exists():
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Session {safe_name} not found</div>')
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Session {_html_mod.escape(safe_name)} not found</div>')  # (AG73)
     content = session_file.read_text(encoding="utf-8", errors="replace")
     truncated = len(content) > 10_000
     preview = content[:10_000]
@@ -5981,7 +5986,7 @@ function _kbdify(root){{
     if(['BUTTON','A','INPUT','SELECT','TEXTAREA','OPTION','LABEL'].includes(tag)||el.hasAttribute('tabindex'))return;
     el.setAttribute('tabindex','0');
     if(!el.hasAttribute('role'))el.setAttribute('role',el.classList.contains('tab')?'tab':'button');
-    el.addEventListener('keydown',ev=>{{if(ev.key==='Enter'||ev.key===' '){{ev.preventDefault();el.click();}}}});
+    el.addEventListener('keydown',ev=>{{if(ev.target!==el)return;if(ev.key==='Enter'||ev.key===' '){{ev.preventDefault();el.click();}}}});  // a Space typed in the palette input bubbled here and closed the palette (AG73)
   }});
 }}
 document.addEventListener('DOMContentLoaded',()=>_kbdify(document));

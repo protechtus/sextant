@@ -106,7 +106,7 @@ def main() -> None:
             print("corpus: not reset (the state step would refuse; nothing was changed)")
             raise SystemExit(1)
     if do_corpus:
-        refusal = uninstall_cmd.confirm_corpus_removal(args.yes, args.confirm_path)
+        refusal = uninstall_cmd.corpus_target_refusal() or uninstall_cmd.confirm_corpus_removal(args.yes, args.confirm_path)  # (AG73)
         if refusal is not None:
             if do_state:
                 print("state:  not reset (corpus confirmation failed; nothing was changed)")

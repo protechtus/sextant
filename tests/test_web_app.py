@@ -2959,3 +2959,16 @@ def test_mn64_capture_scopes_hold_no_private_project():
     sel = sel[: sel.find("</select>")]
     assert "atlas-memory+" not in sel
 
+
+def test_ag75_board_is_capped_and_says_how_many_more():
+    from atlas_plus.tickets import store as _tstore
+    d = Path(_tstore.TICKETS_ROOT) / "bulkag75"
+    d.mkdir(parents=True, exist_ok=True)
+    for i in range(1, 511):
+        (d / f"BLK-{i:03d}.md").write_text(
+            f"---\nid: BLK-{i:03d}\ntitle: t{i}\nproject: bulkag75\nstatus: todo\nassignee: human\npriority: normal\n"
+            "effort: M\nupdated: 2026-11-01\n---\nb\n", encoding="utf-8")
+    r = client.get("/api/tickets/board?project=bulkag75&status_filter=open", headers=AUTH)
+    assert r.status_code == 200 and "10 more ticket(s) not shown" in r.text
+    assert r.text.count("BLK-") < 1100                                          # 500 rows, not 510
+

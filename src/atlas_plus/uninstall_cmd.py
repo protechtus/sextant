@@ -500,7 +500,12 @@ def _is_link(p: Path) -> bool:
         if p.is_symlink():
             return True
         isj = getattr(os.path, "isjunction", None)
-        return bool(isj and isj(str(p)))
+        if isj is not None:
+            return bool(isj(str(p)))
+        # Python 3.11 has no os.path.isjunction: a junction corpus passed every guard and the
+        # refusal came from rmtree, after `--all` had already removed the state (AG73)
+        st = os.lstat(str(p))
+        return getattr(st, "st_reparse_tag", 0) == 0xA0000003
     except OSError:
         return False
 
@@ -658,6 +663,15 @@ def confirm_corpus_removal(yes: bool, confirm_path: str | None, ask=input) -> st
     return None
 
 
+def corpus_target_refusal() -> str | None:
+    """The refusal remove_corpus's target guard would give, for the `--all` pre-phase: `--all` removed or
+    reset the state, then refused a junction corpus (AG73)."""
+    corpus = atlas_paths.memory_root()
+    if not corpus.exists():
+        return None
+    return validate_destructive_target("corpus", corpus)
+
+
 def remove_corpus(yes: bool, confirm_path: str | None, ask=input,
                   preauthorized: bool = False) -> str:
     corpus = atlas_paths.memory_root()
@@ -787,7 +801,7 @@ def _main() -> None:
 
     # TWO-PHASE: validate every confirmation BEFORE deleting anything, so a
     # refusal (or closed stdin) can never leave a partial teardown.
-    corpus_refusal = confirm_corpus_removal(args.yes, args.confirm_path) if do_corpus else None
+    corpus_refusal = (corpus_target_refusal() or confirm_corpus_removal(args.yes, args.confirm_path)) if do_corpus else None  # (AG73)
     state_refusal = confirm_state_removal(args.yes, args.confirm_state_path) if do_state else None
     if corpus_refusal or state_refusal:
         if do_state:

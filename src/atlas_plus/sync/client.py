@@ -267,7 +267,7 @@ class SyncClient:
     def push(self, changes: list[dict]) -> dict:
         response = self._post("/sync/v1/push", {"changes": changes})
         if response.status_code == 401:
-            raise SyncClientError("unauthorized: token rejected by hub")
+            raise SyncAuthError("the hub rejected this device's token (revoked, or a new pairing): sync stopped")  # one sentence, not one per file (AG73)
         if response.status_code != 200:
             raise SyncClientError(f"push: HTTP {response.status_code}: {_detail(response)}")
         try:
@@ -369,6 +369,8 @@ class SyncClient:
         # entry so the next run reports it again instead of pulling the hub copy back
         # (round C 2026-11-10, lane A F2).
         unresolved: set[str] = set(plan.local_deleted)
+        unresolved.update(plan.conflicts)  # every conflict keeps its old anchor even when the run stops early (AG73)
+        auth_stopped = False  # a 401 stops the WHOLE run: the push and conflicts passes went on with one 401 line per file (AG73)
         local_files = local.get("files", {})
         for rel in plan.to_pull:
             try:
@@ -401,12 +403,15 @@ class SyncClient:
             except SyncAuthError as exc:
                 report.errors.append(str(exc))
                 unresolved.update(r for r in plan.to_pull if r not in report.pulled)
+                auth_stopped = True
                 break
             except (apply.SyncIntegrityError, SyncClientError, OSError) as exc:
                 report.errors.append(f"{rel}: {exc}")
                 unresolved.add(rel)
 
-        if plan.to_push:
+        if auth_stopped:
+            unresolved.update(plan.to_push)
+        if plan.to_push and not auth_stopped:
             base_files = old_base_files
             changes = []
             for rel in plan.to_push:
@@ -437,6 +442,11 @@ class SyncClient:
             if changes:
                 try:
                     results = self.push(changes).get("results", [])
+                except SyncAuthError as exc:
+                    report.errors.append(str(exc))
+                    unresolved.update(ch["path"] for ch in changes)
+                    auth_stopped = True
+                    results = []
                 except SyncClientError as exc:
                     # The whole batch failed to land: every file stays unresolved and the
                     # run continues to the conflicts pass and the base save (F4).
@@ -472,6 +482,10 @@ class SyncClient:
                                 continue  # the hub holds the same bytes: converged, not a conflict (MN65)
                             report.parked[rel] = str(apply.quarantine(
                                 root, rel, content, reason="push conflict: the hub changed it too"))
+                        except SyncAuthError as exc:
+                            if not auth_stopped:
+                                report.errors.append(str(exc))
+                            auth_stopped = True
                         except Exception as exc:  # noqa: BLE001
                             report.errors.append(f"{rel}: could not fetch the hub's copy ({_detail(exc)})")
                     elif result == "denied":
@@ -483,6 +497,8 @@ class SyncClient:
                         unresolved.add(rel)
 
         for rel in plan.conflicts:
+            if auth_stopped:
+                break  # every conflict is already unresolved: nothing parked, nothing lost
             unresolved.add(rel)
             if rel not in remote_files_all:
                 # Local edit vs hub delete: that is a deletion to report, not a file to
@@ -497,6 +513,10 @@ class SyncClient:
                 report.parked[rel] = str(apply.quarantine(
                     root, rel, content, reason="pull conflict: both sides changed"))
                 report.conflicts.append(rel)
+            except SyncAuthError as exc:
+                report.errors.append(str(exc))
+                auth_stopped = True
+                break
             except (SyncClientError, OSError) as exc:
                 report.errors.append(f"{rel}: {exc}")
 
@@ -531,6 +551,8 @@ class SyncClient:
         if self._credential:
             refreshed["credential"] = self._credential
         store.save_base_manifest(base_id, refreshed)
+        if auth_stopped:
+            return report  # the check-in would be one more 401 (AG73)
         try:
             self.checkin({"manifest_hash": refreshed["manifest_hash"]})
         except (SyncClientError, httpx.HTTPError):
