@@ -3678,7 +3678,10 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
     _BOARD_CAP = 500
     _board_more = max(0, len(tickets_list) - _BOARD_CAP)
     if _board_more:  # keep the most recently updated, in the board's own order: the cap cut exactly the newest tickets (MN70)
-        _keep = {id(t) for t in sorted(tickets_list, key=lambda t: str(getattr(t, 'updated', '') or getattr(t, 'created', '') or ''), reverse=True)[:_BOARD_CAP]}
+        def _recency(t):  # `updated` is a date only: 520 tickets of one day tied and the newest were cut (MN76); the id number breaks the tie
+            _m = re.search(r"-(\d+)$", str(getattr(t, 'id', '') or ''))
+            return (str(getattr(t, 'updated', '') or getattr(t, 'created', '') or ''), int(_m.group(1)) if _m else -1)
+        _keep = {id(t) for t in sorted(tickets_list, key=_recency, reverse=True)[:_BOARD_CAP]}
         tickets_list = [t for t in tickets_list if id(t) in _keep]  # 5,000 tickets made a 3 MB board and 40,586 DOM nodes (AG75)
 
     # Batch-query Brain tasks linked to tickets (dispatch + verify badges).
@@ -3780,7 +3783,8 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
             f'</div>'
         )
     if _board_more:
-        rows.append(f'<div class="text-slate-500 text-xs mt-2">{_board_more} more ticket(s) not shown: pick a project or a status filter to narrow the board.</div>')
+        _narrow = "pick a status filter" if project else "pick a project or a status filter"  # with a project picked it still asked for one (MN76)
+        rows.append(f'<div class="text-slate-500 text-xs mt-2">{_board_more} more ticket(s) not shown: {_narrow} to narrow the board.</div>')
     return HTMLResponse("\n".join(rows))
 
 
@@ -4911,6 +4915,7 @@ button{{font-family:inherit;cursor:pointer}}
 /* AG80: the capture input and the palette input had border:none + outline:none, so focus was invisible */
 .capture-bar input:focus-visible{{outline:2px solid #22d3ee;outline-offset:1px;border-radius:.25rem}}
 .palette-input:focus-visible{{outline:2px solid #22d3ee;outline-offset:-2px}}
+#capture-scope:focus-visible{{outline:2px solid #22d3ee;outline-offset:1px}}
 .tab:focus-visible{{outline:2px solid #22d3ee;outline-offset:1px}}
 header.page-head{{display:contents}}
 .stream-output{{background:var(--bg);border:1px solid var(--border);border-radius:.375rem;padding:.5rem;font-size:.65rem;color:var(--text-m);white-space:pre-wrap;word-break:break-word;max-height:12rem;overflow-y:auto;margin-top:.5rem}}
@@ -6113,6 +6118,22 @@ function _kbdify(root){{
 document.addEventListener('DOMContentLoaded',()=>_kbdify(document));
 document.body&&document.body.addEventListener('htmx:afterSwap',ev=>_kbdify(ev.target));
 document.addEventListener('htmx:afterSwap',ev=>_kbdify(ev.target));
+// A polled list (tasks every 8 s, tickets and inbox every 30 s) re-rendered under a focused row and dropped focus on the
+// page body (MN76): the same row, by its onclick, takes focus back; a row that is gone leaves focus on its list.
+let _swapFocus=null;
+document.addEventListener('htmx:beforeSwap',ev=>{{
+  const a=document.activeElement,t=ev.detail&&ev.detail.target;
+  _swapFocus=(a&&a!==document.body&&t&&t.contains(a))?{{oc:a.getAttribute('onclick'),t}}:null;
+}});
+document.addEventListener('htmx:afterSwap',ev=>{{
+  const s=_swapFocus;_swapFocus=null;
+  if(!s||document.activeElement!==document.body||!s.t.isConnected)return;
+  _kbdify(s.t);
+  const el=s.oc?[...s.t.querySelectorAll('[onclick]')].find(x=>x.getAttribute('onclick')===s.oc):null;
+  if(el){{el.focus({{preventScroll:true}});return;}}
+  if(!s.t.hasAttribute('tabindex'))s.t.setAttribute('tabindex','-1');
+  s.t.focus({{preventScroll:true}});
+}});
 // content filled by fetch + innerHTML (memory search results, details) never fired htmx:afterSwap (MN70)
 document.addEventListener('DOMContentLoaded',()=>{{let _kq=null;new MutationObserver(()=>{{if(_kq)return;_kq=requestAnimationFrame(()=>{{_kq=null;_kdify_all();}});}}).observe(document.body,{{childList:true,subtree:true}});}});
 function _kdify_all(){{_kbdify(document);}}
@@ -6698,6 +6719,8 @@ const _PALETTE_CMDS=[
 let _palActive=0,_palReturn=null;
 
 function openPalette(){{
+  const _dm=document.getElementById('dispatch-modal');
+  if(_dm&&_dm.style.display==='flex')return;  // two focus traps fought: "Maximum call stack size exceeded" and the keys went into the hidden instruction box (MN76)
   const pal=document.getElementById('palette');
   if(pal.style.display!=='flex'){{const a=document.activeElement;_palReturn=(a&&a!==document.body)?a:null;}}
   pal.style.display='flex';
@@ -6732,15 +6755,17 @@ function renderPalette(cmds){{
 }}
 function filterPalette(q){{
   _palActive=0;
-  const filtered=_PALETTE_CMDS.filter(c=>_palMatch(c,q));
+  const filtered=_PALETTE_CMDS.filter(c=>_palMatch(c,q)&&(c.hint!=='watchtower'||document.getElementById('tab-watchtower')));  // no command for a tab that is not installed (MN76)
   renderPalette(filtered);
   document.getElementById('palette-list')._filtered=filtered;
 }}
 function execPalette(i){{
   const list=document.getElementById('palette-list');
   const filtered=list._filtered||_PALETTE_CMDS;
+  if(!filtered[i]){{closePalette(true);return;}}  // Enter with no match closed the palette and dropped focus on the page body (MN76)
   closePalette();
-  if(filtered[i])filtered[i].action();
+  filtered[i].action();
+  setTimeout(()=>{{if(document.activeElement===document.body){{const t=document.querySelector('#tabbar .tab[aria-selected="true"]');if(t)t.focus();}}}},250);  // a tab command left focus nowhere (MN76)
 }}
 function palettKey(e){{
   const list=document.getElementById('palette-list');
