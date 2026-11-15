@@ -712,6 +712,15 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
         result["conflict_markers_hint"] = (f"{len(conflicted)} note(s) hold git conflict markers (<<<<<<< / >>>>>>>): "
                                            "resolve the merge before writing to them: " + ", ".join(conflicted[:5]))
     _copies = [f.rel for f in files if re.search(r" \(\d+\)\.md$|conflicted copy|-conflict-\d|\.sync-conflict-", f.rel, re.I)]
+    try:
+        _tmps = sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
+                       if p.is_file() and p.name.endswith((".w-tmp", ".imp-tmp", ".v-tmp")) and "versions" not in p.relative_to(root).parts[:1])
+    except OSError:
+        _tmps = []
+    if _tmps:  # crash leftovers: each holds a full copy of its note and nothing removed them (AG74)
+        result["crash_leftovers"] = _tmps[:10]
+        result["crash_leftovers_hint"] = (f"{len(_tmps)} temporary file(s) left by an interrupted write: the note beside each is "
+                                          "complete, so they can be moved to an archive folder: " + ", ".join(_tmps[:5]))
     if _copies:  # a cloud drive's conflict copies became duplicate tickets and identities, and doctor was silent (AG78)
         result["conflict_copies"] = _copies[:10]
         result["conflict_copies_hint"] = (f"{len(_copies)} file(s) look like a sync tool's conflict copies (`name (1).md`): "

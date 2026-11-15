@@ -110,16 +110,24 @@ def run_init(dry_run: bool = False) -> dict:
                     raise SystemExit(_permission_sentence(p, exc)) from None
 
     def _ensure_file(p: Path, content: str) -> None:
-        if p.exists():
+        if p.exists() and not (p.is_file() and p.stat().st_size == 0 and content):
             existed.append(str(p))
         else:
-            created.append(str(p))
+            created.append(str(p))  # a zero-byte scaffold file (a full disk or a kill) is written again (AG74)
             if not dry_run:
                 try:
                     p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_text(content, encoding="utf-8", newline="\n")  # LF on every OS: a Windows scaffold synced to a Linux hub conflicted on every file (MN24)
+                    tmp = p.with_name(f".{p.name}.{__import__('os').getpid()}.init-tmp")
+                    tmp.write_text(content, encoding="utf-8", newline="\n")  # LF on every OS: a Windows scaffold synced to a Linux hub conflicted on every file (MN24)
+                    __import__('os').replace(tmp, p)  # atomic: a full disk left identity/user.md at 0 bytes for good (AG74)
                 except PermissionError as exc:
                     raise SystemExit(_permission_sentence(p, exc)) from None
+                except OSError as exc:
+                    try:
+                        tmp.unlink()
+                    except (OSError, UnboundLocalError):
+                        pass
+                    raise SystemExit(f"Could not write {p}: {exc.strerror or exc}. Free some space (or fix the folder) and run sextant init again; it repairs what is missing.") from None
 
     _ensure_dir(memory_root)
     for scope in _SCOPE_DIRS:

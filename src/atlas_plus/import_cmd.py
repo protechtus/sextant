@@ -315,6 +315,9 @@ def _safe_scope(scope: str) -> str:
     from atlas_plus import paths as _paths
 
     raw = scope.strip().replace("\\", "/")
+    if ":" in raw and raw.split(":", 1)[0] in ("reference", "project", "preference", "feedback") and "/" not in raw.split(":", 1)[0]:
+        _kind, _topic = raw.split(":", 1)
+        raw = ("projects" if _kind == "project" else _kind) + "/" + _topic.strip("/")  # remember's grammar was "unsafe" here (AG74)
     if raw.startswith("/"):
         raise ValueError(f"unsafe --scope {scope!r}: must be relative, not absolute")
     cleaned = raw.rstrip("/")

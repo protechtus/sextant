@@ -381,8 +381,11 @@ def _write_lock(timeout: float = 60.0, stale: float = 120.0):
                         continue
                 except OSError:
                     pass
-            except PermissionError:
-                pass  # Windows: the previous holder's unlink is still pending while a waiter has the file open; retry (AG67: this fell through to an UNLOCKED write)
+            except PermissionError as exc:
+                _denied = exc  # Windows: the previous holder's unlink is still pending while a waiter has the file open; retry (AG67: this fell through to an UNLOCKED write)
+                if _time.time() > deadline and not lock.exists():
+                    # no lock to wait for: the state dir refuses writes. It was reported as `another summarizer run holds` (MN61)
+                    raise RuntimeError(f"cannot create {lock}: access denied ({_denied}); make {lock.parent} writable; this entry is retried at the next Stop") from exc
             except OSError as exc:
                 raise RuntimeError(f"cannot take {lock} ({exc}); this entry is retried at the next Stop") from exc
             else:

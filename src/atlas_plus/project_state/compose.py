@@ -14,6 +14,57 @@ _COMPOSE_FILENAMES = [
 ]
 
 
+_PS_CMD = ("docker", "compose", "ps", "--format", "json")
+_PS_TIMEOUT = 10.0
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    """Kill a timed-out command and every child it started (MN61)."""
+    import os as _os
+    try:
+        if _os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        else:
+            import signal as _signal
+            _os.killpg(p.pid, _signal.SIGKILL)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        p.kill()
+        p.wait(timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _run_ps(project_dir: Path):
+    """`docker compose ps --format json` in project_dir: (returncode, stdout); TimeoutExpired after the tree is killed."""
+    # AG67: with capture_output a Windows timeout killed docker.exe and then waited for ever on the pipe its
+    # docker-compose.exe child still held (project_state_tool hung the MCP server 147 s with Docker Desktop wedged);
+    # a temp file has no pipe to wait on, and stdin=DEVNULL keeps the child off the MCP stdio pipe
+    import tempfile as _tf
+    import types as _types
+    import os as _os
+    with _tf.TemporaryFile() as _out:
+        # its own process group, and the whole tree killed on timeout: killing docker.exe alone left its hung
+        # docker-compose.exe child running, one per call (MN61)
+        _p = subprocess.Popen(
+            list(_PS_CMD),
+            cwd=str(project_dir),
+            stdin=subprocess.DEVNULL,
+            stdout=_out,
+            stderr=subprocess.DEVNULL,
+            **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if _os.name == "nt" else {"start_new_session": True}),
+        )
+        try:
+            _rc = _p.wait(timeout=_PS_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _kill_tree(_p)
+            raise
+        _out.seek(0)
+        return _types.SimpleNamespace(returncode=_rc, stdout=_out.read().decode("utf-8", errors="replace"))
+
+
 def compose_state(project_dir: Path) -> dict:
     """Return docker-compose state for *project_dir*.
 
@@ -42,23 +93,7 @@ def compose_state(project_dir: Path) -> dict:
     }
 
     try:
-        # AG67: with capture_output a Windows timeout killed docker.exe and then waited for ever on the pipe its
-        # docker-compose.exe child still held (project_state_tool hung the MCP server 147 s with Docker Desktop wedged);
-        # a temp file has no pipe to wait on, and stdin=DEVNULL keeps the child off the MCP stdio pipe
-        import tempfile as _tf
-        import types as _types
-        with _tf.TemporaryFile() as _out:
-            _r = subprocess.run(
-                ["docker", "compose", "ps", "--format", "json"],
-                cwd=str(project_dir),
-                stdin=subprocess.DEVNULL,
-                stdout=_out,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-            )
-            _out.seek(0)
-            _text = _r.stdout if isinstance(_r.stdout, str) else _out.read().decode("utf-8", errors="replace")
-            proc = _types.SimpleNamespace(returncode=_r.returncode, stdout=_text)
+        proc = _run_ps(project_dir)
         if proc.returncode == 0 and proc.stdout.strip():
             services = []
             for line in proc.stdout.splitlines():

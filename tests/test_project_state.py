@@ -156,7 +156,7 @@ class TestComposeState:
 
     def test_compose_file_present_docker_unavailable(self, tmp_path):
         (tmp_path / "docker-compose.yml").write_text("services:\n  web:\n    image: nginx\n")
-        with patch("atlas_plus.project_state.compose.subprocess.run") as mock_run:
+        with patch("atlas_plus.project_state.compose._run_ps") as mock_run:  # MN61: Popen + tree kill
             mock_run.side_effect = FileNotFoundError("docker not found")
             result = compose_state(tmp_path)
         assert result["has_compose"] is True
@@ -170,7 +170,7 @@ class TestComposeState:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.stdout = service_json + "\n"
-        with patch("atlas_plus.project_state.compose.subprocess.run", return_value=mock_proc):
+        with patch("atlas_plus.project_state.compose._run_ps", return_value=mock_proc):
             result = compose_state(tmp_path)
         assert result["has_compose"] is True
         assert result["compose_file"] == "compose.yml"
@@ -183,7 +183,7 @@ class TestComposeState:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.stdout = service_json + "\n"
-        with patch("atlas_plus.project_state.compose.subprocess.run", return_value=mock_proc):
+        with patch("atlas_plus.project_state.compose._run_ps", return_value=mock_proc):
             result = compose_state(tmp_path)
         assert result["running"] is False
 

@@ -237,6 +237,9 @@ def deny_reason(
         # handler alone: a device applying a PULL is a write too, and the rule locked devices out of the
         # file for good (AG47)
         return "hub configuration (edit it on the hub)"
+    _leaf = norm_parts[-1]
+    if _leaf.endswith((".w-tmp", ".imp-tmp", ".v-tmp", ".tmp")):
+        return "temporary file"  # a write killed between fsync and rename left one; sync pushed it to every device (AG74)
     if _matches_secret(rel):
         return "secret (tier 3) never syncs"
     if principal is not None:

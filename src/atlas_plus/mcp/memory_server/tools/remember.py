@@ -80,38 +80,61 @@ import contextlib as _contextlib
 def _autocommit_lock(git_meta: Path, timeout: float = 30.0, stale: float = 120.0):
     """One autocommit at a time per corpus repo, across processes (AG70: two stdio servers, an HTTP server and the CLI raced
     git's own index.lock). A lock whose owner pid is gone, or older than `stale`, is broken."""
+    import random as _random
     import time as _time
+    from atlas_plus.summarizer import renderer as _r  # the summarizer lock's AG67 fixes, applied to this sibling (MN61)
     lock = git_meta / "sextant-autocommit.lock"
     deadline = _time.monotonic() + timeout
     held = False
+    denied_since = None
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, str(os.getpid()).encode())
-            os.close(fd)
-            held = True
-            break
         except FileExistsError:
             try:
-                from atlas_plus.summarizer.renderer import _lock_owner_dead
-                if _time.time() - lock.stat().st_mtime > stale or _lock_owner_dead(lock):
-                    lock.unlink()
-                    continue
+                seen = lock.read_text(encoding="ascii", errors="replace").strip()
+                age = _time.time() - lock.stat().st_mtime
+
+                def _judge():
+                    try:
+                        a = _time.time() - lock.stat().st_mtime
+                    except OSError:
+                        return False
+                    return a > stale or _r._lock_owner_dead(lock) or (not seen and a > 5.0)
+
+                if age > stale or _r._lock_owner_dead(lock) or (not seen and age > 5.0):
+                    # re-checked under `<lock>.break`: two waiters judged one dead owner and the second unlinked the
+                    # lock the first had just taken (MN61: 1-3 overlapping holders per round of 12 writers)
+                    _r._break_lock(lock, seen, _judge)
             except OSError:
                 pass
-            if _time.monotonic() > deadline:
+        except PermissionError:
+            # Windows: the last holder's unlink is pending while a waiter reads the pid; this wrote unlocked (MN61). A
+            # denial that lasts 2 s is a read-only .git, not a pending delete: proceed as before.
+            denied_since = denied_since or _time.monotonic()
+            if _time.monotonic() - denied_since > 2.0:
+                held = None
                 break
-            _time.sleep(0.05)
         except OSError:
             held = None  # no lock possible (read-only .git): proceed as before
             break
+        else:
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)
+            held = True
+            break
+        if _time.monotonic() > deadline:
+            break
+        _time.sleep(0.03 + _random.random() * 0.07)  # jitter: a fixed 50 ms poll starved waiters past 30 s (MN61)
     try:
         yield held is not False
     finally:
         if held:
             try:
                 if lock.read_text(encoding="ascii", errors="replace").strip() == str(os.getpid()):
-                    lock.unlink()
+                    _r._unlink_retry(lock)  # a swallowed failed unlink left a live server's lock: 30 s waits (MN61)
             except OSError:
                 pass
 
@@ -149,10 +172,12 @@ def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT
             result = gitsafe.run(["-C", git_dir, "commit", "-m", msg, "--no-verify", "--", rel], None, timeout=30)
         if result.returncode == 0:
             log.debug("Memory autocommit: %s", rel)
-        elif "nothing to commit" in (result.stdout + result.stderr) or "no changes added" in (result.stdout + result.stderr):
+        elif any(s in (result.stdout + result.stderr) for s in ("nothing to commit", "no changes added", "nothing added to commit")):
+            # `nothing added to commit but untracked files present`: a peer's `commit -- rel` already took this write (MN61)
             log.debug("Memory autocommit: nothing new to commit for %s", rel)
         else:
-            _why = (result.stderr or result.stdout).strip().splitlines()[:1]
+            _lines = [ln for ln in (result.stderr or result.stdout).strip().splitlines() if ln.strip()]
+            _why = [ln for ln in _lines if ln.startswith(("fatal:", "error:"))][:1] or _lines[-1:]  # not `On branch main` (MN61)
             log.debug("Memory autocommit failed for %s: %s", rel, _why)
             return f"not auto-committed: git said {(_why[0] if _why else 'nothing')[:160]!r}"  # the failure was silent (AG70)
     except Exception as exc:

@@ -357,7 +357,13 @@ def _lock_holder_dead(lock_path: Path) -> bool:
     except OSError:
         return False
     parts = token.strip().split(":")
-    if len(parts) < 3 or parts[2] != _lock_host():
+    if len(parts) < 3 or not parts[0].strip().isdigit():
+        try:  # a writer killed between create and token write left it empty: 30 s stall blamed on "another writer" (AG74)
+            import time as _t
+            return _t.time() - lock_path.stat().st_mtime > 2.0
+        except OSError:
+            return False
+    if parts[2] != _lock_host():
         return False   # another machine's lock (shared corpus): only the stale rule applies
     try:
         pid = int(parts[0])

@@ -403,7 +403,7 @@ def test_init_file_permission_error_is_one_sentence(tmp_path, monkeypatch):
     real = Path.write_text
 
     def boom(self, *a, **k):
-        if self.name == "user.md":
+        if self.name == "user.md" or self.name.startswith(".user.md."):  # init writes a temp file and renames it since AG74
             raise PermissionError(13, "Permission denied")
         return real(self, *a, **k)
 

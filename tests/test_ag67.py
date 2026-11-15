@@ -189,15 +189,8 @@ def test_compose_timeout_is_bounded_when_a_grandchild_holds_stdout(tmp_path, mon
 
     (tmp_path / "compose.yml").write_text("services: {}\n", encoding="utf-8")
     grandchild = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(8)']); time.sleep(8)"
-    real_run = subprocess.run
-
-    def fake_run(args, **kw):
-        assert kw.get("stdin") is subprocess.DEVNULL           # never the MCP stdio pipe
-        kw["timeout"] = 1.5
-        kw["cwd"] = str(Path(__file__).parent)  # a grandchild left in tmp_path locks the pytest basetemp on Windows
-        return real_run([sys.executable, "-c", grandchild], **kw)
-
-    monkeypatch.setattr(compose.subprocess, "run", fake_run)
+    monkeypatch.setattr(compose, "_PS_CMD", [sys.executable, "-c", grandchild])  # MN61: Popen + a tree kill, not subprocess.run
+    monkeypatch.setattr(compose, "_PS_TIMEOUT", 1.5)
     t0 = time.monotonic()
     out = compose.compose_state(tmp_path)
     assert time.monotonic() - t0 < 10.0 and out["has_compose"]  # before AG67: waited for the grandchild's 30 s pipe

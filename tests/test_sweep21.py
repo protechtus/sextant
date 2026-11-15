@@ -104,3 +104,46 @@ def test_duplicate_scan_stops_at_its_budget(tmp_path, monkeypatch):
     pairs = d.find_duplicates(memory_root=tmp_path)
     assert d._LAST_PARTIAL == [0, 0] and pairs                                  # no limit: the full scan
 
+
+# ---------------------------------------------------------------- AG74 (crash durability)
+def test_crash_leftovers_never_sync_and_doctor_names_them(tmp_path):
+    from unittest.mock import patch as _patch
+    from atlas_plus.sync.policy import deny_reason
+    for rel in ("reference/notes.md.1234-5678.w-tmp", "reference/x.md.99.imp-tmp", "sessions/.2026-11-14.md.1234.tmp"):
+        assert deny_reason(rel) == "temporary file"
+    assert deny_reason("reference/notes.md") is None
+    from atlas_plus.doctor.cli import check_memory_corpus
+    (tmp_path / "reference").mkdir()
+    (tmp_path / "reference" / "notes.md").write_text("---\ntitle: n\n---\nfact\n", encoding="utf-8")
+    (tmp_path / "reference" / "notes.md.1-2.w-tmp").write_text("copy", encoding="utf-8")
+    with _patch("atlas_plus.doctor.cli.MEMORY_ROOT", tmp_path):
+        r = check_memory_corpus()
+    assert r.get("crash_leftovers") == ["reference/notes.md.1-2.w-tmp"]
+
+
+def test_empty_lock_token_is_a_dead_writer_after_two_seconds(tmp_path):
+    import os, time
+    from atlas_plus.mcp.memory_server.routing import _lock_holder_dead
+    lock = tmp_path / "x.lock"
+    lock.write_text("", encoding="ascii")
+    assert _lock_holder_dead(lock) is False                                     # a writer may be about to fill it
+    old = time.time() - 5
+    os.utime(lock, (old, old))
+    assert _lock_holder_dead(lock) is True
+
+
+def test_init_repairs_a_zero_byte_scaffold_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    from atlas_plus import init_cmd
+    init_cmd.run_init()
+    user = tmp_path / "mem" / "identity" / "user.md"
+    user.write_text("", encoding="utf-8")
+    init_cmd.run_init()
+    assert user.stat().st_size > 0
+
+
+def test_import_scope_accepts_remember_grammar():
+    from atlas_plus import import_cmd
+    assert import_cmd._safe_scope("reference:vault2").replace("\\", "/").endswith("reference/vault2")
+
