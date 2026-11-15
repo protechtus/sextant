@@ -602,6 +602,7 @@ _PW_WORDS = (
 _PW_TOKEN_RE = re.compile(r"(?<![!-~])[!-~]{8,128}")
 _PW_SYMBOLS = set("!@#$%^&*+~?")
 _STRIP_CLASS: list = []
+_MARKISH_RE = re.compile("[\u0300-\u036f\u0483-\u0489\u0591-\u05c7\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0711\u0730-\u074a\u0900-\u0dff\u0e31-\u0e4e\u0eb1-\u0ecd\u0f18-\u0fbc\u1000-\u109f\u1712-\u1734\u17b4-\u17d3\u1ab0-\u1dff\u200b-\u200f\u202a-\u202e\u2060-\u206f\u20d0-\u20ff\u302a-\u302f\u3099\u309a\ufe00-\ufe2f\ufeff\U00011000-\U00011fff]")
 
 
 def _strip_marks(s: str) -> str:
@@ -609,6 +610,8 @@ def _strip_marks(s: str) -> str:
         return s
     import unicodedata as _ud0
     s = _ud0.normalize("NFKC", s).casefold().replace("\u0640", "")  # NFKC first (half/full-width, NFD Hangul and kana), casefold before the strip (`İ` casefolds to i + a combining dot), tatweel out (MN62)
+    if not _MARKISH_RE.search(s):
+        return s  # nothing a mark strip could remove: the big class scan cost 0.5 s on a 660 KB line (CI 43662191398)
     if not _STRIP_CLASS:
         import unicodedata as _ud
         chars = [chr(c) for c in range(0x300, 0x30000) if _ud.category(chr(c)) in ("Mn", "Me", "Cf")]

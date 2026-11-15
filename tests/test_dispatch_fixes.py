@@ -146,6 +146,7 @@ class TestAssigneeAgentMapping:
         with patch.object(web_app, "API_KEY", "test-key-abc"), \
              patch.object(web_app.AUTH_FAILURES, "is_rate_limited", return_value=False), \
              patch("atlas_plus.tickets.store.list_tickets", return_value=[ticket]), \
+             patch("atlas_plus.tickets.store.get_ticket", return_value=ticket), \
              patch("atlas_plus.tickets.store.update_ticket_status", return_value=MagicMock()), \
              patch("httpx.AsyncClient") as mc:
             mc.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)

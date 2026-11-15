@@ -2908,3 +2908,54 @@ class TestOperatorPanel:
         ), "ticket title forged a standalone log line"
         ops_lines = [l for l in text.splitlines() if "OPS-041" in l]
         assert len(ops_lines) == 1
+
+
+# ---------------------------------------------------------------------------
+# MN64 (sweep 20 manual wave): honest dispatch, sign-in page, local day
+# ---------------------------------------------------------------------------
+
+def _two_project_ticket(tid="MNX-001"):
+    from atlas_plus.tickets import store as _tstore
+    for proj in ("alphamn", "betamn"):
+        d = Path(_tstore.TICKETS_ROOT) / proj
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{tid}.md").write_text(
+            f"---\nid: {tid}\ntitle: {proj}\nproject: {proj}\nstatus: todo\nassignee: human\npriority: normal\n"
+            "effort: M\nupdated: 2026-11-01\n---\nbody\n", encoding="utf-8")
+    return tid
+
+
+def test_mn64_dispatch_refuses_an_ambiguous_bare_id_and_sets_the_qualified_one():
+    tid = _two_project_ticket()
+    r = client.post(f"/api/tickets/{tid}/dispatch", json={}, headers=AUTH)
+    assert r.status_code == 409 and "alphamn/" + tid in r.json()["detail"]
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {"task_id": "task-mn64", "status": "pending"}
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_resp)
+        r2 = client.post(f"/api/tickets/betamn/{tid}/dispatch", json={}, headers=AUTH)
+    assert r2.status_code == 202 and r2.json()["ticket_ref"] == f"betamn/{tid}"
+    assert r2.json()["status_note"] == "ticket set to in-progress"
+    from atlas_plus.tickets import store as _tstore
+    assert "status: in-progress" in (Path(_tstore.TICKETS_ROOT) / "betamn" / f"{tid}.md").read_text(encoding="utf-8")
+    assert "status: todo" in (Path(_tstore.TICKETS_ROOT) / "alphamn" / f"{tid}.md").read_text(encoding="utf-8")
+
+
+def test_mn64_sign_in_page_is_phone_ready_and_names_a_wrong_key():
+    from fastapi.testclient import TestClient as _TC
+    anon = _TC(app, raise_server_exceptions=False)
+    r = anon.get("/?key=wrong-key", headers={"Accept": "text/html"})
+    assert r.status_code == 401
+    assert 'name="viewport"' in r.text and 'lang="en"' in r.text
+    assert "not this dashboard's key" in r.text
+    r2 = anon.get("/", headers={"Accept": "text/html"})
+    assert "not this dashboard's key" not in r2.text
+
+
+def test_mn64_capture_scopes_hold_no_private_project():
+    r = client.get("/", headers=AUTH)
+    sel = r.text[r.text.find('id="capture-scope"'):]
+    sel = sel[: sel.find("</select>")]
+    assert "atlas-memory+" not in sel
+

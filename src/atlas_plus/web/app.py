@@ -1552,7 +1552,7 @@ async def session_expired_page():
     """Where a stale tab lands after a 401: sessions live in memory, so a restart, a key rotation
     or the 12-hour limit ends them (AG31, sweep 14)."""
     return HTMLResponse(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sextant: sign in</title>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Sextant: sign in</title>"  # unreadable at 0.33 scale on a phone (MN64)
         "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#cbd5e1;padding:3rem;max-width:40rem}"
         "code{color:#67e8f9}</style></head><body><h1>Sign in</h1>"  # MN60: a first visit is not an expired session; the body explains both
         "<p>You have not signed in from this browser yet, or the dashboard restarted, its key was rotated, or the session reached its 12-hour limit.</p>"
@@ -1574,7 +1574,10 @@ async def _html_401_for_browsers(request: Request, exc: _StarletteHTTPException)
         page = session_expired_page()
         if hasattr(page, "__await__"):
             page = await page
-        return HTMLResponse(page.body, status_code=401)
+        body = page.body
+        if request.query_params.get("key"):  # a wrong key got the same "not signed in yet" text (MN64)
+            body = body.replace(b"<h1>Sign in</h1>", b"<h1>Sign in</h1><p><strong>That key is not this dashboard's key.</strong> Check ATLAS_WEB_API_KEY in the dashboard's environment.</p>", 1)
+        return HTMLResponse(body, status_code=401)
     return await _default_http_exception_handler(request, exc)
 
 @app.get("/api/memory/file", response_class=HTMLResponse)
@@ -2016,14 +2019,13 @@ async def stats_summary(request: Request):
             1 for t in all_tasks
             if t.status == "running" and t.heartbeat_at and t.heartbeat_at < cutoff
         )
-        done_today = sum(
-            1 for t in all_tasks
-            if t.status == "done" and (t.finished_at or "").startswith(today)
-        )
-        failed_today = sum(
-            1 for t in all_tasks
-            if t.status == "failed" and (t.finished_at or "").startswith(today)
-        )
+        def _local_day(ts: str) -> str:  # finished_at is UTC: west of Greenwich the evening's work counted as 0 (MN64)
+            try:
+                return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
+            except (ValueError, TypeError):
+                return (ts or "")[:10]
+        done_today = sum(1 for t in all_tasks if t.status == "done" and t.finished_at and _local_day(t.finished_at) == today)
+        failed_today = sum(1 for t in all_tasks if t.status == "failed" and t.finished_at and _local_day(t.finished_at) == today)
         open_tickets = sum(
             1 for t in list_tickets()
             if t.status in ("todo", "in-progress", "blocked")
@@ -3983,16 +3985,21 @@ async def create_ticket_endpoint(request: Request):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@app.post("/api/tickets/{ticket_id}/dispatch", status_code=202)
+@app.post("/api/tickets/{ticket_id:path}/dispatch", status_code=202)  # `project/ID` reaches it (MN64: a qualified id was 404)
 async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
     """Dispatch a ticket to Brain as an async task and mark it in-progress."""
     _check_auth(request)
     body = await _json_object(request)
-    from atlas_plus.tickets.store import list_tickets, update_ticket_status as _update_status
+    from atlas_plus.tickets.store import get_ticket as _get, update_ticket_status as _update_status, ambiguous_hint as _ah, LAST_AMBIGUOUS as _la
 
-    ticket = next((t for t in list_tickets() if t.id == ticket_id.upper()), None)
+    _la.clear()
+    _tid = ticket_id if "/" in ticket_id else ticket_id.upper()
+    ticket = _get(_tid)
     if not ticket:
+        if _ah():  # one id in two projects: the first match was dispatched and neither status changed (MN64)
+            raise HTTPException(status_code=409, detail=_ah())
         raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} not found")
+    _ref = f"{ticket.project}/{ticket.id}" if getattr(ticket, "project", "") else ticket.id
 
     instruction = body.get("instruction") or f"{ticket.title}\n\n{getattr(ticket, 'body', '') or ''}"
     instruction = instruction.strip()[:2000]
@@ -4020,13 +4027,14 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Brain unavailable: {exc}")
 
+    status_note = "ticket set to in-progress"
     try:
-        _update_status(ticket_id.upper(), "in-progress")
-    except Exception:
-        pass  # Don't fail the dispatch if status update fails
+        _update_status(_ref, "in-progress")
+    except Exception as exc:  # noqa: BLE001 - the dispatch stands; the page says the status did NOT change (MN64: it claimed it had)
+        status_note = f"the ticket's status was not changed: {exc}"
 
     await _broadcast({"type": "task_submitted", "task": task})
-    return {"task_id": task["task_id"], "ticket_id": ticket_id.upper(), "status": "dispatched"}
+    return {"task_id": task["task_id"], "ticket_id": ticket.id, "ticket_ref": _ref, "status": "dispatched", "status_note": status_note}
 
 
 @app.patch("/api/tickets/{ticket_id:path}/status")
@@ -4166,7 +4174,7 @@ async def ticket_detail(ticket_id: str, request: Request):
         f'<pre class="mt-1 text-slate-400 bg-slate-900 p-2 rounded overflow-auto max-h-48 '
         f'whitespace-pre-wrap text-xs">{escaped_body}</pre>'
         f'<div class="mt-2 flex gap-2 flex-wrap">'
-        f'<button onclick="dispatchTicketToBrain({_js_arg(ticket.id)},{_js_arg(ticket.title)},{_js_arg(body_text[:300])})" '
+        f'<button onclick="dispatchTicketToBrain({_js_arg((ticket.project + "/" + ticket.id) if getattr(ticket, "project", "") else ticket.id)},{_js_arg(ticket.title)},{_js_arg(body_text[:300])})" '  # the qualified ref, like Start/Done/Block (MN64)
         f'class="btn btn-cyan text-xs">Dispatch to Brain</button>'
         f'<button onclick="updateTicket({_js_arg(_tref(ticket))},\'in-progress\')" '
         f'class="btn btn-yellow text-xs">Start</button>'
@@ -4930,10 +4938,9 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   <span class="text-slate-600 text-xs shrink-0">capture:</span>
   <input id="capture-input" type="text" placeholder="Save a fact to memory... (Enter)" autocomplete="off"
     onkeydown="if(event.key==='Enter')quickCapture()">
-  <select id="capture-scope" style="background:#0f172a;border:none;color:#475569;font-size:.65rem;outline:none;width:auto">
+  <select id="capture-scope" aria-label="capture scope" style="background:var(--bg-card,#0f172a);border:none;color:var(--text-m,#475569);font-size:.65rem;width:auto">
     <option value="preference:quick-capture">pref</option>
     <option value="identity">identity</option>
-    <option value="project:atlas-memory+">atlas+</option>
     <option value="reference:misc">ref</option>
   </select>
   <span id="capture-status" class="text-xs text-slate-600 shrink-0"></span>
@@ -5880,7 +5887,7 @@ async function operatorAct(id,outcome){{
 
 function showTicketDetail(ticketId){{
   fetch("/api/tickets/"+ticketId+"/detail",{{headers:{{}}}})
-    .then(r=>{{if(!r.ok)throw new Error("HTTP "+r.status);return r.text();}})
+    .then(async r=>{{if(!r.ok){{let m="HTTP "+r.status;try{{const j=await r.json();if(j&&j.detail)m=j.detail;}}catch(_e){{}}throw new Error(m);}}return r.text();}})  // the 409 names the choices (MN64)
     .then(html=>{{const d=document.getElementById("ticket-detail");d.innerHTML=html;if(window.innerWidth<768)d.scrollIntoView({{behavior:'smooth',block:'start'}});}})  // on a phone the pane sits below the fold (AG51)
     .catch(e=>{{document.getElementById("ticket-detail").innerHTML='<div class="text-red-400 text-xs">Failed to load ticket: '+e.message+'</div>';showToast("Ticket detail failed: "+e.message,"failed");}});
 }}
@@ -5966,6 +5973,21 @@ async function updateTicket(id,status){{
   }}catch(ex){{console.error(ex);}}
 }}
 
+// Keyboard reach (MN64): tabs, task rows and ticket cards were <div onclick> with no tabindex; Map, Operator, Inbox and Services
+// could not be reached at all. Every clickable non-control gets a tab stop, a role and Enter/Space.
+function _kbdify(root){{
+  (root||document).querySelectorAll('[onclick]').forEach(el=>{{
+    const tag=el.tagName;
+    if(['BUTTON','A','INPUT','SELECT','TEXTAREA','OPTION','LABEL'].includes(tag)||el.hasAttribute('tabindex'))return;
+    el.setAttribute('tabindex','0');
+    if(!el.hasAttribute('role'))el.setAttribute('role',el.classList.contains('tab')?'tab':'button');
+    el.addEventListener('keydown',ev=>{{if(ev.key==='Enter'||ev.key===' '){{ev.preventDefault();el.click();}}}});
+  }});
+}}
+document.addEventListener('DOMContentLoaded',()=>_kbdify(document));
+document.body&&document.body.addEventListener('htmx:afterSwap',ev=>_kbdify(ev.target));
+document.addEventListener('htmx:afterSwap',ev=>_kbdify(ev.target));
+
 async function dispatchTicketToBrain(id,title,body){{
   try{{
     const resp=await fetch("/api/tickets/"+id+"/dispatch",{{method:"POST",
@@ -5974,7 +5996,7 @@ async function dispatchTicketToBrain(id,title,body){{
     if(!resp.ok){{const e=await resp.json();throw new Error(e.detail||resp.status);}}
     const data=await resp.json();
     const d=document.getElementById("ticket-detail");
-    if(d)d.innerHTML+='<div class="mt-2 text-green-400 text-xs">Dispatched: '+data.task_id+' | ticket set to in-progress</div>';
+    if(d){{const _m=document.createElement('div');_m.className='mt-2 text-xs '+(data.status_note&&data.status_note.indexOf('not changed')>=0?'text-amber-400':'text-green-400');_m.textContent='Dispatched: '+data.task_id+' | '+(data.status_note||'');d.appendChild(_m);}}  // the server's sentence, never a fixed claim (MN64)
     showToast("Dispatched to Brain","done");
     reloadTickets();
   }}catch(ex){{showToast("Dispatch failed: "+ex.message,"failed");}}
@@ -6507,6 +6529,11 @@ const _PALETTE_CMDS=[
   {{label:'Brain chat',hint:'chat',action:()=>{{switchTab('chat');setTimeout(()=>document.getElementById('ci').focus(),100);}}}},
   {{label:'Agents',hint:'agents',action:()=>switchTab('agents')}},
   {{label:'Sessions',hint:'sessions',action:()=>switchTab('sessions')}},
+  {{label:'Map',hint:'map',action:()=>switchTab('map')}},
+  {{label:'Operator',hint:'operator',action:()=>switchTab('operator')}},
+  {{label:'Inbox',hint:'inbox',action:()=>switchTab('inbox')}},
+  {{label:'Services',hint:'services',action:()=>switchTab('services')}},
+  {{label:'Watchtower',hint:'watchtower',action:()=>switchTab('watchtower')}},
   {{label:'Dashboard',hint:'dash',action:()=>switchTab('dash')}},
   {{label:'Capture fact',hint:'capture',action:()=>{{closePalette();document.getElementById('capture-input').focus();}}}},
   {{label:'Ask Claude',hint:'escalate',action:()=>{{closePalette();switchTab('dash');setTimeout(()=>{{const inp=document.getElementById('claude-input');if(inp)inp.focus();}},150);}}}},
