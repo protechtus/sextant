@@ -195,7 +195,17 @@ def find_fact_duplicates(
                 out.append({"kind": "exact", "file1": r1, "file2": r2, "similarity": 1.0, "fact": f1[:160]})
     # Near repeats: candidates share at least 3 index tokens; exact pairs are already reported.
     counts: dict[int, int]
+    import time as _time
+    try:
+        _budget = float(__import__("os").environ.get("ATLAS_DUPLICATES_BUDGET_SECONDS") or 60)
+    except ValueError:
+        _budget = 60.0
+    _deadline = _time.monotonic() + _budget if _budget > 0 else None
+    _LAST_PARTIAL[0] = _LAST_PARTIAL[1] = 0
     for i, (rel, fact, toks) in enumerate(entries):
+        if _deadline is not None and i % 64 == 0 and _time.monotonic() > _deadline:
+            _LAST_PARTIAL[0], _LAST_PARTIAL[1] = i, len(entries)  # the facts scan had no budget: the weekly report never finished (MN67)
+            break
         counts = {}
         for t in toks:
             for j in index.get(t, ()):

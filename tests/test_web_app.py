@@ -2986,3 +2986,16 @@ def test_mn70_markup_in_task_and_ticket_fields_is_text():
     r2 = client.get("/api/tickets/xssmn70/XSS-001/detail", headers=AUTH)
     assert "<img" not in r2.text
 
+
+def test_mn70_board_cap_keeps_the_newest():
+    from atlas_plus.tickets import store as _tstore
+    d = Path(_tstore.TICKETS_ROOT) / "capmn70"
+    d.mkdir(parents=True, exist_ok=True)
+    for i in range(1, 511):
+        day = "2026-11-14" if i == 510 else "2026-01-01"
+        (d / f"CAP-{i:03d}.md").write_text(
+            f"---\nid: CAP-{i:03d}\ntitle: t{i}\nproject: capmn70\nstatus: todo\nassignee: human\npriority: normal\n"
+            f"effort: M\nupdated: {day}\n---\nb\n", encoding="utf-8")
+    r = client.get("/api/tickets/board?project=capmn70&status_filter=open", headers=AUTH)
+    assert "CAP-510" in r.text and "10 more ticket(s) not shown" in r.text   # the newest stays on the board
+

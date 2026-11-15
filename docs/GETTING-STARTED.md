@@ -321,8 +321,8 @@ a merge with conflict markers, doctor names the notes to resolve first.
 The search and embedding indexes in the state dir are derived: `sextant-fts-rebuild` (alias `atlas-fts-rebuild`)
 and `sextant-embed-index` rebuild them from the markdown. The rest of the state dir is NOT derived: `sync/` holds a
 hub's device pairings (restore it, or every device gets "token rejected" and has to be re-paired), and `transcripts/`,
-the activity log and the review queue are their only copies. Back up the corpus AND the state dir (`sextant-backup`
-does both); restore into an empty folder, never over a live workspace (an older copy over a hub reverts every device
+the review queue are their only copies. Back up the corpus AND the state dir (`sextant-backup` does both, and leaves out
+`logs/` on purpose: logs can hold sensitive text, so the activity log is not in the backup); restore into an empty folder, never over a live workspace (an older copy over a hub reverts every device
 at its next sync). A git backup of the corpus leaves out `versions/`, the locks, the index, `_atlas/sync-conflicts/`
 and `_atlas/sync-inbox/`. If you back up to a
 shared or cloud location, encrypt first (e.g. an rclone crypt remote) --

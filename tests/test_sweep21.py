@@ -221,3 +221,23 @@ def test_mn72_double_question_marks_in_a_pipe_are_refused():
     assert _stdin_looks_mangled("the staging server lives in ?? now")
     assert not _stdin_looks_mangled("is it done? yes")
 
+
+# ---------------------------------------------------------------- sweep 21 manual open items
+def test_doctor_backup_row_reads_the_real_log(tmp_path):
+    from unittest.mock import patch as _patch
+    from atlas_plus.doctor import cli as dc
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "backup.log").write_text("2026-11-14 start\nBackup complete in 1.1s\n", encoding="utf-8")
+    with _patch.object(dc, "STATE_DIR", tmp_path):
+        r = dc.check_backup()
+    assert r["result"] == "ok" and "Backup complete" in r["last_run"]
+
+
+def test_fact_duplicate_scan_honours_the_budget(tmp_path, monkeypatch):
+    from atlas_plus.curation import duplicates as d
+    for i in range(200):
+        (tmp_path / f"n{i}.md").write_text("\n".join(f"- the staging server alpha beta gamma delta number {i} {k}" for k in range(5)), encoding="utf-8")
+    monkeypatch.setenv("ATLAS_DUPLICATES_BUDGET_SECONDS", "0.000001")
+    d.find_fact_duplicates(memory_root=tmp_path)
+    assert d._LAST_PARTIAL[1] > 0 and d._LAST_PARTIAL[0] < d._LAST_PARTIAL[1]
+

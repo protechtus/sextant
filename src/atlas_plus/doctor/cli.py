@@ -381,13 +381,15 @@ def check_tickets() -> dict:
 
 def check_backup() -> dict:
     """Read the last line of backup.log. Returns {last_run, result} or {last_run:'never'} if absent."""
-    log_file = STATE_DIR / "backup.log"
+    log_file = STATE_DIR / "logs" / "backup.log"  # where sextant-backup writes it: doctor read <state>/backup.log and said "never" (MN71)
+    if not log_file.exists():
+        log_file = STATE_DIR / "backup.log"
     if not log_file.exists():
         return {"last_run": "never", "result": "unknown"}
     try:
         lines = log_file.read_text(encoding="utf-8", errors="replace").strip().splitlines()
         last = lines[-1] if lines else ""
-        return {"last_run": last[:80], "result": "ok" if "success" in last.lower() else "unknown"}
+        return {"last_run": last[:80], "result": "ok" if ("success" in last.lower() or "backup complete" in last.lower()) else "unknown"}
     except Exception:
         return {"last_run": "error reading log", "result": "unknown"}
 

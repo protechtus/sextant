@@ -2012,7 +2012,7 @@ async def stats_summary(request: Request):
 
         today = date.today().isoformat()
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
-        all_tasks = ts.list_tasks(limit=200)
+        all_tasks = ts.list_tasks(limit=5000)  # 200 hid every older task: "0 done today" with 200 newer pending (MN70)
         pending   = sum(1 for t in all_tasks if t.status == "pending")
         running   = sum(1 for t in all_tasks if t.status == "running")
         stale     = sum(
@@ -3641,7 +3641,9 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
         return HTMLResponse('<div class="text-slate-500 text-xs">No tickets.</div>')
     _BOARD_CAP = 500
     _board_more = max(0, len(tickets_list) - _BOARD_CAP)
-    tickets_list = tickets_list[:_BOARD_CAP]  # 5,000 tickets made a 3 MB board and 40,586 DOM nodes (AG75)
+    if _board_more:  # keep the most recently updated, in the board's own order: the cap cut exactly the newest tickets (MN70)
+        _keep = {id(t) for t in sorted(tickets_list, key=lambda t: str(getattr(t, 'updated', '') or getattr(t, 'created', '') or ''), reverse=True)[:_BOARD_CAP]}
+        tickets_list = [t for t in tickets_list if id(t) in _keep]  # 5,000 tickets made a 3 MB board and 40,586 DOM nodes (AG75)
 
     # Batch-query Brain tasks linked to tickets (dispatch + verify badges).
     # Dispatch: session_id = 'ticket-{ID}'; Verify: session_id = 'verify-ticket-{ID}'
@@ -5992,6 +5994,9 @@ function _kbdify(root){{
 document.addEventListener('DOMContentLoaded',()=>_kbdify(document));
 document.body&&document.body.addEventListener('htmx:afterSwap',ev=>_kbdify(ev.target));
 document.addEventListener('htmx:afterSwap',ev=>_kbdify(ev.target));
+// content filled by fetch + innerHTML (memory search results, details) never fired htmx:afterSwap (MN70)
+document.addEventListener('DOMContentLoaded',()=>{{let _kq=null;new MutationObserver(()=>{{if(_kq)return;_kq=requestAnimationFrame(()=>{{_kq=null;_kdify_all();}});}}).observe(document.body,{{childList:true,subtree:true}});}});
+function _kdify_all(){{_kbdify(document);}}
 
 async function dispatchTicketToBrain(id,title,body){{
   try{{
