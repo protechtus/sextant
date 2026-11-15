@@ -31,7 +31,8 @@ log = logging.getLogger("atlas.brain.worker")
 
 # Heartbeat interval: update heartbeat_at every N seconds during long executor runs.
 # Must be well below _DEFAULT_LEASE_SECONDS (300s) to avoid zombie reaping.
-_HEARTBEAT_INTERVAL = int(os.environ.get("ATLAS_WORKER_HEARTBEAT_INTERVAL", "60"))
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+_HEARTBEAT_INTERVAL = _env_int("ATLAS_WORKER_HEARTBEAT_INTERVAL", 60)  # a non-number named, not a traceback (AG77)
 
 
 class _HeartbeatKeeper:

@@ -136,6 +136,10 @@ class SyncClient:
         timeout: float | None = None,  # ATLAS_SYNC_TIMEOUT, default 120 s: a cold 10,000-file hub took 32.7 s (AG71)
         http_client: httpx.Client | None = None,
     ) -> None:
+        import hashlib as _hashlib
+        # Which pairing a base belongs to (AG78): a domain-separated digest of the token, never
+        # the token and never the digest the hub stores.
+        self._credential = _hashlib.sha256(b"sextant-sync-base:" + token.encode("utf-8")).hexdigest()[:16] if token else ""
         if http_client is not None:
             # Injected client (e.g. starlette TestClient) already knows its
             # base URL/transport; we only attach the credential.
@@ -165,6 +169,17 @@ class SyncClient:
                     f"the certificate bundle {_cf!r} (SSL_CERT_FILE) cannot be read as a PEM certificate file: {type(exc).__name__}: "
                     f"{str(exc)[:160]}. Point SSL_CERT_FILE at the hub's CA certificate, or unset it."
                 ) from exc
+
+    def _own_base(self, base_id: str) -> dict | None:
+        """The base, unless another pairing recorded it (AG78: after a re-pair against a hub
+        restored from an older backup, the old base made the hub's older notes look like
+        edits and pulled them over newer local ones). No base means every difference is a
+        conflict: nothing is overwritten. A base with no stamp (older build) is adopted."""
+        base = store.load_base_manifest(base_id)
+        stamp = (base or {}).get("credential")
+        if base is not None and stamp and self._credential and stamp != self._credential:
+            return None
+        return base
 
     def close(self) -> None:
         self._client.close()
@@ -297,7 +312,7 @@ class SyncClient:
                           if _visible(k, local_policy, hub_policy)}
         remote_files = {k: v for k, v in remote["files"].items()
                         if _visible(k, local_policy, hub_policy)}
-        base = store.load_base_manifest(base_id)
+        base = self._own_base(base_id)
         base_files = {k: v for k, v in ((base or {}).get("files", {}) or {}).items()
                       if _visible(k, local_policy, hub_policy)}
         plan = manifest.diff3(local["files"], remote_files, base_files)
@@ -346,7 +361,7 @@ class SyncClient:
             report.conflicts = list(plan.conflicts)
             return report
 
-        old_base = store.load_base_manifest(base_id) or {}
+        old_base = self._own_base(base_id) or {}
         old_base_files: dict = old_base.get("files", {}) or {}
         proposed: dict = dict(old_base.get("proposed", {}) or {})
         report.proposed = list(plan.proposed)
@@ -513,6 +528,8 @@ class SyncClient:
             files.pop(rel, None)
         refreshed["files"] = files
         refreshed["manifest_hash"] = manifest.files_hash(files)
+        if self._credential:
+            refreshed["credential"] = self._credential
         store.save_base_manifest(base_id, refreshed)
         try:
             self.checkin({"manifest_hash": refreshed["manifest_hash"]})

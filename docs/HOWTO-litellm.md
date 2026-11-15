@@ -4,7 +4,7 @@ If you route your AI usage through LiteLLM (or any OpenAI-compatible
 gateway), Sextant slots straight in: the Brain's provider layer speaks the
 OpenAI API, so the gateway's budgets, virtual keys, model routing, and
 spend logging all apply to Sextant's background jobs -- with zero Sextant
-configuration beyond two environment variables.
+configuration beyond three environment variables.
 
 Division of labor: LiteLLM meters and routes the calls; Sextant decides
 WHAT is worth calling for (memory hygiene, verification, synthesis) and
@@ -19,11 +19,12 @@ OPENAI_BASE_URL=http://your-litellm-host:4000/v1
 OPENAI_API_KEY=<a LiteLLM virtual key>
 ```
 
-That is the whole integration. Every nightly job (suggest-facts, dream,
-contradiction checks, reverification) now flows through the proxy under
+That is the whole integration. Brain-role jobs (dream, contradiction checks,
+reverification, Brain tasks) now flow through the proxy under
 that virtual key -- so you can give Sextant's background work its OWN
 budget, cheaper model routing, and a hard monthly cap, separately from
-your interactive usage.
+your interactive usage. The session summarizer and suggest-facts do not use the proxy: they stay on Ollama
+(or Claude with `ATLAS_LOCAL_ONLY=off`).
 
 Local-first still applies: with no proxy configured, the Brain defaults to
 Ollama and nothing meters anything because nothing costs anything.

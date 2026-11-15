@@ -6,8 +6,11 @@ or the `env` block of your MCP client snippet. Everything has a working
 default -- a fresh install needs NOTHING here except tokens for the
 optional layers you turn on.
 
-Conventions: `on/off` variables are fail-closed allowlists -- only
-`on`, `1`, or `true` enables; any other value (including typos) is off.
+Conventions: opt-in switches (default off) are fail-closed allowlists -- only
+`on`, `1`, or `true` enables; any other value (including typos) is off. Default-on switches
+(`ATLAS_INTERACTIVE_WRITES`, `ATLAS_SEMANTIC_SEARCH`, `ATLAS_WEB_REPORT_SUBPROCESS`) turn off for `off`, `0`, `false` or `no`;
+the `ATLAS_DISABLE_*` stop-hook opt-outs take effect for `on`, `1`, `true` or `yes`. A number variable that is not a whole number
+is refused with a sentence naming it.
 Paths accept absolute paths on any OS. Every variable uses the `ATLAS_`
 prefix -- the engine's namespace -- even though the commands are
 `sextant-*`. A `SEXTANT_`-prefixed twin (the natural guess) is never
@@ -49,7 +52,7 @@ registration reaches only the MCP server process, not the hooks.
 | `ATLAS_VERIFY_TIMEOUT` | `240` | Seconds `sextant verify` waits for each reply from the stdio server it starts (a non-number falls back to the default). |
 | `ATLAS_IDENTITY_PATH` | `<corpus>/identity/user.md` | Who you are, loaded at session priming. |
 | `ATLAS_USER_NAME` | -- | Display name used in identity and tagging. |
-| `ATLAS_PROJECTS_ROOT` | -- | Optional root of your code projects (ticket/project tooling). |
+| `ATLAS_PROJECTS_ROOT` | `<workspace>/projects` | Optional root of your code projects (ticket/project tooling). |
 | `ATLAS_UPDATES_FILE` | `<state>/updates.txt` | Legacy session-log file the Stop hook and nightly job prepend to. Defaults inside the state dir so a file you made yourself (such as `~/updates.txt`) is never touched; point this at your own file to opt in. Version copies land in a `versions/` folder beside it. |
 
 ## Ports, hosts, and service URLs
@@ -134,7 +137,7 @@ while the summarizer uses a cloud one:
 | `ATLAS_FAST_MODEL` | `qwen3:1.7b` | Small fast-path model. |
 | `ATLAS_BRAIN_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for the Brain. |
 | `OLLAMA_HOST` | -- | Read only when `ATLAS_BRAIN_OLLAMA_URL` is unset: the standard Ollama variable (`host:port` or a URL), as the Ollama CLI reads it. |
-| `ATLAS_SUMMARIZER_PROVIDER` | `auto` | Legacy alias for `ATLAS_MODEL_SUMMARIZER_PROVIDER`. |
+| `ATLAS_SUMMARIZER_PROVIDER` | `auto` | Alias of `ATLAS_MODEL_SUMMARIZER_PROVIDER` (that name wins). The session summarizer and the facts stage take `ollama`, `claude` (or `anthropic`) or `auto` (Ollama, plus Claude only when `ATLAS_LOCAL_ONLY=off`); any other value is refused with a sentence and runs Ollama only. |
 | `ATLAS_SUMMARIZER_MODEL` | `ATLAS_BRAIN_MODEL`, else `qwen3:8b` | Session-summarizer and suggest-facts model; the Stop hook's probe says so when it is not pulled. |
 | `ATLAS_SUMMARIZER_CLAUDE_MODEL` | code default | Model used when the summarizer runs on Anthropic. |
 | `ATLAS_SUMMARIZER_TIMEOUT` | code default | Summarizer call timeout (seconds). |
@@ -166,8 +169,7 @@ Intake never deletes: imported originals move to `<ATLAS_INTAKE_DIR>/_imported/<
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` / `ATLAS_TELEGRAM_BOT_TOKEN` | -- | Bot token from @BotFather. |
-| `ATLAS_TELEGRAM_CHAT_ID` | -- | Chat that receives alerts. |
+| `ATLAS_TELEGRAM_BOT_TOKEN` | -- | Bot token from @BotFather (the bare `TELEGRAM_BOT_TOKEN` is not read). |
 | `ATLAS_TELEGRAM_ALLOWED_USERS` | -- | Comma-separated user IDs allowed to command the bot (empty = nobody). |
 | `ATLAS_JOB_POLL_INTERVAL` / `ATLAS_JOB_TIMEOUT` | code defaults | Telegram job-poller cadence and per-job timeout. |
 | `ATLAS_NTFY_URL` / `ATLAS_NTFY_BASE` / `ATLAS_NTFY_TOPIC` / `ATLAS_NTFY_TOKEN` | -- | ntfy push notifications (server, topic, auth). |

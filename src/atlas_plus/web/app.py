@@ -2848,7 +2848,7 @@ def _generate_report_isolated():
     runs it in this process). CPU-bound Python in a thread holds the GIL: while a report ran, a
     search took 23 to 60 s and abandoned requests piled up (AG42, sweep 15)."""
     from atlas_plus.curation._report_worker import report_dry_run
-    if os.environ.get("ATLAS_WEB_REPORT_SUBPROCESS", "on").strip().lower() in ("off", "0", "false"):
+    if os.environ.get("ATLAS_WEB_REPORT_SUBPROCESS", "on").strip().lower() in ("off", "0", "false", "no"):
         return report_dry_run()
     try:
         import concurrent.futures as _cf
@@ -3420,9 +3420,9 @@ async def inbox_archive(item_id: str, request: Request):
 # Map: live system topology + activity feed. Nodes are derived from env URLs,
 # live /health probes, and on-disk presence -- never a hardcoded install
 # shape -- so a fresh user's map shows THEIR stack, not the maintainer's.
-MCP_URL = os.environ.get("ATLAS_MCP_URL", "http://127.0.0.1:8765").rstrip("/")
+MCP_URL = os.environ.get("ATLAS_MCP_URL", f"http://127.0.0.1:{os.environ.get('ATLAS_MCP_PORT', '8765').strip() or '8765'}").rstrip("/")  # the port variable, like the doctor (AG77)
 OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-SYNC_HUB_URL = os.environ.get("ATLAS_SYNC_URL", "http://127.0.0.1:8768").rstrip("/")
+SYNC_HUB_URL = os.environ.get("ATLAS_SYNC_URL", f"http://127.0.0.1:{os.environ.get('ATLAS_SYNC_PORT', '8768').strip() or '8768'}").rstrip("/")
 
 _MAP_EDGES = [
     ("clients", "mcp"), ("mcp", "corpus"), ("mcp", "statedb"),

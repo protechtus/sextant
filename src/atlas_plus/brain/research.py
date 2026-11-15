@@ -37,7 +37,8 @@ _RESEARCH_CACHE_DIR = _ATLAS_DIR / "research-cache"
 _DDG_API = "https://api.duckduckgo.com/"
 _WEB_SEARCH_ENABLED = os.environ.get("ATLAS_RESEARCH_WEB_SEARCH", "").lower() in ("on", "1", "true")
 _SEARXNG_URL = os.environ.get("ATLAS_RESEARCH_SEARXNG_URL", "").rstrip("/")
-_WEB_SEARCH_TTL = int(os.environ.get("ATLAS_RESEARCH_CACHE_TTL", "3600"))  # seconds
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+_WEB_SEARCH_TTL = _env_int("ATLAS_RESEARCH_CACHE_TTL", 3600)  # a non-number named, not a traceback (AG77)  # seconds
 
 # URL patterns for citation extraction
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^\)\s]+)\)")
@@ -332,7 +333,7 @@ def find_similar_research_reports(
     return results
 
 
-_QUALITY_GATE_MIN_WORDS = int(os.environ.get("ATLAS_RESEARCH_MIN_WORDS", "200"))
+_QUALITY_GATE_MIN_WORDS = _env_int("ATLAS_RESEARCH_MIN_WORDS", 200)  # a non-number named, not a traceback (AG77)
 _QUALITY_GATE_WARN_CITATIONS = True  # warn when 0 references in frontmatter
 
 

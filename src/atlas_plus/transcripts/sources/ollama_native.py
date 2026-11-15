@@ -28,7 +28,8 @@ from atlas_plus.transcripts.index import TranscriptIndex
 from atlas_plus.transcripts.store import TranscriptStore, TurnRecord
 
 SOURCE = "ollama-native"
-DEFAULT_PORT = int(os.environ.get("ATLAS_OLLAMA_PROXY_PORT", "11436"))
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+DEFAULT_PORT = _env_int("ATLAS_OLLAMA_PROXY_PORT", 11436)  # a non-number named, not a traceback (AG77)
 DEFAULT_UPSTREAM = os.environ.get("OLLAMA_UPSTREAM", "http://localhost:11434")
 
 log = logging.getLogger("atlas.ollama-proxy")

@@ -287,6 +287,22 @@ def main() -> int:
                 pass
         return 0
 
+    # A hook command still naming a workspace that moved (restore to a new path or drive, a new
+    # machine) wrote a fresh day log and state dir at the old place, silently, while the
+    # session-start hook said "missing" for the same path (AG78). Write nothing, say so once.
+    try:
+        _corpus = atlas_paths.memory_root()
+        _corpus_ok = _corpus.is_dir()
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001
+        _corpus, _corpus_ok = None, False
+    if not _corpus_ok:
+        _sys.stderr.write(f"Sextant: the corpus {_corpus} is missing or not a directory; the Stop hook wrote nothing "
+                          f"(moved the workspace? re-merge the hook commands `sextant setup --client hooks` prints, "
+                          f"or run sextant-init there).\n")
+        return 0
+
     # The hook payload names the transcript that just ended; its projects root is where the
     # background jobs should look (ATLAS_CLAUDE_CODE_ROOT when the operator set it wins). A
     # scratch workspace must not mine the operator's real transcripts (power-user pass
@@ -321,7 +337,7 @@ def main() -> int:
     # believe sessions were being summarized when no model was reachable (persona rerun
     # 2026-11-10). One stderr line and one activity event, then the snapshot still runs.
     reason = ""
-    if os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes"):
+    if os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes", "on"):
         reason = _summarizer_unavailable_reason()
         if reason:
             print(f"[sextant stop hook] summarizer skipped: {reason}", file=sys.stderr)
@@ -331,7 +347,7 @@ def main() -> int:
             except Exception:  # noqa: BLE001
                 pass
     _dry_log = None
-    if _dry_run_flag() and not reason and os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes"):  # no child, no claim (AG61)
+    if _dry_run_flag() and not reason and os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes", "on"):  # no child, no claim (AG61)
         try:
             from atlas_plus import activity as _act2
             _dry_path = atlas_paths.state_dir() / "logs" / "summarizer-dry-run.log"
@@ -343,7 +359,7 @@ def main() -> int:
             _sys.stderr.write(f"Sextant: ATLAS_SUMMARIZER_DRY_RUN is on: the model is called, nothing is written; the entry goes to {_dry_path}\n")
         except Exception:  # noqa: BLE001
             _dry_log = None
-    if os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes") and not reason:
+    if os.environ.get("ATLAS_DISABLE_AUTOSUMMARIZE", "").lower() not in ("1", "true", "yes", "on") and not reason:
         subprocess.Popen(
             [
                 sys.executable, "-m", "atlas_plus.summarizer.cli",
@@ -363,7 +379,7 @@ def main() -> int:
     # --- 2. Suggest-facts (auto mode: only writes confidence >= 0.85) ---
     if _dry_run_flag():
         reason = reason or "dry run"  # a dry run writes nothing: the facts stage is skipped (MN51: it wrote a fact and a .done marker)
-    if os.environ.get("ATLAS_DISABLE_SUGGEST_FACTS", "").lower() not in ("1", "true", "yes") and not reason:  # no model, no facts stage (MN31)
+    if os.environ.get("ATLAS_DISABLE_SUGGEST_FACTS", "").lower() not in ("1", "true", "yes", "on") and not reason:  # no model, no facts stage (MN31)
         exe = _find_script("atlas-suggest-facts")
         if not exe:
             _sys.stderr.write("Sextant: atlas-suggest-facts is not installed beside this interpreter, on PATH or in ~/.local/bin; the facts stage was skipped.\n")  # it was silent (AG50)
@@ -390,7 +406,7 @@ def main() -> int:
         pass
 
     # --- 4. Transcript mining -- incremental update of tool-pattern facts ---
-    if os.environ.get("ATLAS_DISABLE_TRANSCRIPT_MINING", "").lower() not in ("1", "true", "yes"):
+    if os.environ.get("ATLAS_DISABLE_TRANSCRIPT_MINING", "").lower() not in ("1", "true", "yes", "on"):
         atlas_temporal = _find_script("atlas-temporal")
         if atlas_temporal:
             subprocess.Popen(

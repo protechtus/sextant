@@ -270,27 +270,33 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
         "verify": verify,
         "server_name": name,
     }
+    # One refusal per PIECE (AG76): a single `error` key made `--client hooks` exit 1 and open
+    # its JSON with CANNOT PRINT because the claude-code line was refused, and on WSL the
+    # Windows-side line's refusal failed every Linux form that printed fine.
+    errors: dict[str, str] = {}
+    out["errors"] = errors
     try:
         out["claude_code"] = claude_code_command(py, env, name)
     except UnquotableValue as exc:
         out["claude_code"] = None
-        out["error"] = str(exc)
+        errors["claude-code"] = str(exc)
     try:
         out["settings_json"] = hooks_json(py, henv)
     except UnquotableValue as exc:
         out["settings_json"] = None
-        out["error"] = str(exc)
+        errors["hooks"] = str(exc)
     try:
         out["codex_toml"] = codex_toml(py, env, name)
     except UnquotableValue as exc:
         out["codex_toml"] = None
-        out["error"] = str(exc)
+        errors["codex"] = str(exc)
     try:
         # No half section: when the TOML cannot carry the value, the `codex mcp add` line (which
         # would write that same TOML) is withheld too, and CANNOT PRINT names the reason.
         out["codex"] = codex_command(py, env, name) if out["codex_toml"] else None
-    except UnquotableValue:
+    except UnquotableValue as exc:
         out["codex"] = None   # the TOML form above needs no shell quoting
+        errors["codex-command"] = str(exc)
     out["opencode_json"] = opencode_json(py, env, name)
     # A server has no Claude Code: remote clients reach HTTP mode behind an ingress.
     out["http"] = {
@@ -313,18 +319,40 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
                 existing_wslenv=(os.environ if environ is None else environ).get("WSLENV", ""))
         except UnquotableValue as exc:
             out["claude_code_from_windows"] = None
-            out["error"] = str(exc)
+            errors["claude-code-from-windows"] = str(exc)
         out["verify_from_windows"] = wsl_command_from_windows(py, env, distro, ["-m", "atlas_plus", "verify"])
         out["hooks_from_windows"] = wsl_hooks_json(py, henv, distro)
+    if errors:
+        out["error"] = next(iter(errors.values()))   # kept for --json readers
     return out
+
+
+#: The refusals that belong to each --client piece (AG76).
+_PIECE_ERRORS = {"claude-code": ("claude-code", "claude-code-from-windows"), "hooks": ("hooks",),
+                 "codex": ("codex", "codex-command")}
+
+
+def piece_errors(info: dict, client: str) -> list[str]:
+    errs = info.get("errors")
+    if errs is None:   # an info dict built by hand (tests, older callers)
+        return [info["error"]] if info.get("error") and client in ("all", *_PIECE_ERRORS) else []
+    keys = list(errs) if client == "all" else _PIECE_ERRORS.get(client, ())
+    return list(dict.fromkeys(errs[k] for k in keys if k in errs))
 
 
 def render(info: dict, client: str = "all") -> str:
     env = info["env"]
     lines: list[str] = []
-    if info.get("error") and client in ("all", "claude-code", "hooks", "codex"):
-        lines += [f"CANNOT PRINT ONE PIECE: {info['error']}", "   (move the corpus to a plainer path, "
-                  "or register by hand with the JSON block, which needs no shell quoting)", ""]
+    errs = piece_errors(info, client)
+    if errs and client == "hooks":
+        # stdout stays one JSON document (`--client hooks > h.json`); the reason goes to stderr.
+        print(f"CANNOT PRINT ONE PIECE: {errs[0]}", file=sys.stderr)
+    elif errs:
+        tail = ("merge the TOML table below, which needs no shell quoting" if client == "codex"
+                and info.get("codex_toml") else "register by hand with the JSON block, which needs no "
+                "shell quoting")
+        lines += [f"CANNOT PRINT ONE PIECE: {e}" for e in errs]
+        lines += [f"   (move the corpus to a plainer path, or {tail})", ""]
     if client == "all":
         lines += [
             "Sextant setup for this install (nothing is written; run or merge what follows)",
@@ -460,6 +488,13 @@ def _is_ours(item) -> bool:
     return "atlas_plus" in json.dumps(item, sort_keys=True)
 
 
+def _hook_workspace(item) -> str:
+    """The ATLAS_WORKSPACE_ROOT a Sextant hook entry was baked with, '' when none."""
+    import re as _re
+    m = _re.search(r"ATLAS_WORKSPACE_ROOT=([^'\"]+)", json.dumps(item, sort_keys=True).replace("\\\\", "\\"))
+    return m.group(1).strip().rstrip("\\/").casefold() if m else ""
+
+
 def _merge(existing, piece):
     """Deep-merge a JSON piece into an existing object: mappings merge key by key, a NAMED
     registration (`mcpServers.<name>`, `mcp.<name>`) is replaced whole, hook arrays drop the
@@ -478,7 +513,9 @@ def _merge(existing, piece):
         return out
     if isinstance(existing, list) and isinstance(piece, list):
         if any(_is_ours(i) for i in piece):
-            out = [i for i in existing if not _is_ours(i)]
+            # replace only this workspace's entries: a second install's merge removed the first install's hooks (AG76)
+            _mine = {_hook_workspace(i) for i in piece if _is_ours(i)}
+            out = [i for i in existing if not (_is_ours(i) and (_hook_workspace(i) in _mine or _hook_workspace(i) == ""))]
         else:
             out = list(existing)
         for item in piece:
@@ -493,7 +530,12 @@ def _write_out(path: Path, file_text: str, piece) -> None:
     backed up first: `--out opencode.json` dropped the user's other servers and `--out
     settings.json` wiped their permissions (AG24, sweep 12)."""
     if path.exists() and piece is not None:
-        raw = path.read_text(encoding="utf-8-sig")
+        try:
+            raw = path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            # PowerShell 5.1's `>` writes UTF-16; the codec message named no file (AG76).
+            raise ValueError(f"{path} exists and is not UTF-8 (PowerShell 5.1's > redirect writes "
+                             "UTF-16); move it aside or re-save it as UTF-8, then run this again") from None
         if raw.strip():
             try:
                 existing = json.loads(raw)
@@ -518,6 +560,46 @@ def _write_out(path: Path, file_text: str, piece) -> None:
             print(f"sextant setup: merged into {path} (backup: {backup.name})", file=sys.stderr)
             file_text = json.dumps(merged, indent=2)
     path.write_text(file_text + "\n", encoding="utf-8", newline="\n")
+
+
+def _nonempty(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _write_toml_out(path: Path, table: str, name: str) -> None:
+    """Append the `[mcp_servers.<name>]` table to a Codex config.toml, keeping every other line
+    (comments too) byte for byte behind a backup. `--client codex --out ~/.codex/config.toml`
+    replaced the user's whole config with the `codex mcp add` line, which is not TOML (AG76)."""
+    import tomllib
+    if not _nonempty(path):
+        path.write_text(table + "\n", encoding="utf-8", newline="\n")
+        return
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+        doc = tomllib.loads(text)
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"{path} exists and is not valid UTF-8 TOML ({exc}); merge the table by hand "
+                         "or move the file aside") from None
+    if name in (doc.get("mcp_servers") or {}):
+        if tomllib.loads(table)["mcp_servers"][name] == doc["mcp_servers"][name]:
+            print(f"sextant setup: {path} already holds this table; nothing written", file=sys.stderr)
+            return
+        raise ValueError(f"{path} already registers {name!r} differently; `codex mcp remove {name}` "
+                         "(or delete that table by hand), then run this again")
+    from datetime import datetime as _dt
+    backup = path.with_name(path.name + ".bak-" + _dt.now().strftime("%Y%m%d%H%M%S"))
+    n = 2
+    while backup.exists():
+        backup = path.with_name(f"{path.name}.bak-{_dt.now().strftime('%Y%m%d%H%M%S')}-{n}")
+        n += 1
+    backup.write_bytes(raw)
+    sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+    path.write_text(text + sep + table + "\n", encoding="utf-8", newline="\n")
+    print(f"sextant setup: added [mcp_servers.{name}] to {path} (backup: {backup.name})", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -561,8 +643,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sextant setup: merge the `mcpServers` entry below into {where}; keep any servers already "
               "there, then restart the client.", file=sys.stderr)
         args.client = "json"
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.name):
-        print(f"sextant setup: --name {args.name!r} must be letters, digits, '.', '_' or '-' (64 max)",
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", args.name):
+        # No '.': Claude Code refuses it and Codex reads `[mcp_servers.a.b]` as a nested table
+        # and refuses its whole config.toml (AG76).
+        print(f"sextant setup: --name {args.name!r} must be letters, digits, '_' or '-' (64 max)",
               file=sys.stderr)
         return 2
     info = describe(name=args.name)
@@ -582,17 +666,28 @@ def main(argv: list[str] | None = None) -> int:
         # (AG9, sweep 10).
         file_text = output
         piece = None
-        if not args.json and args.client == "hooks" and info.get("settings_json"):
+        # `--json` prints the same piece, so it merges the same way (AG76: `--client hooks --json
+        # --out settings.json` wiped the permissions the AG24 merge exists to keep).
+        if args.client == "hooks" and info.get("settings_json"):
             piece = info["settings_json"]
-        elif not args.json and args.client == "json":
+        elif args.client == "json":
             piece = info["client_config_json"]
-        elif not args.json and args.client == "opencode":
+        elif args.client == "opencode":
             piece = info["opencode_json"]
         if piece is not None:
             file_text = json.dumps(piece, indent=2)
         try:
             Path(args.out).parent.mkdir(parents=True, exist_ok=True)  # ~/.config/opencode may not exist yet (AG39)
-            _write_out(Path(args.out), file_text, piece)
+            if args.client == "codex" and not args.json:
+                if not info.get("codex_toml"):
+                    print("sextant setup: no TOML table to write; nothing written", file=sys.stderr)
+                    return 1
+                _write_toml_out(Path(args.out), info["codex_toml"], args.name)
+            elif piece is None and _nonempty(Path(args.out)):
+                raise ValueError(f"{args.out} exists; --out merges only the JSON pieces (--client json, "
+                                 "opencode, hooks) and the codex table, so nothing was written")
+            else:
+                _write_out(Path(args.out), file_text, piece)
         except OSError as exc:
             print(f"sextant setup: cannot write {args.out}: {exc}", file=sys.stderr)
             return 1
@@ -600,9 +695,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"sextant setup: {exc}", file=sys.stderr)
             return 1
     # Only a requested SHELL line that could not be printed is a failure: the JSON blocks need
-    # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11).
+    # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11). The refusal must be
+    # the requested piece's own (AG76).
     shell_forms = args.client in ("all", "claude-code", "hooks", "codex") and not args.json
-    return 1 if (info.get("error") and shell_forms) else 0
+    return 1 if (shell_forms and piece_errors(info, args.client)) else 0
 
 
 if __name__ == "__main__":

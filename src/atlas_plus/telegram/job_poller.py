@@ -33,9 +33,10 @@ from datetime import datetime, timezone
 
 log = logging.getLogger("atlas.job_poller")
 
-POLL_INTERVAL = int(os.environ.get("ATLAS_JOB_POLL_INTERVAL", "60"))
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+POLL_INTERVAL = _env_int("ATLAS_JOB_POLL_INTERVAL", 60)  # a non-number named, not a traceback (AG77)
 CLAUDE_CLI = os.environ.get("ATLAS_CLAUDE_CLI", "claude")
-JOB_TIMEOUT = int(os.environ.get("ATLAS_JOB_TIMEOUT", "300"))
+JOB_TIMEOUT = _env_int("ATLAS_JOB_TIMEOUT", 300)  # a non-number named, not a traceback (AG77)
 BRAIN_URL = os.environ.get("ATLAS_BRAIN_URL", "http://127.0.0.1:8767").rstrip("/")
 BRAIN_API_KEY = os.environ.get("ATLAS_BRAIN_API_KEY", "")
 

@@ -137,7 +137,7 @@ def world_clock_line(sep: str = "  |  ") -> str:
         New York 14:13 EDT  |  Tokyo 03:13 JST (+1d)
 
     Trailing zones show label + time + abbrev with a (+1d)/(-1d) marker
-    where they sit on a different calendar day than UTC. Falls back to a
+    where they sit on a different calendar day than the lead zone. Falls back to a
     bare UTC reading if the tz database is unavailable, and never raises.
     """
     try:
@@ -154,7 +154,8 @@ def world_clock_line(sep: str = "  |  ") -> str:
                         f"{s['label']}{abbrev} ({s['day_part']})"
                     )
                 else:
-                    delta = s["day_delta"]
+                    from datetime import date as _d
+                    delta = (_d.fromisoformat(s["iso_date"]) - _d.fromisoformat(snaps[0]["iso_date"])).days  # relative to the lead zone, not UTC (AG77: New York was -1d on the same day)
                     tag = "" if delta == 0 else (f" (+{delta}d)" if delta > 0 else f" ({delta}d)")
                     parts.append(f"{s['label']} {s['hh_mm']}{abbrev}{tag}")
             return "Now: " + sep.join(parts)

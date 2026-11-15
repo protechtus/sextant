@@ -93,7 +93,8 @@ async def _ntfy(title: str, message: str, priority: str = "default") -> None:
 # ---------------------------------------------------------------------------
 # Per-identity rate limiter (ATL-B03)
 # ---------------------------------------------------------------------------
-_RATE_LIMIT_RPM = int(os.environ.get("ATLAS_BRAIN_RATE_LIMIT_RPM", "120"))
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+_RATE_LIMIT_RPM = _env_int("ATLAS_BRAIN_RATE_LIMIT_RPM", 120)  # a non-number named, not a traceback (AG77)
 # Shared primitive (atlas_plus.auth, ROADMAP item 6); behavior identical to
 # the previous inline bucket implementation.
 from atlas_plus.auth import SlidingWindowRateLimiter as _SlidingWindowRateLimiter

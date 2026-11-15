@@ -36,8 +36,14 @@ OLLAMA_URL = ((os.environ.get("ATLAS_OLLAMA_URL") or "").strip().rstrip("/") or 
 # `mistral` failed every Stop hook silently (MN28)
 OLLAMA_MODEL = (os.environ.get("ATLAS_SUMMARIZER_MODEL") or os.environ.get("ATLAS_BRAIN_MODEL") or "qwen3:8b").strip()
 CLAUDE_MODEL = os.environ.get("ATLAS_SUMMARIZER_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-FORCED_PROVIDER = os.environ.get("ATLAS_SUMMARIZER_PROVIDER", "auto").lower()
-TIMEOUT = int(os.environ.get("ATLAS_SUMMARIZER_TIMEOUT", "120"))
+_RAW_PROVIDER = (os.environ.get("ATLAS_MODEL_SUMMARIZER_PROVIDER") or os.environ.get("ATLAS_SUMMARIZER_PROVIDER") or "auto").strip().lower()
+FORCED_PROVIDER = {"anthropic": "claude", "local": "ollama"}.get(_RAW_PROVIDER, _RAW_PROVIDER)  # the documented role variable was never read; `ollama` pinned nothing (AG77)
+if FORCED_PROVIDER not in ("auto", "ollama", "claude"):
+    import sys as _sys0
+    print(f"Sextant: the summarizer provider {_RAW_PROVIDER!r} is not supported (ollama, claude/anthropic or auto); using ollama only.", file=_sys0.stderr)
+    FORCED_PROVIDER = "ollama"  # never a silent cloud fallback for a value the user meant as a pin
+from atlas_plus.paths import env_int as _env_int
+TIMEOUT = _env_int("ATLAS_SUMMARIZER_TIMEOUT", 120)  # a non-number was a traceback (AG77)
 
 
 class ProviderError(RuntimeError):

@@ -38,7 +38,7 @@ _ENABLED_VALUES = ("on", "1", "true")
 # DENYLIST on purpose (opposite of the gate above): the feature is default-on,
 # each write is an explicit user action, and a typo'd value should not silently
 # brick the primary interaction.
-_INTERACTIVE_OFF_VALUES = ("off", "0", "false")
+_INTERACTIVE_OFF_VALUES = ("off", "0", "false", "no")  # `no` left writes on (AG77)
 
 
 def interactive_writes_enabled() -> bool:

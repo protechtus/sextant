@@ -580,7 +580,7 @@ def gather_components(probe_ports: bool = True) -> list[dict]:
     })
     sem_status = "disabled"
     sem_detail = "set ATLAS_SEMANTIC_SEARCH=off"
-    if os.environ.get("ATLAS_SEMANTIC_SEARCH", "").strip().lower() != "off":
+    if os.environ.get("ATLAS_SEMANTIC_SEARCH", "").strip().lower() not in ("off", "0", "false", "no"):  # AG77
         try:
             from atlas_plus.mcp.memory_server.embeddings import index_status
 
@@ -627,7 +627,7 @@ def gather_components(probe_ports: bool = True) -> list[dict]:
     out.append({
         "name": "Telegram bot",
         "what": "mobile control surface",
-        "status": ("ready" if (os.environ.get("ATLAS_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN"))
+        "status": ("ready" if os.environ.get("ATLAS_TELEGRAM_BOT_TOKEN")  # the bot reads only this name (AG77: "ready" while the bot exited 1)
                    else "not configured"),
         "disable": "optional -- unset ATLAS_TELEGRAM_BOT_TOKEN / don't run the bot",
     })

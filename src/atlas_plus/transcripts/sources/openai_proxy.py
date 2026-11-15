@@ -40,7 +40,8 @@ from atlas_plus.transcripts.index import TranscriptIndex
 from atlas_plus.transcripts.store import TranscriptStore, TurnRecord
 
 SOURCE = "openai-proxy"
-DEFAULT_PORT = int(os.environ.get("ATLAS_OPENAI_PROXY_PORT", "11435"))
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+DEFAULT_PORT = _env_int("ATLAS_OPENAI_PROXY_PORT", 11435)  # a non-number named, not a traceback (AG77)
 DEFAULT_TARGET = os.environ.get("OPENAI_PROXY_TARGET", "https://api.openai.com/v1")
 
 log = logging.getLogger("atlas.openai-proxy")

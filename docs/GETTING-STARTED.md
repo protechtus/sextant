@@ -245,7 +245,7 @@ imported vault: `--scope reference:obsidian/README`.
   `$PWD.Path` in PowerShell); do not copy
   the `_note` key; sanity-check the result with
   `python -m json.tool ~/.claude/settings.json` (on Windows save the file as
-  UTF-8 without a BOM; PowerShell 5.1's `Set-Content -Encoding utf8` adds one and so does its `>` redirect, so use `sextant setup --client hooks --out hooks.json` instead;
+  UTF-8 without a BOM; PowerShell 5.1's `Set-Content -Encoding utf8` adds one and its `>` redirect writes UTF-16, so use `sextant setup --client hooks --out hooks.json` instead;
   a BOM makes that check fail). Or simply ask your
   assistant to do the merge -- paste the snippet file and say which
   settings file to put it in.
@@ -318,9 +318,13 @@ shared corpus primes everyone with the same identity (set `ATLAS_USER_NAME`
 for the display name); import an export once and pull it, rather than
 importing on both machines (the import stamps carry a timestamp); and after
 a merge with conflict markers, doctor names the notes to resolve first.
-Everything else (`~/.atlas`, the FTS and embedding indexes) is derived state
-that `sextant-fts-rebuild` (alias `atlas-fts-rebuild`) and `sextant-embed-index` rebuild from the markdown,
-so the corpus is the only thing you need to protect. If you back up to a
+The search and embedding indexes in the state dir are derived: `sextant-fts-rebuild` (alias `atlas-fts-rebuild`)
+and `sextant-embed-index` rebuild them from the markdown. The rest of the state dir is NOT derived: `sync/` holds a
+hub's device pairings (restore it, or every device gets "token rejected" and has to be re-paired), and `transcripts/`,
+the activity log and the review queue are their only copies. Back up the corpus AND the state dir (`sextant-backup`
+does both); restore into an empty folder, never over a live workspace (an older copy over a hub reverts every device
+at its next sync). A git backup of the corpus leaves out `versions/`, the locks, the index, `_atlas/sync-conflicts/`
+and `_atlas/sync-inbox/`. If you back up to a
 shared or cloud location, encrypt first (e.g. an rclone crypt remote) --
 your memory is the most personal data on the machine.
 
@@ -510,7 +514,8 @@ idempotent and adds anything a newer build expects, for example the state-dir
 ownership marker that builds before 2026-11-10 did not write and the
 uninstaller now requires); `sextant setup` to compare with your registration and your hooks
 (`claude mcp get sextant` shows the registration; the hook commands are in
-`~/.claude/settings.json`; both stay valid unless you moved the venv, but a
+`~/.claude/settings.json`; both stay valid unless you moved the venv or the workspace (both paths are baked in: re-run
+`sextant setup` after a move), but a
 release can change the hook command, so re-merge section 3 when it differs);
 and
 `sextant verify --project upgrade-check` to prove the round-trip (it writes

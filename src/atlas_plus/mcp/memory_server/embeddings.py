@@ -48,7 +48,7 @@ def _ensure_schema(conn) -> None:
 
 
 def enabled() -> bool:
-    return os.environ.get("ATLAS_SEMANTIC_SEARCH", "").strip().lower() != "off"
+    return os.environ.get("ATLAS_SEMANTIC_SEARCH", "").strip().lower() not in ("off", "0", "false", "no")  # `0` left embedding calls on (AG77)
 
 
 class OllamaEmbedder:

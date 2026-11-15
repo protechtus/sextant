@@ -1095,7 +1095,8 @@ from collections import defaultdict, deque
 
 _AUTH_FAILURES: dict[str, deque] = defaultdict(deque)
 _AUTH_ALERT_WINDOW = 300.0  # sliding window, seconds
-_AUTH_ALERT_THRESHOLD = int(os.environ.get("ATLAS_MCP_ALERT_THRESHOLD", "5"))
+from atlas_plus.paths import env_int as _env_int  # noqa: E402
+_AUTH_ALERT_THRESHOLD = _env_int("ATLAS_MCP_ALERT_THRESHOLD", 5)  # a non-number named, not a traceback (AG77)
 _AUTH_ALERTED: set[str] = set()
 _ALERT_NTFY_URL = os.environ.get("ATLAS_NTFY_URL", "")
 
@@ -1104,8 +1105,8 @@ _ALERT_NTFY_URL = os.environ.get("ATLAS_NTFY_URL", "")
 # threshold so the operator gets warned first, then the source is cut off. A
 # legitimate client holding the right token accumulates no failures and is never
 # locked. ip -> monotonic expiry.
-_LOCKOUT_THRESHOLD = int(os.environ.get("ATLAS_MCP_LOCKOUT_THRESHOLD", "10"))
-_LOCKOUT_SECONDS = float(os.environ.get("ATLAS_MCP_LOCKOUT_SECONDS", "300"))
+_LOCKOUT_THRESHOLD = _env_int("ATLAS_MCP_LOCKOUT_THRESHOLD", 10)  # a non-number named, not a traceback (AG77)
+_LOCKOUT_SECONDS = float(_env_int("ATLAS_MCP_LOCKOUT_SECONDS", 300))  # a non-number named, not a traceback (AG77)
 _LOCKED_OUT: dict[str, float] = {}
 # Peers the operator owns (IPs or CIDRs, comma-separated): never locked out and their failures
 # are not counted, like loopback. A container published on the host's loopback sees every host

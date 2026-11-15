@@ -395,8 +395,9 @@ available and is what the deeper docs reference):
 | `sextant-reset` | `atlas-reset` | wipe an area and re-scaffold it fresh (same safety gates) |
 | `sextant-intake` | `atlas-intake` | import files dropped into a watched folder (frontmatter routing) |
 
-Two more `sextant-*` scripts have no `atlas-*` twin: `sextant-versions` (report or prune the whole-file
-history copies every write makes) and `sextant-session-start` (the SessionStart hook's entry point).
+One more `sextant-*` script has no `atlas-*` twin: `sextant-versions` (report or prune the whole-file
+history copies every write makes). `sextant-session-start` (alias `atlas-session-start`) is the SessionStart hook's
+entry point, and `sextant-fts-rebuild` (alias `atlas-fts-rebuild`) rebuilds the keyword index.
 
 (The full `atlas-*` family includes further internal/service commands without
 `sextant-*` twins; `sextant commands` lists everything installed.)
@@ -453,8 +454,8 @@ What it does not do (know these before you rely on it):
   out is the topic string and the URLs themselves, nothing more.
 - **Autonomous mode snapshots your working trees.** With `ATLAS_AUTONOMOUS`
   on (off by default), the session-end hook records `git status`, the
-  branch and commit, the subjects of the last five commits of the day, and
-  up to 4 KB of `git diff HEAD` per repo under your projects directory into
+  branch and commit, the subjects of up to five commits from the last 24 hours, and
+  the first 4,000 characters of `git diff HEAD` per repo under your projects directory into
   the state dir -- that is uncommitted work, which can include not-yet-removed
   secrets. Know that before you enable it. The same hook also launches
   the suggest-facts pass and a temporal index build in the background --

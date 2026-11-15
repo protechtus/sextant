@@ -41,6 +41,7 @@ A command channel is a control surface, so it is locked down by default:
    ```powershell
    $env:ATLAS_NTFY_CMD_TOPIC  = "atlas-cmd-XXXXXXXX"   # first line above
    $env:ATLAS_NTFY_CMD_SECRET = "YYYYYYYYYYYYYYYY"      # second line above
+   $env:ATLAS_BRAIN_API_KEY   = "<the Brain's key>"     # commands reach the Brain with it; without it every command is refused
    ```
    `ATLAS_NTFY_TOPIC` (your existing notify topic) is reused for replies.
 3. In the ntfy phone app, subscribe to BOTH topics: your notify topic (to receive
