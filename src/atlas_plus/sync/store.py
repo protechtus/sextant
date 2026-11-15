@@ -46,10 +46,51 @@ def bump_hub_generation(root: Path | None = None) -> int:
     p = (root or sync_dir()) / "generation"
     g = hub_generation(root) + 1
     p.parent.mkdir(parents=True, exist_ok=True)
+    _record_generation_mark(p.parent, g)  # the mark first: a crash between the two leaves an unused mark, never an unmarked count
     tmp = p.with_name(f"generation.{os.getpid()}.part")
     tmp.write_text(str(g), encoding="ascii")
     os.replace(tmp, p)
     return g
+
+
+# A count alone cannot tell a restored hub that has since applied as many pushes as it lost from the hub a device last saw
+# (AG79: a second device pushed once after the restore and the first device pulled yesterday's note over today's). Every
+# count gets a random mark; a device keeps the mark of the count it recorded and asks for that count's mark again.
+_MARKS_FILE = "generation-marks"
+_MARKS_KEEP = 4096
+
+
+def _record_generation_mark(d: Path, g: int) -> str:
+    import secrets
+    mark = secrets.token_hex(8)
+    p = d / _MARKS_FILE
+    with open(p, "a", encoding="ascii", newline="\n") as fh:
+        fh.write(f"{g} {mark}\n")
+    if g % 1024 == 0:  # bounded: keep the newest marks
+        try:
+            lines = p.read_text(encoding="ascii").splitlines()[-_MARKS_KEEP:]
+            tmp = p.with_name(f"{_MARKS_FILE}.{os.getpid()}.part")
+            tmp.write_text("\n".join(lines) + "\n", encoding="ascii")
+            os.replace(tmp, p)
+        except OSError:
+            pass
+    return mark
+
+
+def generation_mark(g: int, root: Path | None = None) -> str | None:
+    """The mark this hub gave count ``g`` (the newest one, should a restore have reused the count), or None when unknown."""
+    if not isinstance(g, int) or g <= 0:
+        return None
+    try:
+        text = ((root or sync_dir()) / _MARKS_FILE).read_text(encoding="ascii")
+    except (OSError, ValueError):
+        return None
+    found = None
+    prefix = f"{g} "
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            found = line[len(prefix):].strip() or None
+    return found
 
 
 # -- Base manifests (three-way anchor per remote) ---------------------------

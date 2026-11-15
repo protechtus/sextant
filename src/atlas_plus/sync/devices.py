@@ -93,6 +93,10 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+class DuplicateNameError(ValueError):
+    """pair() on a name that is still active: the CLI names the revoke-then-pair route (AG82)."""
+
+
 def pair(
     name: str,
     kind: str = "device",
@@ -127,9 +131,11 @@ def pair(
         raise ValueError("a device name is 1-64 characters, no leading or trailing spaces, no control characters, no / \\ or :")  # '', ' ', a newline that spoofed a listing row (AG71)
     devices = _load_raw(path)
     if any(str(d.get("name", "")).casefold() == name.casefold() and not d.get("revoked") for d in devices):
-        raise ValueError(f"an active principal named {name!r} already exists")
+        raise DuplicateNameError(f"an active principal named {name!r} already exists")
 
     token = secrets.token_urlsafe(32)
+    while token.startswith("-"):  # `--token -abc...` is a missing argument to argparse: 1 pairing in 64 (AG82)
+        token = secrets.token_urlsafe(32)
     device = Device(
         device_id=uuid.uuid4().hex[:12],
         name=name,

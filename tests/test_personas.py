@@ -219,7 +219,12 @@ def test_guessed_dashboard_command_gives_a_hint(monkeypatch):
     # refusal naming the variable, not a hint.
     monkeypatch.delenv("ATLAS_WEB_API_KEY", raising=False)
     from atlas_plus.web import app as _webapp
-    monkeypatch.setattr(_webapp, "_port_free", lambda *a, **k: True)  # the banner prints only for a free port (AG71); 8766 may be live here
+    import socket as _socket
+    with _socket.socket() as _s:
+        _s.bind(("127.0.0.1", 0))
+        _free = _s.getsockname()[1]
+    monkeypatch.setattr(_webapp, "WEB_PORT", _free)  # never the default 8766: a live dashboard there made the test start a real one (AG82)
+    monkeypatch.setattr(_webapp, "_port_free", lambda *a, **k: True)  # the banner prints only for a free port (AG71)
     r = CliRunner().invoke(cli.app, ["dashboard"])
     assert "sextant-web" in r.output and "ATLAS_WEB_API_KEY" in r.output
 

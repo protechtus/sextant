@@ -77,7 +77,15 @@ def _load_transcript_text(since: str = "today", source: str = "claude-code", con
         if content and str(content).strip():
             text = str(content).strip()[:2000]  # a bounded slice: whole-turn redaction cost minutes per Stop on a 200 MB session (MN69)
             if _redact_turn is not None:
-                text = _redact_turn(text) or ""  # redact BEFORE the 400 cut: a key straddling it leaked its prefix (AG40)
+                # redact BEFORE the 400 cut: a key straddling it leaked its prefix (AG40). The previous turn's last
+                # line rides along so `the password is` then `Natsu2024` on the next turn is masked here too (AG79:
+                # the cross-turn carry of MN68 only worked on joined text; this loader redacted turn by turn).
+                _prev = lines[-1].rsplit("\n", 1)[-1] if lines else ""
+                if _prev:
+                    _both = _redact_turn(_prev + "\n" + text) or ""
+                    text = _both.split("\n", 1)[1] if _both.startswith(_prev + "\n") else (_redact_turn(text) or "")
+                else:
+                    text = _redact_turn(text) or ""
             lines.append(f"{role}: {text[:400]}")
 
     return "\n".join(lines)

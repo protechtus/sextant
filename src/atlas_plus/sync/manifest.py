@@ -225,6 +225,9 @@ class SyncPlan:
     in_sync: int = 0
     # A peer's unchanged proposals (awaiting the hub's review): neither pushed nor pulled.
     proposed: list[str] = field(default_factory=list)
+    # Edited here, deleted (archived) on the hub: listed in remote_deleted too, kept here, never
+    # pushed back or pulled; plan and sync both say so (AG82: plan said CONFLICT, sync said deleted).
+    kept_local_edits: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:

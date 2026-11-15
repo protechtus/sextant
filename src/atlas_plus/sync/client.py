@@ -84,6 +84,26 @@ def _detail(response: httpx.Response) -> str:
     return text[:80] or f"HTTP {response.status_code}"
 
 
+def _url_hint(base_url: str, response: httpx.Response) -> str:
+    """verify's URL hints for the sync client (AG82): a redirect, a path suffix, plain HTTP to TLS."""
+    from urllib.parse import urlsplit
+    code = response.status_code
+    loc = (response.headers.get("Location") or "")[:120]
+    parts = urlsplit(base_url)
+    root = f"{parts.scheme}://{parts.netloc}" if parts.netloc else base_url
+    if code in (301, 302, 303, 307, 308):
+        if parts.scheme == "http" and loc.startswith("https://"):
+            return (f" (the hub redirects plain HTTP to HTTPS ({loc}); the token was not sent there: "
+                    "use the https:// address of the hub, with its TLS port)")
+        return f" (the hub redirected to {loc or '?'}; the token was not sent there: check the --hub address)"
+    if code == 404 and parts.path.rstrip("/"):
+        return (f" (--hub is the hub's root address, without a path: use {root}; the client adds "
+                "/sync/v1/... itself, and /mcp is the memory server, not the hub)")
+    if code == 400 and parts.scheme == "http" and "https" in (response.text or "")[:300].lower():
+        return f" (this port speaks HTTPS: use https://{parts.netloc})"
+    return ""
+
+
 def _share_principal(share: tuple[str, ...]) -> policy.Principal | None:
     """The LOCAL policy for an outbound share: only these prefixes may leave or arrive.
 
@@ -118,6 +138,8 @@ class SyncReport:
     # Files this peer has proposed (hub inbox) whose local copy is unchanged since: not
     # re-sent, not pulled over, reported as "awaiting the hub's review".
     proposed: list[str] = field(default_factory=list)
+    # Edited here, deleted on the hub (also in remote_deleted): kept here, not pushed (AG82).
+    kept_local_edits: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
@@ -212,6 +234,19 @@ class SyncClient:
     def _transport_error(self, verb: str, path: str, exc: Exception) -> SyncClientError:
         # A refused connection is "no hub answering", not a WinError dump (persona rerun 2026-11-10).
         _s = str(exc)
+        if "WRONG_VERSION_NUMBER" in _s or "record layer failure" in _s:
+            return SyncClientError(
+                f"{self._hub_label()} answered plain HTTP to a TLS handshake: use http:// for this hub "
+                "(or put it behind a TLS proxy)"  # it said "no hub answering" with the hub running (AG82)
+            )
+        _low = _s.lower()
+        if isinstance(exc, (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError)) and (
+                "10054" in _s or "forcibly closed" in _low or "reset" in _low or "disconnected" in _low) \
+                and self._hub_label().startswith("http://"):
+            _alt = "https://" + self._hub_label()[len("http://"):]
+            return SyncClientError(
+                f"{self._hub_label()} closed the connection: if this port is a TLS proxy (Caddy, nginx), use {_alt}"
+            )  # a raw WinError 10054 (AG82)
         if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower() or "ssl" in type(exc).__name__.lower():
             return SyncClientError(
                 f"the hub at {self._hub_label()} presented a certificate this client does not trust (a private CA, "
@@ -247,11 +282,14 @@ class SyncClient:
         return response.json()
 
     def remote_manifest(self) -> dict:
-        response = self._get("/sync/v1/manifest")
+        since = getattr(self, "_since_generation", None)  # the count this device last recorded: the hub answers with its mark (AG79)
+        response = self._get("/sync/v1/manifest", params={"since": since}) if isinstance(since, int) and since > 0 \
+            else self._get("/sync/v1/manifest")
         if response.status_code == 401:
             raise SyncClientError("unauthorized: token rejected by hub")
         if response.status_code != 200:
-            raise SyncClientError(f"manifest: HTTP {response.status_code}: {_detail(response)}")
+            _hint = _url_hint(self._hub_label(), response)
+            raise SyncClientError(f"manifest: HTTP {response.status_code}" + (_hint or f": {_detail(response)}"))
         try:
             data = response.json()
         except ValueError:
@@ -278,12 +316,27 @@ class SyncClient:
     def push(self, changes: list[dict]) -> dict:
         if len(changes) > 500:  # the hub takes at most 500 per request: 3,000 new notes failed every sync (MN71)
             out: list = []
-            gen = None
+            gen = mark = None
             for i in range(0, len(changes), 500):
-                part = self.push(changes[i:i + 500])
+                try:
+                    part = self.push(changes[i:i + 500])
+                except SyncAuthError:
+                    if not out:
+                        raise
+                    # a later batch was refused: what already landed is still reported as landed (AG79)
+                    out.extend({"path": ch.get("path", "?"), "result": "unsent"} for ch in changes[i:])
+                    return {"results": out, "generation": gen, "generation_mark": mark,
+                            "stopped": "the hub rejected this device's token (revoked, or a new pairing): sync stopped"}
+                except SyncClientError as exc:
+                    if not out:
+                        raise
+                    # a later batch failed (a 502 from the proxy): batch 1 had landed but all 620 files read as errors (AG79)
+                    out.extend({"path": ch.get("path", "?"), "result": "error", "detail": str(exc)} for ch in changes[i:i + 500])
+                    continue
                 out.extend(part.get("results", []))
-                gen = part.get("generation", gen)
-            return {"results": out, "generation": gen}
+                if isinstance(part.get("generation"), int):
+                    gen, mark = part["generation"], part.get("generation_mark")
+            return {"results": out, "generation": gen, "generation_mark": mark}
         response = self._post("/sync/v1/push", {"changes": changes})
         if response.status_code == 401:
             raise SyncAuthError("the hub rejected this device's token (revoked, or a new pairing): sync stopped")  # one sentence, not one per file (AG73)
@@ -318,6 +371,8 @@ class SyncClient:
         """
         prefixes = normalize_share(share)
         local_policy = _share_principal(prefixes)
+        _seen = self._own_base(base_id) or {}
+        self._since_generation = _seen.get("hub_generation") if isinstance(_seen.get("hub_generation"), int) else None
         remote = self.remote_manifest()
         hub_policy = _hub_policy(remote)
         if local_policy is None and (hub_policy is None or hub_policy.kind == "peer"):
@@ -334,12 +389,25 @@ class SyncClient:
         base = self._own_base(base_id)
         self._rolled_back = False
         _rg = remote.get("generation") if isinstance(remote, dict) else None
-        if base is not None and isinstance(_rg, int) and _rg < int(base.get("hub_generation") or 0):
-            base = None  # the hub is older than this device last saw (restored from a backup): every difference is a conflict (MN71)
+        _seen_mark = (base or {}).get("hub_generation_mark")
+        _now_mark = remote.get("since_mark") if isinstance(remote, dict) else None
+        if base is not None and isinstance(_rg, int) and (
+                _rg < int(base.get("hub_generation") or 0)
+                or (isinstance(_seen_mark, str) and isinstance(_now_mark, str) and _now_mark != _seen_mark)):
+            # the hub is older than this device last saw (restored from a backup): every difference is a conflict (MN71);
+            # a count this hub reached again after the restore carries a different mark (AG79)
+            base = None
             self._rolled_back = True
         base_files = {k: v for k, v in ((base or {}).get("files", {}) or {}).items()
                       if _visible(k, local_policy, hub_policy)}
         plan = manifest.diff3(local["files"], remote_files, base_files)
+        # Edited here, gone from the hub: sync reports a remote deletion and keeps the copy, while
+        # plan said CONFLICT forever (AG82). One classification for both.
+        plan.kept_local_edits = [rel for rel in plan.conflicts
+                                 if rel not in remote_files and rel in local["files"]]
+        if plan.kept_local_edits:
+            plan.conflicts = [rel for rel in plan.conflicts if rel not in plan.kept_local_edits]
+            plan.remote_deleted = sorted(set(plan.remote_deleted) | set(plan.kept_local_edits))
         # A peer's accepted proposals (hub inbox) are neither re-sent nor pulled over while the
         # local copy is unchanged; the plan lists them separately (persona rerun 2026-11-10:
         # a peer re-planned the same push forever and could never be "in sync").
@@ -355,7 +423,7 @@ class SyncClient:
         return plan, local, remote
 
     def sync_once(self, root: Path, base_id: str = "hub", dry_run: bool = False,
-                  share: Sequence[str] | None = None) -> SyncReport:
+                  share: Sequence[str] | None = None, progress=None) -> SyncReport:
         """Plan, pull, push, record the new base. The whole spoke-side loop.
 
         Conflicts never overwrite local files: the hub's copy is parked in
@@ -374,6 +442,7 @@ class SyncClient:
         local_policy = _share_principal(prefixes)
         plan, local, _remote = self.plan(root, base_id, prefixes)
         _hub_gen = _remote.get("generation") if isinstance(_remote, dict) else None
+        _hub_mark = _remote.get("generation_mark") if isinstance(_remote, dict) else None
         hub_policy = _hub_policy(_remote)
         remote_files_all = _remote.get("files", {})
         report = SyncReport(
@@ -381,6 +450,7 @@ class SyncClient:
             local_deleted=list(plan.local_deleted),
             local_files=len(local.get("files", {})),
             hub_prefixes=list(hub_policy.prefixes) if hub_policy else [],
+            kept_local_edits=list(plan.kept_local_edits),
         )
         if dry_run:
             report.conflicts = list(plan.conflicts)
@@ -398,6 +468,12 @@ class SyncClient:
         # (round C 2026-11-10, lane A F2).
         unresolved: set[str] = set(plan.local_deleted)
         unresolved.update(plan.conflicts)  # every conflict keeps its old anchor even when the run stops early (AG73)
+        unresolved.update(plan.kept_local_edits)  # old anchor kept: a restored hub copy is a conflict, never a pull over the edit
+        # A long first sync printed nothing for minutes (AG82): the caller gets counts as files land.
+        _total = len(plan.to_pull) + len(plan.to_push)
+        if progress is not None and _total:
+            progress("start", 0, _total, len(plan.to_pull), len(plan.to_push))
+        _done = 0
         auth_stopped = False  # a 401 stops the WHOLE run: the push and conflicts passes went on with one 401 line per file (AG73)
         local_files = local.get("files", {})
         for rel in plan.to_pull:
@@ -424,6 +500,9 @@ class SyncClient:
                     continue
                 apply.apply_change(root, rel, content, announced or None, local_policy)
                 report.pulled.append(rel)
+                _done += 1
+                if progress is not None:
+                    progress("pull", _done, _total, len(plan.to_pull), len(plan.to_push))
             except apply.SyncPolicyError as exc:
                 report.denied.append(rel)
                 report.errors.append(f"{rel}: denied ({exc})")  # `denied 1` named nothing (AG47)
@@ -473,6 +552,10 @@ class SyncClient:
                     results = _push_answer.get("results", [])
                     if isinstance(_push_answer.get("generation"), int):
                         _hub_gen = _push_answer["generation"]  # the hub's own count after our push
+                        _hub_mark = _push_answer.get("generation_mark")
+                    if _push_answer.get("stopped"):
+                        report.errors.append(str(_push_answer["stopped"]))
+                        auth_stopped = True
                 except SyncAuthError as exc:
                     report.errors.append(str(exc))
                     unresolved.update(ch["path"] for ch in changes)
@@ -485,6 +568,8 @@ class SyncClient:
                         report.errors.append(f"{change['path']}: {exc}")
                         unresolved.add(change["path"])
                     results = []
+                if progress is not None and results:
+                    progress("push", _done + len(results), _total, len(plan.to_pull), len(plan.to_push))
                 for item in results:
                     if not isinstance(item, dict):
                         continue
@@ -519,6 +604,8 @@ class SyncClient:
                             auth_stopped = True
                         except Exception as exc:  # noqa: BLE001
                             report.errors.append(f"{rel}: could not fetch the hub's copy ({_detail(exc)})")
+                    elif result == "unsent":
+                        unresolved.add(rel)  # never reached the hub (the run stopped): one sentence above, not one per file
                     elif result == "denied":
                         report.denied.append(rel)
                         report.errors.append(f"{rel}: denied (hub said: {item.get('detail') or 'policy'})")  # `denied 1` named nothing (MN41)
@@ -581,6 +668,8 @@ class SyncClient:
         refreshed["manifest_hash"] = manifest.files_hash(files)
         if isinstance(_hub_gen, int):
             refreshed["hub_generation"] = _hub_gen
+            if isinstance(_hub_mark, str):
+                refreshed["hub_generation_mark"] = _hub_mark
         if self._credential:
             refreshed["credential"] = self._credential
         store.save_base_manifest(self._base_key(base_id), refreshed)

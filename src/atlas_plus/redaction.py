@@ -636,6 +636,10 @@ _VALUE_CUE_AFTER_RE = re.compile(r"^['\"`)\]」』”]?[ \t]*(?:है|हैं
 _ROLE_PREFIX_RE = re.compile(r"^\s*(?:\[(?:USER|ASSISTANT|SYSTEM|TOOL)\]|(?:USER|ASSISTANT|SYSTEM|TOOL|Human|AI):)\s*", re.IGNORECASE)
 _TRAILING_COMMENT_RE = re.compile(r"\s+(?:#|//|--)\s.*$")
 _LINE_ENDS_WITH_CUE_RE = re.compile(r"(?:[:=：]|\b(?:is|below|unten|abajo|ci-dessous|qui sotto|poniżej|níže|alla|ниже|aşağıda|bên dưới|di bawah)\b)\s*$", re.IGNORECASE)
+_LIST_MARK_RE = re.compile(r"^(?:[-*+•>]|\d{1,3}[.)])[ \t]+")  # `- V`, `> V`, `1. V` under `password is:` (AG79)
+# a qualifier longer than 20 characters still binds the cue when it is a prepositional phrase or a comma clause:
+# `The password for the staging database is V`, `the wifi password, which I set yesterday, is V` (AG79)
+_QUALIFIER_RE = re.compile(r"^(?:[,(]|(?:for|of|on|at|in|to|from|used|that|which|für|des|der|del|de|du|pour|para|per|dla|do|na|van|voor)\b)", re.IGNORECASE)
 
 
 def _secret_shaped(tok: str, value_slot: bool = False) -> bool:
@@ -671,7 +675,7 @@ def _keyword_line_redact(text: str) -> str:
             return tok  # cheap first: only a letters-and-digits token can be a value (the slot test per token was super-linear)
         if not carried and _secret_shaped(core2, value_slot=False):
             return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
-        before = m.string[max(0, m.start() - 40):m.start()].rstrip(" \t")
+        before = m.string[max(0, m.start() - 80):m.start()].rstrip(" \t")
         after = m.string[m.end():m.end() + 16]
         slot = carried
         if not slot:
@@ -681,7 +685,7 @@ def _keyword_line_redact(text: str) -> str:
                 pos, w = max(hits)
                 gap = bprobe[pos + len(w):].strip(" \t'\"`(「『“")
                 rest = m.string[m.end():].split("\n", 1)[0].strip(" \t.,;:!?。、」』”)")
-                close = len(gap) <= 20  # the word, a short qualifier (`de root`, `πρόσβασης`), the cue
+                close = len(gap) <= 20 or (len(gap) <= 60 and bool(_QUALIFIER_RE.match(gap)) and not re.search(r"[.;!?。]", gap))  # the word, a qualifier (`de root`, `for the staging database`), the cue
                 _cue = _VALUE_CUE_RE.search(before)
                 if _cue and close:
                     _cw = _cue.group(0).strip(" \t'\"`([「『“:=：＝—–").casefold()
@@ -708,10 +712,12 @@ def _keyword_line_redact(text: str) -> str:
         if any(w in probe for w in _PW_WORDS_STRIPPED):
             new = _PW_TOKEN_RE.sub(_mask, line)
             carry = new == line and "[REDACTED" not in line  # an already-masked value does not carry to the next line (AG73)
-            carry_slot = carry and bool(_LINE_ENDS_WITH_CUE_RE.search(_ROLE_PREFIX_RE.sub("", line)))
+            carry_slot = carry and bool(_LINE_ENDS_WITH_CUE_RE.search(_TRAILING_COMMENT_RE.sub("", _ROLE_PREFIX_RE.sub("", line))))  # `password is  # below` (AG79: the comment rule was on the value line only)
             out_lines.append(new)
             continue
         body = _TRAILING_COMMENT_RE.sub("", _ROLE_PREFIX_RE.sub("", line)).strip()  # `[USER] V` / `USER: V` / `V  # staging` (MN68: across turns)
+        if carry:
+            body = _LIST_MARK_RE.sub("", body)  # `- V` / `> V` / `1. V` (AG79)
         if carry and (not body or body.startswith(("```", "~~~"))):
             out_lines.append(line)  # `password is below:`, a blank line or a fence, then V: the value leaked (AG73)
             continue

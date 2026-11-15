@@ -167,7 +167,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "role": "hub", "protocol": PROTOCOL_VERSION}
 
     @app.get("/sync/v1/manifest")
-    async def get_manifest(device: devices.Device = Depends(_require_principal)) -> dict:
+    async def get_manifest(device: devices.Device = Depends(_require_principal), since: int | None = None) -> dict:
         principal = device.principal()
         result = dict(_manifest_for(_corpus_root(), principal))
         # The caller learns HOW this hub pairs it. A spoke uses this only to be MORE
@@ -178,6 +178,9 @@ def create_app() -> FastAPI:
             "scope": principal.scope, "prefixes": list(principal.prefixes),
         }
         result["generation"] = store.hub_generation()  # devices notice a hub restored from an older backup (MN71)
+        result["generation_mark"] = store.generation_mark(result["generation"])  # ...even after it caught up again (AG79)
+        if since is not None:
+            result["since_mark"] = store.generation_mark(since)
         store.audit("manifest", device=device.name, files=len(result["files"]))
         return result
 
@@ -292,7 +295,8 @@ def create_app() -> FastAPI:
         _invalidate_manifest_cache()  # the corpus just changed
         if any(r.get("result") == "applied" for r in results):
             store.bump_hub_generation()
-        return {"results": results, "generation": store.hub_generation()}  # the device records the exact number
+        _g = store.hub_generation()
+        return {"results": results, "generation": _g, "generation_mark": store.generation_mark(_g)}  # the device records the exact number
 
     @app.post("/sync/v1/checkin")
     async def checkin(

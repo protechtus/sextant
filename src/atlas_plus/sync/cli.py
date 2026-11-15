@@ -61,6 +61,10 @@ def cmd_pair(args: argparse.Namespace) -> int:
         device, token = devices.pair(
             args.name, kind=args.kind, scope=args.scope, prefixes=prefixes
         )
+    except devices.DuplicateNameError as exc:
+        print(f"pair failed: {exc}. To give it a new token: {_prog_name()} revoke {args.name}, then "
+              f"{_prog_name()} pair {args.name} (the old token stops working at the revoke)", file=sys.stderr)
+        return 1
     except ValueError as exc:
         print(f"pair failed: {exc}", file=sys.stderr)
         return 1
@@ -74,7 +78,10 @@ def cmd_pair(args: argparse.Namespace) -> int:
 
 
 def cmd_devices(args: argparse.Namespace) -> int:
-    rows = devices.load_devices()
+    every = devices.load_devices()
+    # Revoked rows are history: hidden unless --all (AG82); JSON follows the same rule.
+    rows = every if getattr(args, "all", False) else [d for d in every if not d.revoked]
+    hidden = len(every) - len(rows)
     checkins = store.load_checkins()
     if args.json:
         out = []
@@ -90,13 +97,19 @@ def cmd_devices(args: argparse.Namespace) -> int:
         return 0
     if not rows:
         from atlas_plus.branding import prog as _prog
-        print(f"no paired devices or peers yet ({_prog('atlas-sync')} pair <name>)")
+        if hidden:
+            print(f"no active devices or peers ({hidden} revoked, hidden: --all shows them; "
+                  f"{_prog('atlas-sync')} pair <name>)")
+        else:
+            print(f"no paired devices or peers yet ({_prog('atlas-sync')} pair <name>)")
         return 0
     for d in rows:
         seen = checkins.get(d.device_id, {}).get("received_utc", "never")
         flags = " REVOKED" if d.revoked else ""
         scope = d.scope + (f" [{','.join(d.prefixes)}]" if d.prefixes else "")
         print(f"  {d.name:<20} {d.kind:<7} {scope:<24} last check-in: {seen}{flags}")
+    if hidden:
+        print(f"  ({hidden} revoked, hidden: --all shows them)")
     return 0
 
 
@@ -152,6 +165,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "to_pull": plan.to_pull, "to_push": plan.to_push,
             "conflicts": plan.conflicts, "local_deleted": plan.local_deleted,
             "remote_deleted": plan.remote_deleted, "in_sync": plan.in_sync,
+            "kept_local_edits": plan.kept_local_edits,
         }, indent=2))
         return 0
     print(plan.summary())
@@ -163,7 +177,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
         ("pull", plan.to_pull), ("push", plan.to_push),
         ("CONFLICT", plan.conflicts),
         ("proposed, awaiting the hub's review", plan.proposed),
-        ("deleted remotely (no action)", plan.remote_deleted),
+        ("edited here, deleted on the hub (your copy is kept, not pushed)", plan.kept_local_edits),
+        ("deleted remotely (no action)", [r for r in plan.remote_deleted if r not in plan.kept_local_edits]),
         ("deleted locally (no action)", plan.local_deleted),
     ):
         for rel in items:
@@ -178,7 +193,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     root = atlas_paths.memory_root()
     try:
         with SyncClient(hub, token) as client:
-            report = client.sync_once(root, dry_run=args.dry_run, share=_share_args(args))
+            report = client.sync_once(root, dry_run=args.dry_run, share=_share_args(args),
+                                      progress=None if args.dry_run else _progress_printer())
     except SyncClientError as exc:
         print(f"sync refused: {exc}", file=sys.stderr)
         return 2
@@ -195,6 +211,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         elif report.local_files == 0 and not report.pulled:
             print("  note: the declared share matches no local file yet (check the prefix spelling)")
     for rel in report.conflicts:
+        if args.dry_run:  # nothing is parked in a dry run: it said "is parked at" (AG82)
+            print(f"  CONFLICT: {rel} -- a sync would keep your copy and park the hub's under "
+                  f"{root / '_atlas' / 'sync-conflicts'}")
+            continue
         where = report.parked.get(rel) or str(root / "_atlas" / "sync-conflicts")
         both = " (the hub also parked your pushed copy)" if rel in report.push_conflicts else ""
         print(f"  CONFLICT: {rel} -- your copy is kept; the hub's copy is parked at {where}{both} "
@@ -210,12 +230,35 @@ def cmd_sync(args: argparse.Namespace) -> int:
     import re as _re
     for item in report.errors:
         print(f"  error: {_re.sub(chr(91) + chr(92) + 'x00-' + chr(92) + 'x1f' + chr(92) + 'x7f' + chr(93), ' ', str(item))[:300]}")  # the hub's text is untrusted: no control characters, 300 chars (AG49)
+    for rel in report.kept_local_edits:
+        print(f"  edited here, deleted on the hub: {rel} -- your copy is kept, not pushed")
     if report.remote_deleted or report.local_deleted:
         print(
             f"  deletions reported, not propagated: "
             f"{len(report.remote_deleted)} remote, {len(report.local_deleted)} local"
         )
     return 0 if not report.errors else 1
+
+
+PROGRESS_MIN = 200    # a sync moving fewer files than this prints no progress
+PROGRESS_EVERY = 500  # then one line per this many files
+
+
+def _progress_printer():
+    """A long first sync printed nothing until the end (AG82): a count line, then every N files, on stderr."""
+    state = {"last": 0}
+
+    def show(stage: str, done: int, total: int, pulls: int, pushes: int) -> None:
+        if total < PROGRESS_MIN:
+            return
+        if stage == "start":
+            print(f"  syncing {total} files ({pulls} to pull, {pushes} to push) ...", file=sys.stderr, flush=True)
+            return
+        if done - state["last"] >= PROGRESS_EVERY or done == total:
+            state["last"] = done
+            print(f"  {done}/{total} files", file=sys.stderr, flush=True)
+
+    return show
 
 
 def cmd_checkin(args: argparse.Namespace) -> int:
@@ -264,6 +307,27 @@ def cmd_checkin(args: argparse.Namespace) -> int:
     return 0
 
 
+_VALUE_FLAGS = ("--token", "--hub")
+_KNOWN_FLAGS = ("--hub", "--token", "--json", "--dry-run", "--share", "--help", "-h", "--all")
+
+
+def _join_dash_values(argv: list[str]) -> list[str]:
+    """`--token -AbC...` is "expected one argument" to argparse; 1 token in 64 starts with `-` (AG82)."""
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        cur = argv[i]
+        nxt = argv[i + 1] if i + 1 < len(argv) else None
+        if cur in _VALUE_FLAGS and nxt is not None and nxt.startswith("-") and nxt != "--" \
+                and nxt.split("=", 1)[0] not in _KNOWN_FLAGS:
+            out.append(f"{cur}={nxt}")
+            i += 2
+            continue
+        out.append(cur)
+        i += 1
+    return out
+
+
 def main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
@@ -288,6 +352,7 @@ def main() -> None:
 
     p = sub.add_parser("devices", help="list paired devices and peers")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--all", action="store_true", help="include revoked devices and peers")
     p.set_defaults(func=cmd_devices)
 
     p = sub.add_parser("revoke", help="revoke a device or peer by name or id")
@@ -320,7 +385,7 @@ def main() -> None:
         parser.print_help()
         print(f"\n{_prog_name()} needs a subcommand -- try: {_prog_name()} status", file=sys.stderr)
         raise SystemExit(2)
-    args = parser.parse_args()
+    args = parser.parse_args(_join_dash_values(sys.argv[1:]))
     raise SystemExit(args.func(args))
 
 
