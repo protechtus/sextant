@@ -148,6 +148,7 @@ while the summarizer uses a cloud one:
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `ATLAS_SYNC_HUB` | -- | Hub URL this device syncs against. |
+| `ATLAS_SYNC_TIMEOUT` | `120` | Seconds the sync client waits for the hub. A hub hashing a large corpus for the first time can take more than 30 s to answer its manifest. |
 | `ATLAS_SYNC_SHARE` | -- | Comma-separated corpus prefixes this system agrees to exchange with the hub (`reference/sip/,projects/x/`); same as repeatable `--share`. Required when the hub pairs you as a federation peer; nothing outside it is read, sent or pulled. |
 | `ATLAS_SYNC_MANIFEST_TTL` | code default | Seconds the hub caches its corpus manifest. |
 

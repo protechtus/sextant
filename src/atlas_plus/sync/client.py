@@ -128,7 +128,7 @@ class SyncClient:
         base_url: str = "",
         token: str = "",
         transport: httpx.BaseTransport | None = None,
-        timeout: float = 30.0,
+        timeout: float | None = None,  # ATLAS_SYNC_TIMEOUT, default 120 s: a cold 10,000-file hub took 32.7 s (AG71)
         http_client: httpx.Client | None = None,
     ) -> None:
         if http_client is not None:
@@ -138,6 +138,12 @@ class SyncClient:
             if token:
                 self._client.headers["Authorization"] = f"Bearer {token}"
         else:
+            if timeout is None:
+                import os as _os
+                try:
+                    timeout = float(_os.environ.get("ATLAS_SYNC_TIMEOUT") or 120)
+                except ValueError:
+                    timeout = 120.0
             try:
                 self._client = httpx.Client(
                     base_url=base_url,

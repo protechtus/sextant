@@ -97,6 +97,9 @@ def memory_remember_decision(
         return {"ok": False, "file": None, "slug": None, "error": "title is required"}
     if not decision.strip():
         return {"ok": False, "file": None, "slug": None, "error": "decision text is required"}
+    if project and (any(c in str(project) for c in "/\\") or str(project).strip().startswith("..") or re.match(r"^\s*[A-Za-z]:", str(project))):
+        return {"ok": False, "file": None, "slug": None,
+                "error": "project must be a plain project name (no path separators, drive letters or `..`)"}  # AG70: stored verbatim
     for _name, _val in (("title", title), ("decision", decision), ("alternatives_rejected", alternatives_rejected)):
         _cap = 200 if _name == "title" else 65_536
         if len(_val or "") > _cap:

@@ -161,12 +161,16 @@ def _extract_candidates(
         threshold = float(os.environ.get("ATLAS_SUGGEST_CONFIDENCE_THRESHOLD", str(_DEFAULT_CONFIDENCE_THRESHOLD)))
 
     # Trim transcript to fit reasonable context (~6000 chars)
-    trimmed = transcript_text[-6000:] if len(transcript_text) > 6000 else transcript_text
+    # Redact BEFORE the cut (AG68): a key before character -6000 and its value after it reached the model
+    # bare, with nothing left to say it was a secret. The window is four times the kept length, so the key of a
+    # value at the cut is inside it, and the regexes never run over a whole multi-megabyte transcript.
+    window = transcript_text[-24000:]
     try:
         from atlas_plus.redaction import redact as _redact
-        trimmed = _redact(trimmed) or ""  # a pasted key must not reach the model or a fact (MN28)
+        window = _redact(window) or ""  # a pasted key must not reach the model or a fact (MN28)
     except Exception:  # noqa: BLE001
-        pass
+        return [], 0  # fail closed: an unredacted transcript never goes to a model
+    trimmed = window[-6000:]
     prompt = _EXTRACT_PROMPT.format(transcript=trimmed)
 
     from atlas_plus.summarizer.providers import complete, ProviderError
@@ -453,6 +457,9 @@ def _facts_failure_file(conversation_id: str | None):
         return None
     safe = "".join(ch for ch in conversation_id if ch.isalnum() or ch in "-_.")[:80]
     return atlas_paths.state_dir() / "suggest-facts" / f"failed-{safe}.json" if safe else None
+
+
+_FACTS_N_LINES: dict = {}  # conversation id -> transcript line count of the current run
 
 
 def _note_facts_failure(conversation_id: str | None, n_lines: int) -> None:
@@ -746,7 +753,7 @@ def suggest_facts(*args, **kwargs) -> dict:
         try:
             from atlas_plus import activity as _act
             _act.record("hook", "suggest_facts_failed", reason=str(exc)[:200], conversation_id=conversation_id or "")  # doctor shows it (MN39: a failed facts stage left no trace)
-            _note_facts_failure(conversation_id, locals().get("_n_lines", 0))  # MN55: the facts stage gives up like the summarizer
+            _note_facts_failure(conversation_id, _FACTS_N_LINES.get(conversation_id or "", 0))  # the wrapper's locals() never held it: always 0, never gave up (AG69)
         except Exception:  # noqa: BLE001
             pass
         raise
@@ -787,6 +794,7 @@ def _suggest_facts_run(
     print(f"Loading transcript since '{since}'...", flush=True)
     transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
     _n_lines = transcript_text.count("\n") + (1 if transcript_text.strip() else 0)
+    _FACTS_N_LINES[conversation_id or ""] = _n_lines  # read by the failure wrapper (AG69)
     if _facts_gave_up(conversation_id, _n_lines):
         print("The facts stage failed three times at this length; waiting for the session to grow.", flush=True)
         try:

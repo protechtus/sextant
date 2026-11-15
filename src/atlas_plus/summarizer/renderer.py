@@ -101,18 +101,39 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     if not m:
         return text
     start = m.start()
-    end = text.find("\n## ", m.end())
+    end = _next_unfenced(text, r"\n## ", m.end())  # a fenced `## ` quoted in the body is not the next entry (AG67)
     end = len(text) if end == -1 else end + 1
     # the entry written since MN49 ends with `<!-- end session:ID -->`: removal stops there, so a line the user typed
     # under the entry survives the refresh (it was deleted with the entry: MN49, MN51)
     _sid = marker_prefix.split("session:", 1)[1] if "session:" in marker_prefix else ""
     if _sid:
         _em = _re.compile(r"^<!-- end session:" + _re.escape(_sid) + r" -->[ \t]*\n?", _re.M)
-        _nm = _re.search(r"\n## [^\n]*\n<!-- session:", text[m.end():])  # the next SESSION heading bounds the search (MN55: unbounded, it reached a later duplicate and deleted the entry between)
-        _m2 = _em.search(text, m.end(), (m.end() + _nm.start() + 1) if _nm else len(text))  # a quoted `## ` line inside the body does not end the entry (AG64)
+        _nm = _next_unfenced(text, r"\n## [^\n]*\n<!-- session:", m.end())  # the next SESSION heading bounds the search (MN55: unbounded, it reached a later duplicate and deleted the entry between); a fenced quotation of one does not (AG67: it cut the entry and left an unbalanced fence that hid every later entry)
+        _m2 = _em.search(text, m.end(), (_nm + 1) if _nm != -1 else len(text))  # a quoted `## ` line inside the body does not end the entry (AG64)
         if _m2:
             end = _m2.end()
     return (text[:start] + text[end:]).lstrip("\n")
+
+
+def _next_unfenced(text: str, pattern: str, start: int) -> int:
+    """Offset of the first match of `pattern` at or after `start` that is not inside a code fence, or -1 (AG67)."""
+    import re as _re
+    for _c in _re.finditer(pattern, text[start:]):
+        if not _inside_fence(text, start + _c.start() + 1):
+            return start + _c.start()
+    return -1
+
+
+def _fold_blank_runs(text: str) -> str:
+    """Three or more newlines become two, outside code fences only: a hand-written fenced block keeps its blank lines (AG67)."""
+    import re as _re
+    out, last = [], 0
+    for _m in _re.finditer(r"\n{3,}", text):
+        if not _inside_fence(text, _m.start()):
+            out.append(text[last:_m.start()] + "\n\n")
+            last = _m.end()
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _remove_entry_elsewhere(current: Path, marker_prefix: str, days: int = 3) -> None:
@@ -263,7 +284,60 @@ def _lock_owner_dead(lock: Path) -> bool:
         txt = lock.read_text(encoding="ascii", errors="replace").strip()
     except OSError:
         return False
-    return txt.isdigit() and not _pid_alive(int(txt))
+    if not txt.isdigit():
+        return False
+    if len(txt) > 10 or int(txt) > 0xFFFFFFFF:
+        return True  # no such pid on any OS: ctypes raised OverflowError out of the lock (AG69)
+    try:
+        return not _pid_alive(int(txt))
+    except (OverflowError, ValueError):
+        return True
+
+
+def _unlink_retry(path: Path, tries: int = 40) -> bool:
+    """unlink, retried while Windows refuses it because another process has the file open (a waiter reading the pid)."""
+    import time as _time
+    for _i in range(tries):
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            _time.sleep(0.025)
+        except OSError:
+            return False
+    return False
+
+
+def _break_lock(lock: Path, seen: str, judge) -> None:
+    """Remove a dead or stale lock, one breaker at a time (AG67: two waiters both judged the same dead owner and the
+    second unlinked the lock the first had just taken). The breaker holds `<lock>.break`, re-reads the lock and removes
+    it only when it still holds what was judged and is still judged dead; a breaker that died leaves a `.break` that is
+    itself broken after 10 s."""
+    import time as _time
+    brk = lock.with_name(lock.name + ".break")
+    try:
+        fd = os.open(str(brk), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        try:
+            if _time.time() - brk.stat().st_mtime > 10.0:
+                _unlink_retry(brk)
+        except OSError:
+            pass
+        return
+    except OSError:
+        return
+    try:
+        try:
+            now = lock.read_text(encoding="ascii", errors="replace").strip()
+        except OSError:
+            return
+        if now == seen and judge():
+            _unlink_retry(lock)
+    finally:
+        _unlink_retry(brk)
 
 
 def _write_lock(timeout: float = 60.0, stale: float = 120.0):
@@ -280,29 +354,49 @@ def _write_lock(timeout: float = 60.0, stale: float = 120.0):
         held = False
         try:
             lock.parent.mkdir(parents=True, exist_ok=True)
-            deadline = _time.time() + timeout
-            while True:
+        except OSError as exc:
+            raise RuntimeError(f"cannot create {lock.parent} for the write lock ({exc}); this entry is retried at the next Stop") from exc
+        if lock.is_dir():
+            raise RuntimeError(f"{lock} is a directory, not a lock file: remove it; this entry is retried at the next Stop")
+        deadline = _time.time() + timeout
+        while True:
+            try:
+                _fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
                 try:
-                    _fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    _seen = lock.read_text(encoding="ascii", errors="replace").strip()
+                    _age = _time.time() - lock.stat().st_mtime
+
+                    def _judge():
+                        try:
+                            _a = _time.time() - lock.stat().st_mtime
+                        except OSError:
+                            return False
+                        # stale by age, the owner is gone (MN57), or an empty lock whose creator died before writing its pid
+                        return _a > stale or _lock_owner_dead(lock) or (not _seen and _a > 5.0)
+
+                    if _age > stale or _lock_owner_dead(lock) or (not _seen and _age > 5.0):
+                        _break_lock(lock, _seen, _judge)  # one breaker at a time, re-checked under the break lock (AG67)
+                        continue
+                except OSError:
+                    pass
+            except PermissionError:
+                pass  # Windows: the previous holder's unlink is still pending while a waiter has the file open; retry (AG67: this fell through to an UNLOCKED write)
+            except OSError as exc:
+                raise RuntimeError(f"cannot take {lock} ({exc}); this entry is retried at the next Stop") from exc
+            else:
+                try:
                     os.write(_fd, str(os.getpid()).encode())  # the owner's pid: only the owner releases it (AG61: a waiter's lock was deleted by the previous holder's finally)
+                finally:
                     os.close(_fd)
-                    held = True
-                    break
-                except FileExistsError:
-                    try:
-                        if _time.time() - lock.stat().st_mtime > stale or _lock_owner_dead(lock):  # stale by age, or the owner is gone (MN57)
-                            lock.unlink()
-                            continue
-                    except OSError:
-                        pass
-                    if _time.time() > deadline:
-                        # never write unlocked (AG64: a waiter broke a slow holder's lock and the holder's stale copy then erased the
-                        # waiter's entry); a lock older than `stale` is broken above, a younger one means a live writer: this Stop's
-                        # entry is skipped and retried at the next Stop (the chunk cache keeps every summary)
-                        raise RuntimeError(f"another summarizer run holds {lock} (broken once it is {int(stale)} s old); this entry is retried at the next Stop")
-                    _time.sleep(0.05 + random.random() * 0.1)
-        except OSError:
-            pass
+                held = True
+                break
+            if _time.time() > deadline:
+                # never write unlocked (AG64: a waiter broke a slow holder's lock and the holder's stale copy then erased the
+                # waiter's entry); a lock older than `stale` is broken above, a younger one means a live writer: this Stop's
+                # entry is skipped and retried at the next Stop (the chunk cache keeps every summary)
+                raise RuntimeError(f"another summarizer run holds {lock} (broken once it is {int(stale)} s old); this entry is retried at the next Stop")
+            _time.sleep(0.05 + random.random() * 0.1)
         _beat = None
         if held:
             import threading as _th
@@ -324,8 +418,8 @@ def _write_lock(timeout: float = 60.0, stale: float = 120.0):
                 _beat[1].set()
             if held:
                 try:
-                    if lock.read_text(encoding="ascii", errors="replace").strip() in ("", str(os.getpid())):
-                        lock.unlink()
+                    if lock.read_text(encoding="ascii", errors="replace").strip() == str(os.getpid()):  # never an empty lock: that is a new owner before its pid (AG67)
+                        _unlink_retry(lock)  # a waiter reading the pid makes a Windows unlink fail; it was swallowed and the lock left behind (AG67)
                 except OSError:
                     pass
     return _cm()
@@ -398,8 +492,7 @@ def _write_locked(session_file, session_log_text, updates_text, replace_session,
             # when it grew (MN33: the first summary froze and every later Stop was skipped)
             existing = remove_session_entry(existing, replace_session)
             _remove_entry_elsewhere(session_file, replace_session)
-        import re as _re2
-        existing = _re2.sub(r"\n{3,}", "\n\n", existing)  # the removed entry's blank lines had piled up, three per refresh (MN57)
+        existing = _fold_blank_runs(existing)  # the removed entry's blank lines had piled up, three per refresh (MN57); fenced blocks keep theirs (AG67)
         _atomic_write(session_file, session_log_text + ("\n\n" + existing if existing.strip() else "\n"))
     else:
         if replace_session:

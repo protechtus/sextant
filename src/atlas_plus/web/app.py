@@ -4128,6 +4128,10 @@ async def ticket_detail(ticket_id: str, request: Request):
     _check_auth(request)
     from atlas_plus.tickets.store import get_ticket as _get_ticket, list_tickets
     ticket = _get_ticket(_norm_ref(ticket_id)) if "/" in ticket_id else next((t for t in list_tickets() if t.id == ticket_id.upper()), None)
+    if ticket is not None and "/" not in ticket_id:
+        from atlas_plus.tickets import store as _tstore
+        if _get_ticket(ticket_id.upper()) is None and _tstore.ambiguous_hint():  # a bare id in several project folders showed whichever the walk met first (AG67, sibling of MN56's 409)
+            return HTMLResponse(f'<div class="text-red-400 text-xs">{_html_mod.escape(_tstore.ambiguous_hint())}</div>', status_code=409)
     if not ticket:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Ticket {ticket_id} not found</div>')
     body_text = getattr(ticket, "body", "") or ""
@@ -4856,6 +4860,7 @@ div:has(> #mem-q){{flex-wrap:wrap}}
 @media(max-width:768px){{
   body{{height:100dvh}}
   #tab-dash{{flex-direction:column!important}}
+  #dash-row{{flex-direction:column!important;overflow-y:auto}}  /* the main column got 0 px: Recent Tasks unreachable at 375-768 (AG71) */
   #tab-tickets{{flex-direction:column!important}}
   #tab-tasks{{flex-direction:column!important}}
   #tab-memory{{flex-direction:column!important}}
@@ -4961,7 +4966,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
     <span class="text-slate-600 text-xs">loading stats...</span>
   </div>
   <!-- Main row -->
-  <div class="flex gap-3 flex-1 min-h-0">
+  <div id="dash-row" class="flex gap-3 flex-1 min-h-0">
   <!-- Left sidebar -->
   <div class="flex flex-col gap-3 w-64 shrink-0">
     <div class="card">

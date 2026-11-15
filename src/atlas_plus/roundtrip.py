@@ -133,6 +133,24 @@ def _sse_payloads(content_type: str, body: str) -> list[str]:
     return [body] if body.strip() else []
 
 
+def _cert_file_problem(path: str) -> str:
+    """Why SSL_CERT_FILE cannot be a CA bundle, or '' when it looks like one."""
+    p = Path(path)
+    if not p.exists():
+        return "does not exist"
+    if p.is_dir():
+        return "is a directory"
+    try:
+        head = p.read_bytes()[:1_000_000]
+    except OSError as exc:
+        return f"cannot be read ({type(exc).__name__})"
+    if not head.strip():
+        return "is empty"
+    if (b"-----BEGIN " + b"CERTIFICATE") not in head:
+        return "holds no PEM certificate"
+    return ""
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
         return None  # a 3xx surfaces as HTTPError and is named; the token is never sent elsewhere (MN53)
@@ -174,7 +192,10 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
                 ctype = resp.headers.get("Content-Type", "")
                 body = resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:300]
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")[:300]
+            except OSError:
+                detail = ""  # the server closed after the status line: macOS raised ConnectionResetError past this handler (CI 43655783457)
             hint = ""
             if exc.code == 401:
                 hint = " (token missing or wrong: --token or ATLAS_MCP_TOKEN)"
@@ -182,9 +203,13 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
                 hint = " (this source is locked out after failed attempts; wait, or see ATLAS_MCP_TRUSTED_PEERS)"
             elif exc.code == 404:
                 hint = " (the MCP path is /mcp, without a trailing slash)" if url.rstrip("/") != url else " (the MCP path is /mcp)"
+            elif exc.code in (301, 302, 303, 307, 308) and url.startswith("http://") and (exc.headers.get("Location") or "").startswith("https://"):
+                hint = f" (the server redirects plain HTTP to HTTPS; the token was not sent there: use https://{url[len('http://'):]})"  # AG71: the /mcp hint was wrong
             elif exc.code in (301, 302, 303, 307, 308):
                 _loc = (exc.headers.get("Location") or "?")[:120]
                 hint = f" (the server redirected to {_loc}; the token was not sent there: check the URL, the MCP path is /mcp without a trailing slash)"
+            elif exc.code == 405 and __import__("urllib.parse").parse.urlsplit(url).path in ("", "/"):
+                hint = f" (this is the server root: the MCP endpoint is {url.rstrip('/')}/mcp)"  # AG71
             elif exc.code >= 500 and "<html" in detail.lower():
                 hint = " (this does not look like an MCP server: the reply is an HTML page)"
                 detail = detail.split("\n", 1)[0][:80]
@@ -204,7 +229,15 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
                 _advice = "use the host name the server's certificate names, not its IP address" if _host.replace(".", "").replace(":", "").isdigit() or ":" in _host else "the server refused this client's handshake: check the host name against the certificate and the TLS versions it allows"
                 raise RuntimeError(f"{method}: {url} refused the TLS handshake with an alert ({_s.splitlines()[0][:100]}): {_advice}") from exc  # AG65: an alert was called plain HTTP; MN55: IP advice only for an IP
             if "CERTIFICATE_VERIFY_FAILED" in _s or "certificate verify failed" in _s.lower():
+                _cf = os.environ.get("SSL_CERT_FILE", "")
+                if _cf:
+                    _why = _cert_file_problem(_cf)
+                    if _why:  # the variable was set to a broken file and verify said to set it (AG71)
+                        raise RuntimeError(f"{method}: SSL_CERT_FILE is {_cf!r}, which {_why}: point it at the CA certificate (a PEM file), or unset it") from exc
                 raise RuntimeError(f"{method}: {url} presented a certificate this client does not trust (a private CA or `tls internal`): point SSL_CERT_FILE at the CA certificate") from exc
+            if isinstance(exc, ConnectionResetError) or "10054" in _s or "forcibly closed" in _s or "Connection reset" in _s:
+                _alt = ("https://" + url[len("http://"):]) if url.startswith("http://") else url
+                raise RuntimeError(f"{method}: {url} reset the connection: if this port is a TLS proxy (Caddy, nginx), use {_alt}") from exc  # a raw WinError 10054 (AG71)
             raise RuntimeError(f"{method}: could not reach {url}: {exc} (is the server running there? in a container it must "
                                f"bind ATLAS_MCP_HOST=0.0.0.0; it takes about 8 s to start)") from exc
         if notify:

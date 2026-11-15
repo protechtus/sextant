@@ -218,6 +218,8 @@ def test_guessed_dashboard_command_gives_a_hint(monkeypatch):
     # `dashboard` / `web` START the dashboard now (sweep 11): without ATLAS_WEB_API_KEY that is a
     # refusal naming the variable, not a hint.
     monkeypatch.delenv("ATLAS_WEB_API_KEY", raising=False)
+    from atlas_plus.web import app as _webapp
+    monkeypatch.setattr(_webapp, "_port_free", lambda *a, **k: True)  # the banner prints only for a free port (AG71); 8766 may be live here
     r = CliRunner().invoke(cli.app, ["dashboard"])
     assert "sextant-web" in r.output and "ATLAS_WEB_API_KEY" in r.output
 

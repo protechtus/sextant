@@ -812,7 +812,8 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
     except Exception:  # noqa: BLE001
         pass
     if not exists:
-        result["hint"] = "memory root does not exist -- run atlas-init (alias: sextant-init) to scaffold it"
+        result["hint"] = "memory root does not exist -- run sextant-init (alias: atlas-init) to scaffold it"
+        result["no_corpus"] = True
     elif not files:
         result["hint"] = "memory root is empty -- run atlas-init (alias: sextant-init), then fill identity/user.md"
     elif not identity_present:
@@ -2334,6 +2335,9 @@ def main() -> int:
         }
         bad = []
         for _sec, _val in data.items():
+            if isinstance(_val, dict) and _val.get("no_corpus"):
+                bad.append("no corpus yet: run sextant-init")  # --strict exited 0 before init (AG72)
+                break
             if isinstance(_val, dict) and (_val.get("conflict_markers") or _val.get("unmerged") or _val.get("duplicate_keys")):
                 bad.append("corpus holds unresolved git conflicts or duplicate frontmatter keys")  # --strict exited 0 with markers present (AG57)
                 break

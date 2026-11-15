@@ -83,6 +83,7 @@ _KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|clien
              r"|รหัสผ่าน|รหัสลับ|โทเคน|คีย์[ _]API|กุญแจ[ _]API|पासवर्ड|टोकन|गुप्त[ _]कुंजी|एपीआई[ _]कुंजी|कूटशब्द"
              r"|API-Schlüssel|Geheimnis|מפתח[ _]API|קוד[ _]גישה|توکن|کلید[ _]API|رمز[\u200c _]عبور|گذرواژه|رمز|سرّ?"  # MN52
              r"|пароль|токен|секрет|passwort|kennwort|mot[ _]de[ _]passe|contraseña|contrasena|senha|şifre"  # AG55: Russian, German, French, Spanish, Portuguese, Turkish
+             r"|hasło|haslo|jelszó|jelszo|nenosiri|mật[ _]khẩu|mat[ _]khau|kata[ _]sandi|κωδικός[ _]πρόσβασης|συνθηματικό"  # AG68: Polish, Hungarian, Swahili, Vietnamese, Indonesian, Greek
              r"|رمز[ _]عبور|گذرواژه|کلمه[ _]عبور" + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
 # Exact key NAMES: a bounded prefix of up to eight `_`/`-` segments (`MY_APP_PROD_EU_WEST_DB_`), an
@@ -97,14 +98,17 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 _KV_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_-])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
     r"(?![A-Za-z0-9])"
-    r"(['\"]?\]?\s*[=:：＝]\s*(?:r(?=['\"]))?)"  # AG62: the environ-subscript assignment `environ['DB_PASS...'] = 'V'` and `params[:password] = V` leaked
-    r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[\"']?[^\s'\"]{6,})"
+    r"(['\"]?\]?\s*[=:：＝]\s*(?:r(?=['\"]))?(?:(?:&[\w-]{1,64}|!![a-z]{1,16})[ \t]+)?)"  # AG62: the environ-subscript assignment `environ['DB_PASS...'] = 'V'` and `params[:password] = V` leaked; AG68: a YAML anchor or core tag before the value (`password: &pw V`, `password: !!str V`)
+    r"(\"\"\"[^\n]{4,}?\"\"\"|'''[^\n]{4,}?'''"  # AG68: a TOML multi-line basic or literal string on one line leaked whole
+    r"|\"(?:[^\"\\\n]|\\[^\n]){4,}\"|\"[^\"\n]{4,}\""  # AG68: an escaped quote inside a JSON string value (`\"`) ended the match early and leaked the value
+    r"|\"[^\"\n]+(?:\r?\n[ \t]+[^\"\n]*){1,8}\""  # AG68: a YAML double-quoted scalar folded over indented lines leaked its tail
+    r"|'[^'\n]{4,}'|[\"']?[^\s'\"]{6,})"
 )
 _CLI_SECRET_RE = re.compile(r"(?i)(--(?:[a-z]+-){0,3}(?:token|password|passwd|api[_-]?key|secret|passphrase|client[_-]?secret)[= ])(\S{6,})")  # --db-password, --api-token (MN37)
 _BASIC_AUTH_RE = re.compile(r"(?i)(authorization:\s*(?:basic|token|apikey|api-key)\s+)(\S{8,})")
-_CURL_USER_RE = re.compile(r"(?i)((?:^|\s)(?:-u|--user)\s+[^\s:]+:)(\S+)")  # the `-u user:password` form of curl (MN37)
+_CURL_USER_RE = re.compile(r"(?i)((?:^|\s)(?:-u|--user)\s+[^\s:]+:)(?!//)(\S+)")  # the `-u user:password` form of curl (MN37); `redis-cli -u redis://:V@host` is a URL, masked by the URL rule without eating the host (AG68)
 _YAML_BLOCK_RE = re.compile(r"(?im)^([ \t]*(?:-[ \t]+)*(?:[A-Za-z0-9]{1,32}[_-]){0,4}(?:password|passwd|secret|token|api[_-]?key|private[_-]?key|passphrase|credentials?)[ \t]*:[ \t]*[>|][-+0-9]*[ \t]*\r?\n)((?:[ \t]*\r?\n|[ \t]+\S[^\n]*(?:\n|\Z))+)")  # password: > / | block scalars; `- password: |`, CRLF and blank lines before the body (MN37, AG55)
-_XML_RE = re.compile(r"(?i)(<(password|passwd|secret|token|api[_-]?key)>)([^<\n]{4,})(</\2>)")
+_XML_RE = re.compile(r"(?i)(<(password|passwd|secret|token|api[_-]?key)>)(<!\[CDATA\[.*?\]\]>|[^<\n]{4,})(</\2>)", re.S)  # a CDATA section too (AG68)
 _CODE_VALUE_RE = re.compile(r"^(?:os\.|env\.|process\.env|\$\{|\$\(|[A-Za-z_][A-Za-z0-9_.]*(?:\[|\())")  # `token = tokens[0]`, `os.environ[...]` are code, not secrets (MN37)
 _PATH_VALUE_RE = re.compile(r"^(?:/|[A-Za-z]:[\\/]|\.{1,2}/|~)")
 # full-width ASCII (ＤＢ＿ＰＡＳＳＷＯＲＤ＝, a Japanese IME) folded one code point per code point, so a
@@ -132,6 +136,9 @@ def _yaml_block_mask(m: "re.Match[str]") -> str:
 
 
 def _kv_quote(v: str) -> str:
+    for triple in ('"""', "'''"):
+        if len(v) > 6 and v.startswith(triple) and v.endswith(triple):
+            return triple  # AG68: TOML `"""V"""` keeps its triple quotes
     return v[0] if v and v[0] in "\"'" and len(v) > 1 and v[-1] == v[0] else ""
 
 
@@ -315,16 +322,36 @@ _DOCKER_P_RE = re.compile(r"(\b(?:docker|podman|nerdctl)[ \t]+login\b[^\n|;&]{0,
 _SSHPASS_RE = re.compile(r"(\bsshpass[ \t]+(?:-\w+[ \t]+)*-p[ \t]*)(?!-)(\S+)")
 _TOKEN_SHAPES_RE = re.compile(r"\b(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|ya29\.[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dop_v1_[a-f0-9]{64}|pypi-[A-Za-z0-9_-]{50,}|whsec_[A-Za-z0-9]{20,}|rk_live_[A-Za-z0-9]{10,}|shp(?:at|ss|ca)_[a-f0-9]{32})")
 # prose: `my password is V` / `the token was V` where V looks like a secret (8+ chars, two or more character classes)
-_PROSE_RE = re.compile(r"(?i)\b((?:(?:my|your|the|his|her|their|our|new|old|temp(?:orary)?|root|admin|wifi|login)[ \t]+){1,2}(?:password|passcode|passphrase|api[ \t]key|access[ \t]token|token|secret)[ \t]+(?:is|was|are|will[ \t]+be|=|:)[ \t]+)([!-~]{8,})")
+# AG68: the value may sit in curly or CJK quotes, hold a soft hyphen or zero-width space (a paste from a web page or chat),
+# or be a double-quoted passphrase with spaces
+_PQ = r"[“「『‘]?"
+_PV = r"(\"[^\"\n]{4,64}\"|(?=[!-~])(?:[!-~]|[­​-‍⁠﻿]){8,})"
+_PROSE_RE = re.compile(r"(?i)\b((?:(?:my|your|the|his|her|their|our|new|old|temp(?:orary)?|root|admin|wifi|login)[ \t]+){1,2}(?:password|passcode|passphrase|api[ \t]key|access[ \t]token|token|(?:client[ \t]+)?secret)[ \t]+(?:is|was|are|will[ \t]+be|=|:)[ \t]+" + _PQ + ")" + _PV)
+# AG68: `I set the password to V`, `password changed to V`, `the token has been rotated to V`
+_PROSE_SET_RE = re.compile(r"(?i)\b((?:password|passcode|passphrase|api[ \t]key|access[ \t]token|token|secret)[ \t]+(?:(?:has|was|is)[ \t]+(?:been[ \t]+)?|got[ \t]+)?(?:set|changed|reset|updated|rotated)[ \t]+to[ \t]+" + _PQ + r"|\b(?:set|change|reset|update|rotate)[ \t]+(?:the|my|your|our|its)[ \t]+(?:\w+[ \t]+)?(?:password|passcode|passphrase|token|secret)[ \t]+to[ \t]+" + _PQ + ")" + _PV)
+# AG68: Vietnamese, Indonesian/Malay, Turkish, Polish, Ukrainian, Greek, Hungarian, Swahili, Tagalog (the value must still look like a secret)
+_PROSE_I18N3_RE = re.compile(
+    r"(?i)("
+    r"\bmật[ \t]khẩu(?:[ \t]của[ \t][^\n:=\"']{1,40}?)?[ \t]*(?:là|:)[ \t]*"                                        # Vietnamese: mat khau (cua may chu) la V
+    r"|\b(?:kata[ \t]sandi|sandi)(?:[ \t](?:saya|aku|kamu|anda|kami|kita|untuk[ \t][^\n:=\"']{1,40}?))?[ \t]*(?:adalah|ialah|yaitu|:)[ \t]*"  # Indonesian/Malay
+    r"|(?:\b\w+(?:nın|nin|nun|nün|ın|in|un|ün)[ \t]+)?\b(?:şifre|parola)(?:m|miz|mız|n|niz|nız|si|sı)?(?:[ \t]+(?:şu|şöyle))?[ \t]*(?:[:=][ \t]*|[ \t]+)"  # Turkish: sifrem V, sunucunun sifresi V
+    r"|\b(?:(?:moje|twoje|nasze|wasze)[ \t]+)?has(?:ło|lo)(?:[ \t]+(?:do|dla|od)[ \t][^\n:=\"']{1,40}?)?[ \t]+(?:to|jest|brzmi)[ \t]*:?[ \t]*"  # Polish: moje haslo to V, haslo do serwera to V
+    r"|\b(?:мій|моя|мой|наш|твій|твой|ваш)[ \t]+(?:пароль|токен)[ \t]*(?:[:–—-]|це|это|є)?[ \t]+"                        # Ukrainian/Russian: miy parol V
+    r"|(?:\bο[ \t]+)?\bκωδικός(?:[ \t]+πρόσβασης)?(?:[ \t]+(?:μου|σου|μας))?(?:[ \t]+(?:για|του)[ \t][^\n:=\"']{1,40}?)?[ \t]*(?:είναι|:)[ \t]*"  # Greek
+    r"|\bjelsz(?:ó|o|avam|avad|ava|avunk|avuk)[ \t]*(?:[:=]|[ \t]az|[ \t]pedig)?[ \t]+"                                  # Hungarian: a jelszavam V, a szerver jelszava: V
+    r"|\bnenosiri(?:[ \t]+(?:langu|lako|letu|lake|lenu|lao))?[ \t]+(?:ni|:)[ \t]*"                                      # Swahili: nenosiri langu ni V
+    r"|\b(?:ang[ \t]+)?(?:password|passcode|token)[ \t]+(?:ko|mo|namin|natin|niya|nila)[ \t]+(?:ay|:)[ \t]*"            # Tagalog: ang password ko ay V
+    r")" + _PQ + _PV
+)
 
 
 # the same sentence in Russian, German, French, Spanish, Portuguese, Turkish, Persian, Japanese, Korean, Chinese (`mein Passwort ist V`, `パスワードは V`)
 _QUALIFIED_RE = re.compile(
     r"(?i)("
-    r"(?:\b(?:the|das|die|le|la|el|a|o|das|наш|мой)[ \t]+)?"
+    r"(?:\b(?:the|das|die|le|la|el|a|o|das|наш|мой|мій)[ \t]+)?"
     r"(?:password|passwort|kennwort|mot[ \t]de[ \t]passe|contraseña|contrasena|senha|пароль|şifre|" + _marked("كلمة", _AR_MARKS) + r"[ \t](?:" + _marked("السر", _AR_MARKS) + "|" + _marked("المرور", _AR_MARKS) + r")|رمز[\u200c \t]عبور|گذرواژه|ה?" + _marked("סיסמ", _HE_MARKS) + r"[אה]|รหัสผ่าน|पासवर्ड)"
-    r"[ \t]*(?:for|of|to|für|du|de|del|della|do|da|от|для|к|сервер\w*|سرور|الجديدة|جدید|לשרת|החדשה|ใหม่|เซิร์ฟเวอร์|का|के)[^\n:=\"'“]{0,40}?"   # a qualifier: for the server, du serveur, الجديدة, ใหม่ ...
-    r"[ \t]*(?:is|ist|est|es|é|هي|היא|คือ|है|это|[:=：])[ \t]*[\"'“]?"
+    r"[ \t]*(?:for|of|to|für|du|de|del|della|do|da|от|для|к|до|від|сервер\w*|سرور|الجديدة|جدید|לשרת|החדשה|ใหม่|เซิร์ฟเวอร์|का|के)[^\n:=\"'“]{0,40}?"   # a qualifier: for the server, du serveur, الجديدة, ใหม่ ...
+    r"[ \t]*(?:is|ist|est|es|é|هي|היא|คือ|है|это|це|є|[:=：])[ \t]*[\"'“]?"
     r")([!-~]{8,})"
 )
 _PROSE_I18N2_RE = re.compile(
@@ -444,11 +471,70 @@ def _extra_redact(out: str) -> str:
         out = _SSHPASS_RE.sub(r"\1[REDACTED]", out)
     out = _TOKEN_SHAPES_RE.sub("[REDACTED:provider-key]", out)
     out = _ag62(out)
-    out = _sub_value(_PROSE_RE, out, 2, ok=_secretish)
-    out = _sub_value(_PROSE_I18N_RE, out, 2, ok=_secretish)
-    out = _sub_value(_PROSE_I18N2_RE, out, 2, ok=_secretish)
-    out = _sub_value(_QUALIFIED_RE, out, 2, ok=_secretish)  # `the password for the server is V` (MN58)  # the word orders of Thai, Hindi, Arabic, Hebrew, Persian, bare Russian, German `lautet`, Portuguese (MN52)
+    out = _hcl_redact(out)
+    # AG68: the prose rules run over the full-width-folded text too (`my password is Ｈｕｎｔ３ｒ...` from a Japanese IME leaked)
+    folded_low = out.translate(_FULLWIDTH).lower()
+    for rx, needles in _PROSE_RULES:
+        if needles is None or any(n in folded_low for n in needles):  # a cheap substring gate: ordinary text pays one scan per rule
+            out = _sub_value_folded(rx, out, 2, ok=_prose_ok)  # `the password for the server is V` (MN58)  # the word orders of Thai, Hindi, Arabic, Hebrew, Persian, bare Russian, German `lautet`, Portuguese (MN52)
     return out
+
+
+
+_PROSE_RULES = (
+    (_PROSE_RE, None),
+    (_PROSE_SET_RE, (" to ",)),
+    (_PROSE_I18N_RE, None),
+    (_PROSE_I18N2_RE, None),
+    (_PROSE_I18N3_RE, ("mật", "sandi", "şifre", "parola", "hasło", "haslo", "пароль", "токен", "κωδικός", "jelsz", "nenosiri", " ko ", " mo ", " namin ", " natin ", " niya ", " nila ")),
+    (_QUALIFIED_RE, None),
+)
+
+def _prose_ok(v: str) -> bool:
+    """A prose value: `_secretish`, and a double-quoted phrase with spaces needs a digit, an inner capital or a symbol
+    (`"correct Horse 42"` is a passphrase; `"required for login"` is prose: AG68)."""
+    if v.startswith('"') and " " in v:
+        inner = v.strip('"')
+        return bool(re.search(r"\d|[a-z][A-Z]|[^\w\s]", inner)) and _secretish(inner.replace(" ", "_"))
+    return _secretish(v)
+
+
+def _sub_value_folded(rx, out: str, group: int, *, ok=None) -> str:
+    """`_sub_value`, then the same rule over the full-width-folded text with the spans mapped back (one code point per code point)."""
+    out = _sub_value(rx, out, group, ok=ok)
+    folded = out.translate(_FULLWIDTH)
+    if folded == out:
+        return out
+    pieces, pos = [], 0
+    for m in rx.finditer(folded):
+        v = m.group(group)
+        s, e = m.span(group)
+        if s < pos or _PLACEHOLDER_RE.match(v) or "[REDACTED" in v or (ok is not None and not ok(v)):
+            continue  # a match the plain pass masked already holds [REDACTED]
+        q = _kv_quote(v)
+        pieces.append(out[pos:s])
+        pieces.append(f"{q}[REDACTED]{q}")
+        pos = e
+    pieces.append(out[pos:])
+    return "".join(pieces)
+
+
+_HCL_VAR_RE = re.compile(r"(?s)\bvariable[ \t]+\"([^\"\n]{1,128})\"[ \t]*\{([^{}]{0,2000})\}")
+_HCL_DEFAULT_RE = re.compile(r"(?m)(^[ \t]*default[ \t]*=[ \t]*)(\"[^\"\n]{4,}\")")
+
+
+def _hcl_redact(out: str) -> str:
+    """AG68: a Terraform `variable "db_password" { default = "V" }` (or any variable marked `sensitive = true`) leaked its default."""
+    if "variable" not in out or "default" not in out:
+        return out
+
+    def var(m):
+        name, body = m.group(1), m.group(2)
+        if not (re.search(_ANY_NAME, name, re.I) or re.search(r"(?m)^[ \t]*sensitive[ \t]*=[ \t]*true\b", body)):
+            return m.group(0)
+        nb = _sub_value(_HCL_DEFAULT_RE, body, 2, ok=lambda v: not _doc_value(v) and not _kv_skip("k", v, "=", None, 0))
+        return m.group(0)[:m.start(2) - m.start()] + nb + m.group(0)[m.end(2) - m.start():]
+    return _HCL_VAR_RE.sub(var, out)
 
 
 _ARG = r"(['\"]?)(?!-)([^\s'\"|;&]{3,})"
@@ -477,6 +563,9 @@ _AG62 = (  # (needle, regex with the value in group 2): command-specific shapes 
     ("convertto-securestring", re.compile(r"(?i)(ConvertTo-SecureString[ \t]+['\"]?)([^\s'\"]{3,})(?=['\"]?[ \t]+-AsPlainText)")),
     ("jdbc:oracle", re.compile(r"(jdbc:oracle:thin:[^/\s:@]+/)([^@\s]+)(?=@)")),
     ("setpassword", re.compile(r"(?i)(\.set(?:Password|Passwd|Token|Secret|ApiKey|AccessToken|ClientSecret)\(\s*['\"])([^'\"\n]{4,})(?=['\"])")),
+    ("password-stdin", re.compile(r"(\b(?:echo|printf)[ \t]+(?:-n[ \t]+)?['\"]?)([^\s'\"|]{6,})(?=['\"]?[ \t]*\|[ \t]*(?:sudo[ \t]+)?(?:docker|podman|nerdctl|helm|oras|buildah|skopeo|crane)\b[^\n|]*--password-stdin)")),  # AG68: `echo V | docker login --password-stdin`
+    ("curl", re.compile(r"(\bcurl\b[^\n|;&]{0,200}?[ \t]-u['\"]?[^\s:'\"-][^\s:'\"]*:)(?!//)([^\s'\"]{3,})")),  # AG68: the glued `curl -uuser:V`
+    ("az ", re.compile(r"(\baz[ \t]+login\b[^\n|;&]{0,200}?[ \t]-p[ \t]+['\"]?)(?!-)([^\s'\"|;&]{3,})")),  # AG68: `az login -u me -p V`
     ("usernamepasswordcredentials", re.compile(r"(UsernamePasswordCredentials\(\s*[^,()]{1,64},\s*['\"])([^'\"\n]{4,})(?=['\"])")),
 )
 
@@ -492,6 +581,75 @@ def _ag62(out: str) -> str:
 
 
 _MIN_VALUE_LEN = 6  # do not mask very short env values (avoid masking "on"/"off"/ports)
+
+
+# ---------------------------------------------------------------- keyword lines (AG72)
+# Qualified prose ("the root password on the box is V", "das Passwort des Servers lautet V", "رمز عبور سرور V است") kept slipping
+# past per-language regexes: one shape fixed, its neighbour leaked (MN58, AG68, AG72). This last pass is structural: on a line that
+# holds a password word in any of these languages (vowel marks and joiners stripped, so pointed Hebrew and vocalised Arabic count),
+# every token that LOOKS like a secret (8+ printable ASCII, a letter and a digit, mixed case or a symbol) is masked.
+_PW_WORDS = (
+    "password", "passwd", "passphrase", "passcode", "passwort", "kennwort", "mot de passe", "contraseña", "contrasena", "senha",
+    "wachtwoord", "passord", "lösenord", "losenord", "adgangskode", "salasana", "hasło", "haslo", "heslo", "geslo", "lozinka",
+    "parolă", "parola", "jelszó", "jelszo", "jelszava", "şifre", "sifre", "mật khẩu", "mat khau", "kata sandi", "kata laluan",
+    "nenosiri", "пароль", "парол", "лозинка", "κωδικός", "κωδικος", "συνθηματικό", "סיסמה", "סיסמא", "كلمة المرور", "كلمة السر",
+    "رمز عبور", "گذرواژه", "پاس ورڈ", "پاسورڈ", "पासवर्ड", "পাসওয়ার্ড", "கடவுச்சொல்", "మనపదం", "పాస్‌వర్డ్", "පාස්වර්ඩ්", "මුරපදය",
+    "പാസ്‌വേഡ്", "ಪಾಸ್‌ವರ್ಡ್", "รหัสผ่าน", "ລະຫັດຜ່ານ", "ពាក្យសម្ងាត់", "စကားဝှက်", "གསང་ཚིག", "პაროლი", "գաղտնաբառ",
+    "密码", "密碼", "口令", "パスワード", "暗証番号", "비밀번호", "암호",
+)
+_PW_TOKEN_RE = re.compile(r"(?<![!-~])[!-~]{8,128}")
+_PW_SYMBOLS = set("!@#$%^&*+~?")
+_STRIP_CLASS: list = []
+
+
+def _strip_marks(s: str) -> str:
+    if s.isascii():
+        return s
+    if not _STRIP_CLASS:
+        import unicodedata as _ud
+        chars = [chr(c) for c in range(0x300, 0x30000) if _ud.category(chr(c)) in ("Mn", "Me", "Cf")]
+        _STRIP_CLASS.append(re.compile("[" + "".join(re.escape(c) for c in chars) + "]"))
+    return _STRIP_CLASS[0].sub("", s)
+
+
+_PW_WORDS_STRIPPED = tuple(sorted({_strip_marks(w).casefold() for w in _PW_WORDS}, key=len, reverse=True))
+
+
+def _secret_shaped(tok: str) -> bool:
+    if "://" in tok or "/" in tok or "\\" in tok or "=" in tok or tok.startswith("[REDACTED"):  # `token_count=12` is a key=value pair: the kv rule judges it
+        return False
+    low = tok.casefold()
+    if any(w in low for w in ("password", "passwd", "secret", "passphrase", "passcode", "redacted")):
+        return False  # an identifier (`getPassword2`, `SecretAccessKey`), not a value
+    if not any(c.isdigit() for c in tok) or not any(c.isalpha() for c in tok):
+        return False
+    return (any(c.isupper() for c in tok) and any(c.islower() for c in tok)) or any(c in _PW_SYMBOLS for c in tok)
+
+
+def _keyword_line_redact(text: str) -> str:
+    low_all = text.casefold()
+    if text.isascii() and not any(w in low_all for w in ("password", "passwd", "passphrase", "passcode", "passwort", "kennwort",
+                                                         "mot de passe", "senha", "wachtwoord", "passord", "salasana", "haslo",
+                                                         "heslo", "geslo", "lozinka", "parola", "jelszo", "sifre", "mat khau",
+                                                         "kata sandi", "kata laluan", "nenosiri", "contrasena")):
+        return text
+    out_lines = []
+    for line in text.split("\n"):
+        probe = _strip_marks(line).casefold()
+        if not any(w in probe for w in _PW_WORDS_STRIPPED):
+            out_lines.append(line)
+            continue
+
+        def _mask(m):
+            tok = m.group(0)
+            core = tok.rstrip(".,;:!?)]}\"'")
+            lead = len(core) - len(core.lstrip("(\"'[{"))
+            core2 = core[lead:]
+            if len(core2) >= 8 and _secret_shaped(core2):
+                return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
+            return tok
+        out_lines.append(_PW_TOKEN_RE.sub(_mask, line))
+    return "\n".join(out_lines)
 
 
 def redact(text: str | None, *, env: dict | None = None) -> str | None:
@@ -520,4 +678,5 @@ def redact(text: str | None, *, env: dict | None = None) -> str | None:
     out = _PROVIDER_KEY_RE.sub("[REDACTED:provider-key]", out)
     out = _pem_redact(out)
     out = _extra_redact(out)
+    out = _keyword_line_redact(out)  # the structural last pass (AG72)
     return out

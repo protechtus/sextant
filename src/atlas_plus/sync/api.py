@@ -325,6 +325,16 @@ def main() -> None:
             )
     # Single-worker only: the manifest cache + auth audit state are in-process.
     import os as _os
+    import socket as _socket
+    try:
+        with _socket.socket(_socket.AF_INET6 if ":" in args.host else _socket.AF_INET) as _s:
+            if _os.name != "nt":
+                _s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            _s.bind((args.host, args.port))
+    except OSError:
+        print(f"Port {args.port} is already in use on {args.host}: another hub, or another program. Set ATLAS_SYNC_PORT to a free "
+              "port.", file=__import__('sys').stderr)  # the raw uvicorn bind error named nothing (AG71)
+        raise SystemExit(3)
     uvicorn.run(create_app(), host=args.host, port=args.port,
                 log_level=_os.environ.get("ATLAS_SYNC_LOG_LEVEL", "warning").lower(), access_log=False, proxy_headers=False)  # every request incl. file paths was logged at INFO (MN35)
 

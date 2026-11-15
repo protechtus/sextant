@@ -44,14 +44,15 @@ STATE_MARKER = ".sextant-state"   # written by sextant-init; a dir without it is
 # What `reset --state` may clear: regenerable caches and indexes only. Everything else in
 # the state dir (transcripts, task DB + backups, intake ledger, sync devices, research
 # reports) is the ONLY copy and is never touched by a reset (data-safety audit 2026-11-09).
-DERIVED_STATE_ENTRIES = ("temporal_graph", "temporal", "embeddings")
+DERIVED_STATE_ENTRIES = ("temporal_graph", "temporal", "embeddings", "search.sqlite", "search.sqlite-wal", "search.sqlite-shm",
+                         "search.sqlite-journal")  # the FTS index rebuilds at the next search; it was never cleared (AG72)
 DERIVED_STATE_GLOBS = ("*.faiss", "*.npy", "embed-index*")
 
 # Things only Sextant creates in a state dir. A directory with none of them (and no marker)
 # is somebody's folder that ATLAS_STATE_DIR happens to point at: init will not claim it and
 # reset will not clear anything in it (round-B re-audit 2026-11-09, rows 1 and 2).
 STATE_SIGNATURE = ("state.sqlite", "transcripts", "intake", "weekly-draft.md", "temporal_graph",
-                   "embeddings", "sync", "backups")
+                   "embeddings", "sync", "backups", "search.sqlite")  # a stock install (init, import, search) was refused (AG72)
 
 
 # What the server itself creates on first contact, before init ever ran: `sextant verify` or an

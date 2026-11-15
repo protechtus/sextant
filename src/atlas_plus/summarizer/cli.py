@@ -148,7 +148,9 @@ def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
 
     def _release():
         try:
-            lock.unlink()
+            if lock.read_text(encoding="ascii", errors="replace").strip() == str(_os.getpid()):  # only the owner releases it (AG67: an exiting run deleted the lock a later run held)
+                from atlas_plus.summarizer.renderer import _unlink_retry
+                _unlink_retry(lock)
         except OSError:
             pass
     atexit.register(_release)

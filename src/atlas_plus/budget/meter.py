@@ -26,7 +26,7 @@ HOME = os.path.expanduser("~")
 # fan-out workloads spend most of their tokens. Overridable via env so a service running under a
 # different HOME (e.g. the MCP server) can still point at the real ~/.claude transcripts.
 DEFAULT_GLOB = os.environ.get("ATLAS_TRANSCRIPTS_GLOB") or os.path.join(
-    HOME, ".claude", "projects", "**", "*.jsonl")
+    os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"), "projects", "**", "*.jsonl")  # Claude Code's own config-dir override (AG70)
 
 # The rate-limit pressure window, in hours. Empirically the Max-plan 5h rolling window.
 WINDOW_HOURS = 5.0

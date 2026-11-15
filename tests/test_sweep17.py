@@ -192,7 +192,7 @@ def test_index_format_tag_forces_a_rebuild_and_breaker_is_wired():
     from atlas_plus.mcp.memory_server import fts
     from atlas_plus.web import app as web
 
-    assert fts.INDEX_FORMAT == "3" and fts._index_format_tag() in ("", "3", None)
+    assert fts.INDEX_FORMAT == "4" and fts._index_format_tag() in ("", "3", "4", None)
     page = inspect.getsource(web)
     assert page.count("= httpx.AsyncClient(") == 1 and "async with httpx.AsyncClient(" not in page and "_PeerClient(" in page   # the one real client lives inside the breaker wrapper
     assert ".tk-id{{width:3.6rem" in page and "scrollIntoView" in page and "_same_bytes_as_disk" in page
@@ -345,7 +345,7 @@ def test_bitset_table_holds_indexes_and_hebrew_punctuation_survives_the_fold():
     assert "shared_bit[tok] = len(shared_bit)" in src and "ba[bit >> 3] |= 1 << (bit & 7)" in src
     assert fts._fold_marks("\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8") == "\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8"   # maqaf kept
     assert fts._fold_marks("\u05e9\u05c1\u05b8\u05dc\u05d5\u05b9\u05dd") == "\u05e9\u05dc\u05d5\u05dd"                     # points folded
-    assert fts.INDEX_FORMAT == "3"
+    assert fts.INDEX_FORMAT == "4"
 
 
 def test_unchanged_large_save_condition_is_live_and_breaker_clears_on_any_answer():
@@ -1035,4 +1035,64 @@ def test_dry_run_import_lists_truncation(tmp_path, monkeypatch):
     assert not (mem / "reference").exists()                                   # the dry run wrote nothing
     real = import_cmd.import_obsidian(vault, "reference/obsidian", execute=True)
     assert [s.split(":")[0] for s in real["truncated"]] == ["big.md"]          # the same note, now really cut
+
+
+# ---------------------------------------------------------------- AG70
+def _git(cwd, *args):
+    import subprocess
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+
+
+def test_autocommit_commits_only_its_own_file(tmp_path, monkeypatch):
+    import shutil
+    if not shutil.which("git"):
+        pytest.skip("git not installed")
+    from atlas_plus.mcp.memory_server.tools import remember as rm
+
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    _git(mem, "init", "-q")
+    _git(mem, "config", "user.email", "t@example.invalid")
+    _git(mem, "config", "user.name", "t")
+    (mem / "seed.md").write_text("seed\n", encoding="utf-8")
+    _git(mem, "add", "seed.md")
+    _git(mem, "commit", "-q", "-m", "seed")
+    (mem / "user-wip.md").write_text("half done\n", encoding="utf-8")
+    _git(mem, "add", "user-wip.md")                                                      # staged by the user, not ours
+    note = mem / "reference" / "ag70.md"
+    note.parent.mkdir()
+    note.write_text("a fact\n", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_MEMORY_AUTOCOMMIT", "on")
+    assert rm._git_autocommit(note, "reference:ag70", mem) == ""
+    files = _git(mem, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert files == ["reference/ag70.md"]                                                 # the user's staged file stays staged, uncommitted
+    assert "user-wip.md" in _git(mem, "diff", "--cached", "--name-only").stdout
+    assert not (mem / ".git" / "sextant-autocommit.lock").exists()
+
+    (mem / ".git" / "index.lock").write_text("", encoding="utf-8")                        # a killed git left its lock
+    note.write_text("a fact\nanother\n", encoding="utf-8")
+    msg = rm._git_autocommit(note, "reference:ag70", mem)
+    assert msg.startswith("not auto-committed:") and "index.lock" in msg                   # said, never a silent success
+
+
+def test_ambiguous_ticket_named_in_store_errors_and_lf(tmp_path):
+    from atlas_plus.tickets import store
+
+    root = tmp_path / "tickets"
+    for proj in ("alpha", "beta"):
+        (root / proj).mkdir(parents=True)
+        (root / proj / "ALP-001.md").write_text(f"---\nid: ALP-001\nproject: {proj}\ntitle: t\nstatus: todo\npriority: normal\n---\nb\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError) as e:
+        store.update_ticket_status("ALP-001", "done", tickets_root=root)
+    assert "alpha/ALP-001" in str(e.value) and "beta/ALP-001" in str(e.value)
+    t = store.create_ticket(title="lf check", project="gamma", tickets_root=root)
+    assert b"\r\n" not in t.path.read_bytes()
+
+
+def test_decision_refuses_path_shaped_project(tmp_path, monkeypatch):
+    from atlas_plus.mcp.memory_server.tools import decision as dec
+
+    monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
+    r = dec.memory_remember_decision(title="t", decision="d", project="../../../../etc/passwd", interactive=True)
+    assert r["ok"] is False and "plain project name" in r["error"]
 

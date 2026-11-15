@@ -320,9 +320,12 @@ def cmd_help() -> None:
 def cmd_dashboard(ctx: typer.Context) -> None:
     """Start the web dashboard (same as sextant-web; needs ATLAS_WEB_API_KEY)."""
     # Three strangers in a row typed `sextant web` and got a pointer (sweep 11): it starts now.
-    console.print("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
-                  "bind, default 127.0.0.1:8766; the page loads htmx and Tailwind from the internet).")
     from atlas_plus.web.app import main as web_main
+    from atlas_plus.web import app as _webapp
+    _flags = any(a.split("=", 1)[0] in ("--port", "--host") for a in (ctx.args or []))
+    if not _flags and _webapp._port_free(_webapp.WEB_HOST, _webapp.WEB_PORT):  # the banner preceded a refusal (AG71)
+        console.print("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
+                      "bind, default 127.0.0.1:8766; the page loads htmx and Tailwind from the internet).")
 
     _delegate(web_main, "sextant web", ctx.args)
 
@@ -368,7 +371,7 @@ def _fact_is_blank(fact: str) -> bool:
 
 
 def _stdin_looks_mangled(text: str) -> bool:
-    if re.search(r"[A-Za-z]\?[A-Za-z]", text):
+    if re.search(r"[A-Za-z]\?[A-Za-z]", text) or re.search(r"(?:^|\s)\?[A-Za-z]", text) or (text.strip() and set(text.strip()) <= {"?"}):
         return True  # a `?` between letters: `caf? na?ve` is an accent lost in an ASCII pipe (MN60: two accents slipped through)
     if "\ufffd" in text:
         return True

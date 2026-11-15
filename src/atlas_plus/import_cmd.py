@@ -257,15 +257,15 @@ def _note_would_truncate(name: str, text: str) -> None:
         _TRUNCATED.append(f"{name}: {len(text):,} characters would be cut at {MAX_IMPORT_CHARS:,}")
 
 
-def _write_lf(target: Path, text: str) -> None:
+def _write_lf(target: Path, text: str, overhead: int = 0) -> None:
     """Write an imported note: LF line endings (write_text made CRLF on Windows, AG14), control
     characters and lone surrogates scrubbed (a lone surrogate left a zero-byte note and aborted
     the import, AG16), capped, and atomic (tmp + replace)."""
     from atlas_plus.mcp.memory_server.routing import _scrub_controls
     text = _scrub_controls(text).replace("\r\n", "\n").replace("\r", "\n")  # a CRLF vault gave LF frontmatter over a CRLF body (AG57)
-    if len(text) > MAX_IMPORT_CHARS:
-        _TRUNCATED.append(f"{target.name}: {len(text):,} characters cut at {MAX_IMPORT_CHARS:,}")  # named in the report (AG35)
-        text = text[:MAX_IMPORT_CHARS] + f"\n\n[truncated by sextant import: {len(text):,} characters]\n"
+    if len(text) - overhead > MAX_IMPORT_CHARS:  # the cap counts the note, not the frontmatter the import adds (AG72)
+        _TRUNCATED.append(f"{target.name}: {len(text) - overhead:,} characters cut at {MAX_IMPORT_CHARS:,}")  # named in the report (AG35)
+        text = text[:MAX_IMPORT_CHARS + overhead] + f"\n\n[truncated by sextant import: {len(text) - overhead:,} characters]\n"
     tmp = target.with_name(f"{target.name}.{os.getpid()}.imp-tmp")
     try:
         with tmp.open("w", encoding="utf-8", newline="\n") as fh:
@@ -737,7 +737,7 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
         stamped = _stamp_existing_frontmatter(raw, "obsidian", rel_src, body_hash) if _has_frontmatter(raw) else None
         out_text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src, body_hash) + raw
         target.parent.mkdir(parents=True, exist_ok=True)
-        _write_lf(target, out_text)
+        _write_lf(target, out_text, overhead=max(0, len(out_text) - len(raw)))
         imported += 1
 
     # Older copies of a note that was edited more than once, and notes whose vault file is gone.

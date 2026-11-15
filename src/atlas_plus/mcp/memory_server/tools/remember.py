@@ -49,14 +49,18 @@ def _is_unmerged(target: Path) -> bool:
     if not (root / ".git").exists():
         return False
     now = _time.monotonic()
-    if now - _UNMERGED_CACHE["at"] > 2.0 or _UNMERGED_CACHE.get("root") != str(root):
+    try:
+        _imt = (root / ".git" / "index").stat().st_mtime_ns  # a merge rewrites the index: the 2 s cache accepted writes to a fresh UD path (AG70)
+    except OSError:
+        _imt = 0
+    if now - _UNMERGED_CACHE["at"] > 2.0 or _UNMERGED_CACHE.get("root") != str(root) or _UNMERGED_CACHE.get("imt") != _imt:
         try:
             from atlas_plus import gitsafe as _gs
             out = _gs.run(["-c", "core.quotePath=false", "ls-files", "-u", "-z"], root, timeout=5).stdout  # gitsafe: a corpus repo's core.fsmonitor must never run (AG61); never the server's stdin (MN53)
             paths = frozenset(e.split("\t", 1)[1] for e in out.split("\0") if "\t" in e)
         except Exception:  # noqa: BLE001
             paths = frozenset()
-        _UNMERGED_CACHE.update(at=now, paths=paths, root=str(root))
+        _UNMERGED_CACHE.update(at=now, paths=paths, root=str(root), imt=_imt)
     if not _UNMERGED_CACHE["paths"]:
         return False
     try:
@@ -67,6 +71,49 @@ def _is_unmerged(target: Path) -> bool:
     if hit:
         _UNMERGED_CACHE["at"] = float("-inf")  # a refusal re-checks git on the next call: `git add` then a write within two seconds was refused again (MN53)
     return hit
+
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def _autocommit_lock(git_meta: Path, timeout: float = 30.0, stale: float = 120.0):
+    """One autocommit at a time per corpus repo, across processes (AG70: two stdio servers, an HTTP server and the CLI raced
+    git's own index.lock). A lock whose owner pid is gone, or older than `stale`, is broken."""
+    import time as _time
+    lock = git_meta / "sextant-autocommit.lock"
+    deadline = _time.monotonic() + timeout
+    held = False
+    while True:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            held = True
+            break
+        except FileExistsError:
+            try:
+                from atlas_plus.summarizer.renderer import _lock_owner_dead
+                if _time.time() - lock.stat().st_mtime > stale or _lock_owner_dead(lock):
+                    lock.unlink()
+                    continue
+            except OSError:
+                pass
+            if _time.monotonic() > deadline:
+                break
+            _time.sleep(0.05)
+        except OSError:
+            held = None  # no lock possible (read-only .git): proceed as before
+            break
+    try:
+        yield held is not False
+    finally:
+        if held:
+            try:
+                if lock.read_text(encoding="ascii", errors="replace").strip() == str(os.getpid()):
+                    lock.unlink()
+            except OSError:
+                pass
 
 
 def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT) -> str:
@@ -89,17 +136,29 @@ def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT
         # Hardened: --no-verify skips only pre-commit/commit-msg; post-commit, fsmonitor and
         # filters still ran from a repo config a sync peer could rewrite (round-B N-J 2026-11-09).
         from atlas_plus import gitsafe
-        gitsafe.run(["-C", git_dir, "add", rel], None, timeout=5, text=False)
-        msg = f"Atlas auto-commit: {scope} [{file_path.name}]"
-        result = gitsafe.run(["-C", git_dir, "commit", "-m", msg, "--no-verify"], None, timeout=5)
+        with _autocommit_lock(git_meta) as _held:  # concurrent writers raced git's own index.lock; a killed commit left it behind (AG70)
+            if not _held:
+                return f"not auto-committed: another writer held {git_meta / 'sextant-autocommit.lock'} for 30 s; commit {rel} by hand"
+            if (git_meta / "index.lock").exists():
+                return (f"not auto-committed: {git_meta / 'index.lock'} exists (another git command is running, or one was killed); "
+                        "if no git is running, remove that file and commit by hand")
+            gitsafe.run(["-C", git_dir, "add", "--", rel], None, timeout=30, text=False)
+            msg = f"Atlas auto-commit: {scope} [{file_path.name}]"
+            # `-- rel` commits THIS file only: a bare commit took the whole index, so a file the user had staged by hand was
+            # committed under Sextant's message (AG70). The 30 s timeout: a 5 s kill left index.lock and HEAD.lock behind.
+            result = gitsafe.run(["-C", git_dir, "commit", "-m", msg, "--no-verify", "--", rel], None, timeout=30)
         if result.returncode == 0:
             log.debug("Memory autocommit: %s", rel)
-        elif "nothing to commit" in (result.stdout + result.stderr):
+        elif "nothing to commit" in (result.stdout + result.stderr) or "no changes added" in (result.stdout + result.stderr):
             log.debug("Memory autocommit: nothing new to commit for %s", rel)
         else:
-            log.debug("Memory autocommit failed for %s: %s", rel, result.stderr.strip()[:80])
+            _why = (result.stderr or result.stdout).strip().splitlines()[:1]
+            log.debug("Memory autocommit failed for %s: %s", rel, _why)
+            return f"not auto-committed: git said {(_why[0] if _why else 'nothing')[:160]!r}"  # the failure was silent (AG70)
     except Exception as exc:
         log.debug("Memory autocommit error: %s", exc)
+        return f"not auto-committed: {type(exc).__name__}: {str(exc)[:160]}"
+    return ""
 
 # Minimum Jaccard overlap to flag as a possible duplicate
 _DUP_THRESHOLD = 0.45

@@ -364,7 +364,33 @@ def list_tickets(
     return results
 
 
-LAST_AMBIGUOUS: dict = {}  # set by get_ticket when a bare id matched several folder tickets (MN56)
+import threading as _threading
+
+
+class _PerThread(_threading.local):
+    def __init__(self):
+        self.d = {}
+
+
+_AMBIG = _PerThread()  # AG67: one module-global dict was shared by concurrent requests (a lookup in another request cleared or replaced it)
+
+
+class _AmbiguousView:
+    """`LAST_AMBIGUOUS` kept as a name; it reads and writes the calling thread's own record."""
+    def get(self, k, default=None):
+        return _AMBIG.d.get(k, default)
+
+    def clear(self):
+        _AMBIG.d = {}
+
+    def __getitem__(self, k):
+        return _AMBIG.d[k]
+
+    def __setitem__(self, k, v):
+        _AMBIG.d[k] = v
+
+
+LAST_AMBIGUOUS = _AmbiguousView()  # set by get_ticket when a bare id matched several folder tickets (MN56)
 
 
 def ambiguous_hint() -> str:
@@ -495,7 +521,7 @@ def create_ticket(
     )
     try:
         # Text mode, as write_text was: same bytes on disk as before.
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:  # LF like every other corpus file: Windows wrote CRLF (AG70)
             f.write(ticket.to_markdown())
     except BaseException:
         # Never leave an empty claimed slot posing as a ticket.
@@ -531,7 +557,7 @@ def update_ticket_fields(ticket_id: str, updates: dict, tickets_root: Optional[P
         raise ValueError("use update_ticket_status for status changes")
     t = get_ticket(ticket_id, tickets_root)
     if t is None or t.path is None:
-        raise FileNotFoundError(f"Ticket '{ticket_id}' not found")
+        raise FileNotFoundError(ambiguous_hint() or f"Ticket '{ticket_id}' not found")  # the qualified ids, not "not found" (AG67)
     fields = dict(updates)
     fields["updated"] = date.today().isoformat()
     _version_or_raise(t.path)
@@ -567,7 +593,7 @@ def update_ticket_status(
         raise ValueError(f"Invalid status '{status}'. Valid: {VALID_STATUSES}")
     t = get_ticket(ticket_id, tickets_root)
     if t is None:
-        raise FileNotFoundError(f"Ticket '{ticket_id}' not found")
+        raise FileNotFoundError(ambiguous_hint() or f"Ticket '{ticket_id}' not found")  # the qualified ids, not "not found" (AG67)
 
     # Increment reopen_count when any ticket is sent back to todo from a non-todo state.
     # This tracks automation loop retries regardless of the cause (quality gate, verify, etc.).

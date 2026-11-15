@@ -115,8 +115,11 @@ def pair(
     for prefix in prefixes:
         if not policy.is_safe_relpath(prefix.rstrip("/")):
             raise ValueError(f"unsafe prefix: {prefix!r}")
+    if not isinstance(name, str) or not name.strip() or len(name) > 64 or any(ord(c) < 32 or ord(c) == 127 for c in name) \
+            or any(c in name for c in "/\\:") or name != name.strip():
+        raise ValueError("a device name is 1-64 characters, no leading or trailing spaces, no control characters, no / \\ or :")  # '', ' ', a newline that spoofed a listing row (AG71)
     devices = _load_raw(path)
-    if any(d.get("name") == name and not d.get("revoked") for d in devices):
+    if any(str(d.get("name", "")).casefold() == name.casefold() and not d.get("revoked") for d in devices):
         raise ValueError(f"an active principal named {name!r} already exists")
 
     token = secrets.token_urlsafe(32)

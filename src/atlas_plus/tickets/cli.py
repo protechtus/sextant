@@ -87,10 +87,12 @@ def cmd_list(
 @app.command("show")
 def cmd_show(ticket_id: str = typer.Argument(...)):
     """Show full detail for a ticket."""
-    from atlas_plus.tickets.store import get_ticket
+    from atlas_plus.tickets.store import get_ticket, LAST_AMBIGUOUS as _la
+    _la.clear()  # a hint left by an earlier lookup on this thread must not answer for this one
     t = get_ticket(ticket_id)
     if t is None:
-        console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+        from atlas_plus.tickets.store import ambiguous_hint as _ah
+        console.print(f"[red]{_ah() or f'Ticket {ticket_id!r} not found'}.[/red]")  # an ambiguous bare id names its choices (AG67)
         raise typer.Exit(1)
 
     console.print(f"\n[bold cyan]{t.id}[/bold cyan]  {_clean(t.title)}")

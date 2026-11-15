@@ -196,7 +196,17 @@ def _transcript_root_from_payload() -> str:
             _PAYLOAD["seen"] = True
             _PAYLOAD["empty"] = True  # a terminal, no payload: never summarise the whole day (MN51)
             return ""
-        raw = sys.stdin.read()
+        _buf = getattr(sys.stdin, "buffer", None)
+        if _buf is not None:  # bytes, never the console code page: an accented path was decoded as cp1252 and refused (AG69)
+            _b = _buf.read()
+            if not isinstance(_b, (bytes, bytearray)):
+                raw = str(_b) if isinstance(_b, str) else sys.stdin.read()
+            elif _b[:2] in (b"\xff\xfe", b"\xfe\xff"):
+                raw = _b.decode("utf-16")  # PowerShell's Out-File default
+            else:
+                raw = _b.decode("utf-8-sig")  # a payload that is not UTF-8 raises: refused below, never a whole-day summary
+        else:
+            raw = sys.stdin.read()
         if not raw.strip():
             _PAYLOAD["seen"] = True
             _PAYLOAD["empty"] = True
@@ -216,6 +226,9 @@ def _transcript_root_from_payload() -> str:
             return ""
         from pathlib import Path as _Path
         _p = _Path(_posix_path_for(str(tp))).resolve()
+        if len(_p.parents) < 2 or "\x00" in str(tp):
+            _PAYLOAD["refused"] = str(tp)[:200]  # `E:\x.jsonl` raised IndexError and fell back to a full scan (AG69)
+            return ""
         root = _p.parents[1]
         if not _p.is_file() or not root.name.endswith("projects"):
             _PAYLOAD["refused"] = str(_p)[:200]  # named below, never a silent fallback to a full scan (MN57)
@@ -223,6 +236,10 @@ def _transcript_root_from_payload() -> str:
         if _p.is_file():
             _PAYLOAD["transcript_file"] = str(_p)
         return str(root) if root.is_dir() else ""
+    except UnicodeDecodeError:
+        _PAYLOAD["seen"] = True  # a payload that is not UTF-8/UTF-16 is refused: it made an unmarked whole-day summary (AG69)
+        _PAYLOAD["garbled"] = True
+        return ""
     except Exception:  # noqa: BLE001 - a hook never fails the session over its payload
         return ""
 

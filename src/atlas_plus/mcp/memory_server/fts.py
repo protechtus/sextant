@@ -132,6 +132,8 @@ def _recompose(text: str) -> str:
         text = text.replace("\u0e4d\u0e32", "\u0e33").replace("\u0ecd\u0eb2", "\u0eb3")
     if "\u200c" in text or "\u200d" in text:
         text = _INDIC_JOINER_RE.sub("", text)  # ZWJ/ZWNJ between Indic letters are typed or not by keyboard: `राम` must meet `रा\u200dम` (MN55); between Persian letters the ZWNJ stays a separator
+    if "\u0130" in text or "\u0131" in text:
+        text = text.replace("\u0130", "i").replace("\u0131", "i")  # Turkish dotted I and dotless i: `Diyarbak\u0131r` met neither `diyarbakir` nor `D\u0130YARBAKIR` (AG72)
     if "\u0451" in text or "\u0401" in text or "\u00df" in text:
         text = text.replace("\u0451", "\u0435").replace("\u0401", "\u0415").replace("\u00df", "ss")  # ё is typed as е and ß as ss (MN58: `елка` missed `ёлка`, `Strasse` missed `Straße`)
     return text
@@ -450,7 +452,7 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
-INDEX_FORMAT = "3"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild)
+INDEX_FORMAT = "4"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72)
 
 
 def _needs_rebuild() -> bool:
