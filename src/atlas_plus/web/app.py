@@ -6804,6 +6804,8 @@ def _port_free(host: str, port: int) -> bool:
         with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as s:
             if os.name != "nt":
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # on Windows the option binds beside a live listener (AG61)
+            elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)  # a listener on 0.0.0.0 was missed (MN65)
             s.bind((host, port))
         return True
     except OSError:

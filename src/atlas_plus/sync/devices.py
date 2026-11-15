@@ -115,6 +115,13 @@ def pair(
     for prefix in prefixes:
         if not policy.is_safe_relpath(prefix.rstrip("/")):
             raise ValueError(f"unsafe prefix: {prefix!r}")
+    import unicodedata as _ud
+    if isinstance(name, str):
+        name = _ud.normalize("NFC", name)  # `\u00e9mile` in two forms became two devices (MN65)
+    if isinstance(name, str) and (any(_ud.category(c) == "Cf" for c in name) or name.strip(".") == "" or name.endswith(".")
+                                  or name.split(".", 1)[0].upper() in ("CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10)))
+                                  or any(c in name for c in "*?<>|\"%")):
+        raise ValueError("a device name may not hold invisible characters (zero-width, bidi), be `.`/`..`, end with a dot, be a Windows device name or hold * ? < > | \" %")  # MN65
     if not isinstance(name, str) or not name.strip() or len(name) > 64 or any(ord(c) < 32 or ord(c) == 127 for c in name) \
             or any(c in name for c in "/\\:") or name != name.strip():
         raise ValueError("a device name is 1-64 characters, no leading or trailing spaces, no control characters, no / \\ or :")  # '', ' ', a newline that spoofed a listing row (AG71)

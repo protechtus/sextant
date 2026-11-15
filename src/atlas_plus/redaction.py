@@ -145,7 +145,7 @@ def _kv_quote(v: str) -> str:
 _ENVREF_RE = re.compile(r"^\$[A-Z_][A-Z0-9_]*$|^!!?[A-Za-z][A-Za-z/_.-]*$")
 _STATUS_RE = re.compile(r"(?i)[\[(<]?(?:required|optional|expired|missing|invalid|hidden|redacted|undefined|string|str|secretstr|unset|empty|none|null|incorrect|wrong|rejected|refreshing|n/a"
                         r"|abgelaufen|ungültig|fehlt|erforderlich|falsch|leer|expiré|expirée|invalide|manquant|requis|incorrect|vide|expirada|expirado|caducada|caducado|inválida|inválido|obrigatória|requerida|incorreta|incorrecta|vazia|vacía"
-                        r"|истёк|истек|истекла|неверный|неверно|недействителен|отсутствует|обязателен|пустой|süresi[ \t]doldu|geçersiz|boş)[\])>]?[;,.]*")  # the status words of the other Latin and Cyrillic languages too (MN58)
+                        r"|истёк|истек|истекла|неверный|неверно|недействителен|отсутствует|обязателен|пустой|süresi[ \t]doldu|geçersiz|boş|değiştirildi|güncellendi|sıfırlandı|ayarlandı|yenilendi)[\])>]?[;,.]*")  # the status words of the other Latin and Cyrillic languages too (MN58)
 _WORDISH_RE = re.compile(r"[^\d\s!-/:-@\[-`{-~]+[,.;:!?]?")
 _DOC_WORDS = frozenset({"password", "pass", "passwd", "pwd", "secret", "token", "user", "username", "yourpassword", "your_password", "changeme", "arg", "args", "file", "env", "fd", "stdin", "anonymous", "guest", "x-oauth-basic"})
 
@@ -325,7 +325,7 @@ _TOKEN_SHAPES_RE = re.compile(r"\b(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[
 # AG68: the value may sit in curly or CJK quotes, hold a soft hyphen or zero-width space (a paste from a web page or chat),
 # or be a double-quoted passphrase with spaces
 _PQ = r"[“「『‘]?"
-_PV = r"(\"[^\"\n]{4,64}\"|(?=[!-~])(?:[!-~]|[­​-‍⁠﻿]){8,})"
+_PV = r"(\"[^\"\n]{4,64}\"|(?=(?-i:[!-~]))(?:(?-i:[!-~])|[­​-‍⁠﻿]){8,})"  # (?-i:): under (?i) Turkish ı and İ matched [!-~] (MN62)
 _PROSE_RE = re.compile(r"(?i)\b((?:(?:my|your|the|his|her|their|our|new|old|temp(?:orary)?|root|admin|wifi|login)[ \t]+){1,2}(?:password|passcode|passphrase|api[ \t]key|access[ \t]token|token|(?:client[ \t]+)?secret)[ \t]+(?:is|was|are|will[ \t]+be|=|:)[ \t]+" + _PQ + ")" + _PV)
 # AG68: `I set the password to V`, `password changed to V`, `the token has been rotated to V`
 _PROSE_SET_RE = re.compile(r"(?i)\b((?:password|passcode|passphrase|api[ \t]key|access[ \t]token|token|secret)[ \t]+(?:(?:has|was|is)[ \t]+(?:been[ \t]+)?|got[ \t]+)?(?:set|changed|reset|updated|rotated)[ \t]+to[ \t]+" + _PQ + r"|\b(?:set|change|reset|update|rotate)[ \t]+(?:the|my|your|our|its)[ \t]+(?:\w+[ \t]+)?(?:password|passcode|passphrase|token|secret)[ \t]+to[ \t]+" + _PQ + ")" + _PV)
@@ -493,6 +493,8 @@ _PROSE_RULES = (
 def _prose_ok(v: str) -> bool:
     """A prose value: `_secretish`, and a double-quoted phrase with spaces needs a digit, an inner capital or a symbol
     (`"correct Horse 42"` is a passphrase; `"required for login"` is prose: AG68)."""
+    if re.match(r"^[A-Za-z]{2,}[0-9]{1,4}(?:-\w+)?[.,;:!?]*$", v):
+        return False  # `jelszava Windows11 alatt`, `az iPhone15-on`: a product name, not a value (MN62)
     if v.startswith('"') and " " in v:
         inner = v.strip('"')
         return bool(re.search(r"\d|[a-z][A-Z]|[^\w\s]", inner)) and _secretish(inner.replace(" ", "_"))
@@ -592,7 +594,7 @@ _PW_WORDS = (
     "password", "passwd", "passphrase", "passcode", "passwort", "kennwort", "mot de passe", "contraseña", "contrasena", "senha",
     "wachtwoord", "passord", "lösenord", "losenord", "adgangskode", "salasana", "hasło", "haslo", "heslo", "geslo", "lozinka",
     "parolă", "parola", "jelszó", "jelszo", "jelszava", "şifre", "sifre", "mật khẩu", "mat khau", "kata sandi", "kata laluan",
-    "nenosiri", "пароль", "парол", "лозинка", "κωδικός", "κωδικος", "συνθηματικό", "סיסמה", "סיסמא", "كلمة المرور", "كلمة السر",
+    "nenosiri", "şifrə", "sifre", "parol", "пароль", "парол", "лозинка", "κωδικός", "κωδικος", "συνθηματικό", "סיסמה", "סיסמא", "كلمة المرور", "كلمة السر",
     "رمز عبور", "گذرواژه", "پاس ورڈ", "پاسورڈ", "पासवर्ड", "পাসওয়ার্ড", "கடவுச்சொல்", "మనపదం", "పాస్‌వర్డ్", "පාස්වර්ඩ්", "මුරපදය",
     "പാസ്‌വേഡ്", "ಪಾಸ್‌ವರ್ಡ್", "รหัสผ่าน", "ລະຫັດຜ່ານ", "ពាក្យសម្ងាត់", "စကားဝှက်", "གསང་ཚིག", "პაროლი", "գաղտնաբառ",
     "密码", "密碼", "口令", "パスワード", "暗証番号", "비밀번호", "암호",
@@ -605,6 +607,8 @@ _STRIP_CLASS: list = []
 def _strip_marks(s: str) -> str:
     if s.isascii():
         return s
+    import unicodedata as _ud0
+    s = _ud0.normalize("NFKC", s).casefold().replace("\u0640", "")  # NFKC first (half/full-width, NFD Hangul and kana), casefold before the strip (`İ` casefolds to i + a combining dot), tatweel out (MN62)
     if not _STRIP_CLASS:
         import unicodedata as _ud
         chars = [chr(c) for c in range(0x300, 0x30000) if _ud.category(chr(c)) in ("Mn", "Me", "Cf")]
@@ -613,6 +617,8 @@ def _strip_marks(s: str) -> str:
 
 
 _PW_WORDS_STRIPPED = tuple(sorted({_strip_marks(w).casefold() for w in _PW_WORDS}, key=len, reverse=True))
+_PW_WORDS_ASCII = tuple(w for w in _PW_WORDS_STRIPPED if w.isascii())  # the ASCII pre-check is derived: it missed adgangskode and losenord (MN62)
+_PRODUCT_RE = re.compile(r"^[A-Za-z]{2,}[0-9]{1,4}(?:-\w+)?$")  # Windows11, iPhone15, Office365, Ubuntu24: names, not values (MN62: 35 of 69 ordinary sentences)
 
 
 def _secret_shaped(tok: str) -> bool:
@@ -623,32 +629,40 @@ def _secret_shaped(tok: str) -> bool:
         return False  # an identifier (`getPassword2`, `SecretAccessKey`), not a value
     if not any(c.isdigit() for c in tok) or not any(c.isalpha() for c in tok):
         return False
+    if _PRODUCT_RE.match(tok):
+        return False
     return (any(c.isupper() for c in tok) and any(c.islower() for c in tok)) or any(c in _PW_SYMBOLS for c in tok)
 
 
 def _keyword_line_redact(text: str) -> str:
-    low_all = text.casefold()
-    if text.isascii() and not any(w in low_all for w in ("password", "passwd", "passphrase", "passcode", "passwort", "kennwort",
-                                                         "mot de passe", "senha", "wachtwoord", "passord", "salasana", "haslo",
-                                                         "heslo", "geslo", "lozinka", "parola", "jelszo", "sifre", "mat khau",
-                                                         "kata sandi", "kata laluan", "nenosiri", "contrasena")):
-        return text
+    if text.isascii():
+        low_all = text.casefold()
+        if not any(w in low_all for w in _PW_WORDS_ASCII):
+            return text
+
+    def _mask(m):
+        tok = m.group(0)
+        core = tok.rstrip(".,;:!?)]}\"'")
+        lead = len(core) - len(core.lstrip("(\"'[{"))
+        core2 = core[lead:]
+        if len(core2) >= 8 and _secret_shaped(core2):
+            return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
+        return tok
+
     out_lines = []
+    carry = False  # the previous line held a password word and no value: `password is below` / `Пароль сервера:` then V (MN62)
     for line in text.split("\n"):
         probe = _strip_marks(line).casefold()
-        if not any(w in probe for w in _PW_WORDS_STRIPPED):
-            out_lines.append(line)
+        if any(w in probe for w in _PW_WORDS_STRIPPED):
+            new = _PW_TOKEN_RE.sub(_mask, line)
+            carry = new == line
+            out_lines.append(new)
             continue
-
-        def _mask(m):
-            tok = m.group(0)
-            core = tok.rstrip(".,;:!?)]}\"'")
-            lead = len(core) - len(core.lstrip("(\"'[{"))
-            core2 = core[lead:]
-            if len(core2) >= 8 and _secret_shaped(core2):
-                return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
-            return tok
-        out_lines.append(_PW_TOKEN_RE.sub(_mask, line))
+        if carry and line.strip() and len(line.split()) == 1:
+            out_lines.append(_PW_TOKEN_RE.sub(_mask, line))
+        else:
+            out_lines.append(line)
+        carry = False
     return "\n".join(out_lines)
 
 

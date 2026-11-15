@@ -123,6 +123,16 @@ def _gave_up(safe_id: str, nturns: int) -> bool:
         return False
 
 
+def _workspace_tag() -> str:
+    import hashlib as _hl
+    try:
+        from atlas_plus import paths as _p
+        root = str(_p.memory_root().resolve())
+    except Exception:  # noqa: BLE001
+        root = ""
+    return _hl.sha1(root.encode("utf-8", "replace")).hexdigest()[:8]
+
+
 def _acquire_session_lock(safe_id: str, stale_s: float = 900.0) -> bool:
     """One summarizer per session at a time: `<state>/summarizer/<id>.lock`, released at exit."""
     import atexit
@@ -339,7 +349,7 @@ def main(
             prior_turns = found[1]
         if since == "today":
             since = None  # the session is the unit: a session across midnight lost its first hour (AG40)
-        if not dry_run and not _acquire_session_lock(safe_id):
+        if not dry_run and not _acquire_session_lock(safe_id + "-" + _workspace_tag()):  # per workspace: two workspaces on one state dir blocked each other (MN63)
             console.print(f"[yellow]Another summarizer run for session {conversation_id} is in progress; nothing to do.[/yellow]")
             _event("summarizer_skipped", reason="another run for this session is in progress", conversation_id=conversation_id or "")  # it left no trace (MN57)
             raise typer.Exit(0)  # four Stops in one second each paid for the model (MN33)

@@ -204,7 +204,11 @@ def _transcript_root_from_payload() -> str:
             elif _b[:2] in (b"\xff\xfe", b"\xfe\xff"):
                 raw = _b.decode("utf-16")  # PowerShell's Out-File default
             else:
-                raw = _b.decode("utf-8-sig")  # a payload that is not UTF-8 raises: refused below, never a whole-day summary
+                try:
+                    raw = _b.decode("utf-8-sig")  # a payload that is not UTF-8 raises: refused below, never a whole-day summary
+                except UnicodeDecodeError:
+                    _PAYLOAD["encoding"] = True  # named as an encoding problem, not mangled quotes (MN63)
+                    raise
         else:
             raw = sys.stdin.read()
         if not raw.strip():
@@ -219,7 +223,7 @@ def _transcript_root_from_payload() -> str:
             _PAYLOAD["garbled"] = True
             return ""
         if isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
-            _SESSION["id"] = payload["session_id"].strip()[:120]
+            _SESSION["id"] = "".join(c for c in payload["session_id"] if ord(c) >= 32 and ord(c) != 127).strip()[:120]  # a NUL crashed Popen (MN63)
         _PAYLOAD["seen"] = True
         tp = payload.get("transcript_path") if isinstance(payload, dict) else None
         if not tp:
@@ -247,6 +251,12 @@ def _transcript_root_from_payload() -> str:
 def main() -> int:
     """Entry point for the transcript summarizer hook: read stdin transcript, produce summaries, write session log."""
     import sys as _sys
+    for _st in (_sys.stderr, _sys.stdout):  # hooks speak UTF-8 when piped; the refusal printed cp1252 bytes for `Jos\u00e9` (MN63)
+        try:
+            if _st is not None and hasattr(_st, "reconfigure") and not _st.isatty():
+                _st.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
     if len(_sys.argv) > 1 and _sys.argv[1] in ("-h", "--help"):
         print("Usage: python -m atlas_plus.hooks.run --env ATLAS_SESSION_AUTONOMOUS=on stop\n"
               "       (the Claude Code Stop hook; `sextant setup --client hooks` prints the full command)\n\n"
@@ -260,6 +270,7 @@ def main() -> int:
     _SESSION["id"] = ""
     _PAYLOAD["seen"] = False  # per run: a previous payload in this process must not stand in (the sweep-14 test)
     _PAYLOAD["garbled"] = False
+    _PAYLOAD["encoding"] = False
     _PAYLOAD["empty"] = False
     _PAYLOAD["transcript_file"] = ""
     _PAYLOAD["refused"] = ""
@@ -283,7 +294,7 @@ def main() -> int:
     _child_env = dict(os.environ)
     root = _transcript_root_from_payload()  # always read: it carries the session id (MN25/MN28: with the
     if _PAYLOAD.get("refused") and not os.environ.get("ATLAS_CLAUDE_CODE_ROOT"):
-        _sys.stderr.write(f"Sextant: the Stop payload's transcript_path {_PAYLOAD['refused']!r} does not exist or does not sit under a .../projects folder; nothing summarised (set ATLAS_CLAUDE_CODE_ROOT to the transcripts root if the path form differs).\n")
+        _sys.stderr.write(f"Sextant: the Stop payload's transcript_path '{_PAYLOAD['refused']}' does not exist or does not sit under a .../projects folder; nothing summarised (set ATLAS_CLAUDE_CODE_ROOT to the transcripts root if the path form differs).\n")
         try:
             from atlas_plus import activity as _act
             _act.record("hook", "summarizer_skipped", reason="transcript path refused", path=_PAYLOAD["refused"])
@@ -293,7 +304,7 @@ def main() -> int:
     if not _SESSION.get("id") and _payload_seen():
         # a payload without a session id would summarise the whole day on every Stop, one more entry each
         # time (AG50); Claude Code always sends session_id, so a missing one is a broken payload
-        _sys.stderr.write("Sextant: no Stop payload arrived on stdin; run the hook the way Claude Code does (echo '{\"session_id\": ..., \"transcript_path\": ...}' | <stop command>); nothing summarised.\n" if _PAYLOAD.get("empty") else "Sextant: the Stop payload is not JSON (a shell mangled the quotes?); nothing summarised.\n" if _PAYLOAD.get("garbled") else "Sextant: the Stop payload carries no session_id; nothing summarised.\n")
+        _sys.stderr.write("Sextant: no Stop payload arrived on stdin; run the hook the way Claude Code does (echo '{\"session_id\": ..., \"transcript_path\": ...}' | <stop command>); nothing summarised.\n" if _PAYLOAD.get("empty") else ("Sextant: the Stop payload is not UTF-8 or UTF-16 text (in PowerShell 5.1 set $OutputEncoding = [Text.Encoding]::UTF8 first); nothing summarised.\n" if _PAYLOAD.get("encoding") else "Sextant: the Stop payload is not JSON (a shell mangled the quotes?); nothing summarised.\n") if _PAYLOAD.get("garbled") else "Sextant: the Stop payload carries no session_id; nothing summarised.\n")
         try:
             from atlas_plus import activity as _act
             _act.record("hook", "summarizer_skipped", reason=("no payload on stdin" if _PAYLOAD.get("empty") else "payload is not JSON" if _PAYLOAD.get("garbled") else "payload has no session_id"))  # the recorded reason matches stderr (AG60)

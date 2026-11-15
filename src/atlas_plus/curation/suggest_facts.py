@@ -496,7 +496,15 @@ def _session_done_marker(conversation_id: str | None):
     safe = "".join(ch for ch in conversation_id if ch.isalnum() or ch in "-_.")[:80]
     if not safe:
         return None
-    return atlas_paths.state_dir() / "suggest-facts" / f"{safe}.done"
+    import hashlib as _hl
+    try:
+        _ws = _hl.sha1(str(atlas_paths.memory_root().resolve()).encode("utf-8", "replace")).hexdigest()[:8]
+    except Exception:  # noqa: BLE001
+        _ws = ""
+    legacy = atlas_paths.state_dir() / "suggest-facts" / f"{safe}.done"
+    if not _ws:
+        return legacy
+    return atlas_paths.state_dir() / "suggest-facts" / f"{safe}-{_ws}.done"  # per workspace: a second workspace on the same state dir got no facts (MN63)
 
 
 def _write_fact(scope: str, fact: str, confidence: float = None) -> dict:

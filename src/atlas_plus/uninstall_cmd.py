@@ -52,7 +52,7 @@ DERIVED_STATE_GLOBS = ("*.faiss", "*.npy", "embed-index*")
 # is somebody's folder that ATLAS_STATE_DIR happens to point at: init will not claim it and
 # reset will not clear anything in it (round-B re-audit 2026-11-09, rows 1 and 2).
 STATE_SIGNATURE = ("state.sqlite", "transcripts", "intake", "weekly-draft.md", "temporal_graph",
-                   "embeddings", "sync", "backups", "search.sqlite")  # a stock install (init, import, search) was refused (AG72)
+                   "embeddings", "sync", "backups", "search.sqlite", "logs/activity.ndjson")  # a stock install (init, import, search) was refused (AG72); a second reset too (MN66)
 
 
 # What the server itself creates on first contact, before init ever ran: `sextant verify` or an
@@ -540,10 +540,24 @@ def confirm_state_removal(yes: bool, confirm_path: str | None, ask=input) -> str
     import os as _os
 
     def _norm(p: str) -> str:
-        return _os.path.normcase(_os.path.normpath(str(p).strip()))
+        return _os.path.normcase(_os.path.normpath(str(p).lstrip("\ufeff").strip()))  # a BOM from PowerShell's UTF-8 pipe (MN66)
 
     if _norm(provided) != _norm(expected):
         return "refused: state confirmation path did not match"
+    return None
+
+
+def derived_state_refusal() -> str | None:
+    """The refusal `reset --state` would give, checked BEFORE anything is wiped (MN66: `reset --all` wiped the corpus, then refused the state)."""
+    state = atlas_paths.state_dir()
+    if not state.exists():
+        return None
+    refusal = validate_destructive_target("state", state)
+    if refusal:
+        return refusal
+    if not (state / STATE_MARKER).exists() or not any((state / n).exists() for n in STATE_SIGNATURE):
+        return ("REFUSED: this directory carries the marker but none of Sextant's own state "
+                f"({', '.join(STATE_SIGNATURE[:4])}, ...); nothing cleared")
     return None
 
 
@@ -637,7 +651,7 @@ def confirm_corpus_removal(yes: bool, confirm_path: str | None, ask=input) -> st
     import os as _os
 
     def _norm(p: str) -> str:
-        return _os.path.normcase(_os.path.normpath(str(p).strip()))
+        return _os.path.normcase(_os.path.normpath(str(p).lstrip("\ufeff").strip()))  # a BOM from PowerShell's UTF-8 pipe (MN66)
 
     if _norm(provided) != _norm(expected):
         return "refused: confirmation path did not match"

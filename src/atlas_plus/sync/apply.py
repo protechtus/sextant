@@ -173,6 +173,8 @@ def inbox(
     if not policy.is_safe_relpath(rel):
         raise SyncPolicyError("invalid path")
     safe_peer = "".join(c for c in peer_name if c.isalnum() or c in "-_") or "peer"
+    if safe_peer != peer_name:  # `x.` and `x`, `.` and `..` shared one folder (MN65)
+        safe_peer = f"{safe_peer}-{hashlib.sha256(peer_name.encode('utf-8')).hexdigest()[:6]}"
     existing = _already_landed(root / "_atlas" / "sync-inbox" / safe_peer, rel,
                                hashlib.sha256(content).hexdigest(), dated=False)
     if existing is not None:

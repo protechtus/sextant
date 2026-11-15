@@ -204,7 +204,8 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
             elif exc.code == 404:
                 hint = " (the MCP path is /mcp, without a trailing slash)" if url.rstrip("/") != url else " (the MCP path is /mcp)"
             elif exc.code in (301, 302, 303, 307, 308) and url.startswith("http://") and (exc.headers.get("Location") or "").startswith("https://"):
-                hint = f" (the server redirects plain HTTP to HTTPS; the token was not sent there: use https://{url[len('http://'):]})"  # AG71: the /mcp hint was wrong
+                _loc = exc.headers.get("Location") or ""
+                hint = f" (the server redirects plain HTTP to HTTPS ({_loc[:120]}); the token was not sent there: use the https:// URL of this server, with its TLS port)"  # MN65: the port was kept from the http URL
             elif exc.code in (301, 302, 303, 307, 308):
                 _loc = (exc.headers.get("Location") or "?")[:120]
                 hint = f" (the server redirected to {_loc}; the token was not sent there: check the URL, the MCP path is /mcp without a trailing slash)"

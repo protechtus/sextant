@@ -144,7 +144,9 @@ def _note_facts(text: str) -> list[str]:
 
 
 def _norm_fact(s: str) -> str:
-    return " ".join(_NON_WORD_RE.sub(" ", s.lower()).split())
+    import unicodedata as _ud
+    s = _fold_marks(_recompose(_ud.normalize("NFKC", s))).casefold()  # like search: NFC vs NFD, harakat, half-width, tonos, İ (MN62: the file scanner was fixed, this sibling was not)
+    return " ".join(_NON_WORD_RE.sub(" ", s).split())
 
 
 def find_fact_duplicates(

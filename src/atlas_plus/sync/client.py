@@ -24,6 +24,11 @@ class SyncClientError(Exception):
     """Transport- or protocol-level failure talking to the hub."""
 
 
+class SyncAuthError(SyncClientError):
+    """The hub rejected the token mid-run: stop instead of one error per file (MN65)."""
+
+
+
 def normalize_share(share: Sequence[str] | None) -> tuple[str, ...]:
     """Corpus-relative prefixes this system agrees to exchange, as ``dir/`` strings."""
     out: list[str] = []
@@ -144,6 +149,8 @@ class SyncClient:
                     timeout = float(_os.environ.get("ATLAS_SYNC_TIMEOUT") or 120)
                 except ValueError:
                     timeout = 120.0
+                if not timeout > 0:
+                    timeout = 120.0  # `-5` raised ValueError out of httpx, `0` read as no hub (MN65)
             try:
                 self._client = httpx.Client(
                     base_url=base_url,
@@ -236,6 +243,8 @@ class SyncClient:
         # Every non-2xx is a per-file SyncClientError the sync loop records and moves past;
         # a 409 (unreadable on hub), a 5xx or an ingress HTML page must not abort the run
         # (round C 2026-11-10, lane A F4).
+        if response.status_code == 401:
+            raise SyncAuthError("the hub rejected this device's token (revoked, or a new pairing): sync stopped")  # 9,815 lines of 401 (MN65)
         if response.status_code != 200:
             raise SyncClientError(f"{rel}: HTTP {response.status_code}: {_detail(response)}")
         return response.content, response.headers.get("X-Sextant-Sha256", "")
@@ -357,7 +366,10 @@ class SyncClient:
                 # the write; on mismatch park the hub copy as a conflict and
                 # leave the local edit live.
                 planned = (local_files.get(rel) or {}).get("sha256")
-                if apply.current_sha256(root, rel) != planned:
+                _now = apply.current_sha256(root, rel)
+                if _now is not None and _now == hashlib.sha256(content).hexdigest():
+                    continue  # already these bytes here: not a conflict (MN65)
+                if _now != planned:
                     report.parked[rel] = str(apply.quarantine(
                         root, rel, content,
                         reason="pull conflict: local file changed after planning",
@@ -371,6 +383,10 @@ class SyncClient:
                 report.denied.append(rel)
                 report.errors.append(f"{rel}: denied ({exc})")  # `denied 1` named nothing (AG47)
                 unresolved.add(rel)
+            except SyncAuthError as exc:
+                report.errors.append(str(exc))
+                unresolved.update(r for r in plan.to_pull if r not in report.pulled)
+                break
             except (apply.SyncIntegrityError, SyncClientError, OSError) as exc:
                 report.errors.append(f"{rel}: {exc}")
                 unresolved.add(rel)
@@ -436,6 +452,9 @@ class SyncClient:
                         # the user sync twice to see it (self-hoster pass 2026-11-10).
                         try:
                             content, _sha = self.fetch_file(rel)
+                            if apply.current_sha256(root, rel) == hashlib.sha256(content).hexdigest():
+                                report.conflicts.remove(rel); report.push_conflicts.remove(rel); unresolved.discard(rel)
+                                continue  # the hub holds the same bytes: converged, not a conflict (MN65)
                             report.parked[rel] = str(apply.quarantine(
                                 root, rel, content, reason="push conflict: the hub changed it too"))
                         except Exception as exc:  # noqa: BLE001
@@ -457,6 +476,9 @@ class SyncClient:
                 continue
             try:
                 content, _sha = self.fetch_file(rel)
+                if apply.current_sha256(root, rel) == hashlib.sha256(content).hexdigest():
+                    unresolved.discard(rel)
+                    continue  # both sides made the same change: converged (MN65)
                 report.parked[rel] = str(apply.quarantine(
                     root, rel, content, reason="pull conflict: both sides changed"))
                 report.conflicts.append(rel)

@@ -207,7 +207,7 @@ def _find_duplicate(fact: str, written_to: Path) -> Optional[dict]:
         from ..fts import search as fts_search
         # Extract first 6 non-stopword words as search query
         words = [
-            w for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*", fact)
+            w for w in re.findall(r"[^\W\d_][\w-]*", fact)  # every script: Cyrillic, Greek, Arabic and Hebrew facts got no hint (MN62)
             if len(w) >= 4 and w.lower() not in _STOPWORDS
         ][:6]
         bigrams = [t for t in _hint_tokens(fact) if _CJK_RE.search(t)][:4]

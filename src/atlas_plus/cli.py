@@ -26,6 +26,7 @@ app = _SextantTyper(
     help="Umbrella command: version, overview, and discovery of the whole command family.",
     invoke_without_command=True,
     no_args_is_help=False,
+    context_settings={"help_option_names": ["-h", "--help"]},  # `sextant -h` was "No such option" (MN66)
 )
 class _LazyConsole:
     """Defer rich.console import to first print: rich costs ~69ms of the
@@ -470,6 +471,8 @@ def cmd_search(
         # before init, a search must not create the state dir and an empty index (sweep 13, AG25)
         console.print(f"[yellow]No corpus yet[/yellow] at {_mr}: run sextant-init first (nothing was created).")
         raise typer.Exit(1)
+    if limit > 50:
+        console.print(f"[dim]--limit {limit} is capped at 50 results.[/dim]")  # it silently returned 50 (MN66)
     results, mode = memory_search_hybrid(query=query, scope=effective, limit=limit)
     if not results:
         from atlas_plus.mcp.memory_server import fts as _fts

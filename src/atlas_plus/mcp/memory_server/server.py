@@ -1402,6 +1402,9 @@ def main() -> None:
     logging.basicConfig(level=getattr(logging, _LOG_LEVEL, logging.WARNING), format="%(name)s %(levelname)s %(message)s")
 
     from atlas_plus.branding import product
+    if any(a.split("=", 1)[0] in ("--port", "--host") for a in sys.argv[1:]):
+        print("--port and --host are not options here: set ATLAS_MCP_PORT=<n> and ATLAS_MCP_HOST=<addr> in the environment.", file=sys.stderr)  # MN66, the sibling of the web hint
+        raise SystemExit(2)
     parser = argparse.ArgumentParser(description=f"{product()} MCP memory server")
     parser.add_argument(
         "--stdio",

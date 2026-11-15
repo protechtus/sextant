@@ -251,6 +251,15 @@ def _read_note(src: Path) -> tuple[str | None, str | None]:
 _TRUNCATED: list[str] = []  # notes cut at MAX_IMPORT_CHARS during this run, for the report (AG35)
 
 
+def _import_overhead(text: str) -> int:
+    """Characters of the frontmatter block the import wrote in front of the note (the cap counts the note: AG72, MN66)."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            return end + 4
+    return 0
+
+
 def _note_would_truncate(name: str, text: str) -> None:
     """A dry run names the notes `--yes` would cut (AG66: the plan said `truncated: []` and the cut came only after writing)."""
     if len(text) > MAX_IMPORT_CHARS:
@@ -732,7 +741,7 @@ def import_obsidian(vault: Path, scope: str, execute: bool, archive_stale: bool 
         writes.append(target.relative_to(root).as_posix())
         if not execute:
             would += 1
-            _note_would_truncate(target.name, raw)  # AG66
+            _note_would_truncate(target.name, raw.replace("\r\n", "\n").replace("\r", "\n"))  # AG66; counted after LF normalisation like the write (MN66)
             continue
         stamped = _stamp_existing_frontmatter(raw, "obsidian", rel_src, body_hash) if _has_frontmatter(raw) else None
         out_text = stamped if stamped is not None else _frontmatter_for(src.stem, "obsidian", rel_src, body_hash) + raw
@@ -930,7 +939,7 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
                         version_before_write(prior_path, root=dest_root.parents[2] if len(dest_root.parents) > 2 else dest_root.parent)
                     except Exception:  # noqa: BLE001 - a missing versions root never blocks the update
                         pass
-                    _write_lf(prior_path, text)
+                    _write_lf(prior_path, text, overhead=_import_overhead(text))
                 updated += 1
                 updated_notes.append(f"{title!r} gained turns since the last import: {prior} "
                                      + ("updated in place (version copy kept)" if execute else "would be updated in place"))
@@ -942,11 +951,11 @@ def import_chatgpt(export_file: Path, execute: bool) -> dict:
             continue
         if not execute:
             would += 1
-            _note_would_truncate(dest.name, text)  # AG66
+            _note_would_truncate(dest.name, text.replace("\r\n", "\n"))  # AG66
             continue
         target = _collision_free(dest)
         target.parent.mkdir(parents=True, exist_ok=True)
-        _write_lf(target, text)
+        _write_lf(target, text, overhead=_import_overhead(text))
         listing.setdefault(target.parent, []).append(target.name)
         imported += 1
     return {"source": "chatgpt", "planned": len(conversations),
@@ -1046,7 +1055,7 @@ def import_claude(export_file: Path, execute: bool) -> dict:
             continue
         target = _collision_free(dest)
         target.parent.mkdir(parents=True, exist_ok=True)
-        _write_lf(target, text_out)
+        _write_lf(target, text_out, overhead=_import_overhead(text_out))
         listing.setdefault(target.parent, []).append(target.name)
         imported += 1
     return {"source": "claude", "planned": len(conversations),

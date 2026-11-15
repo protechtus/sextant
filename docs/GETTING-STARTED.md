@@ -452,8 +452,9 @@ echo '{"session_id":"test-1","transcript_path":"/path/to/.claude/projects/<slug>
 ```
 
 The `session_id` must be the transcript's own `sessionId` (the file name without `.jsonl`): with any other
-value the hook finds no turns and records `summarizer_failed`. In PowerShell 5.1 the quotes inside `echo '...'`
-are mangled and the hook refuses the payload; use Git Bash for this test.
+value the hook finds no turns and records `summarizer_failed`. In PowerShell 5.1 a pipe sends text as ASCII by default,
+so an accented user folder arrives as `Jos? Q` and the hook refuses the path: run `$OutputEncoding = [Text.Encoding]::UTF8`
+first, or use Git Bash for this test.
 
 A summary lands in `sessions/<today>.md` within a minute; `sextant doctor` and the
 activity log (`<state>/logs/activity.ndjson`, events `summary_written`, `summarizer_failed`,

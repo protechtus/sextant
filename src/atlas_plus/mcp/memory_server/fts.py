@@ -125,6 +125,14 @@ _WORD_RE = re.compile("[\\w" + _MARK_CLASS + "]+")  # a word of any script with 
 _INDIC_JOINER_RE = re.compile("(?<=[\u0900-\u0dff])[\u200c\u200d]+(?=[\u0900-\u0dff])")
 
 
+_GREEK_ETC = str.maketrans({
+    "\u03ac": "\u03b1", "\u03ad": "\u03b5", "\u03ae": "\u03b7", "\u03af": "\u03b9", "\u03cc": "\u03bf", "\u03cd": "\u03c5", "\u03ce": "\u03c9",
+    "\u03ca": "\u03b9", "\u03cb": "\u03c5", "\u0390": "\u03b9", "\u03b0": "\u03c5",
+    "\u0386": "\u0391", "\u0388": "\u0395", "\u0389": "\u0397", "\u038a": "\u0399", "\u038c": "\u039f", "\u038e": "\u03a5", "\u038f": "\u03a9",
+    "\u03aa": "\u0399", "\u03ab": "\u03a5", "\u1e9e": "ss", "\u0259": "e", "\u018f": "E",
+})
+
+
 def _recompose(text: str) -> str:
     """NFKC decomposes Thai sara am (U+0E33) into nikhahit + sara aa and Lao am (U+0EB3) likewise; the index and
     the snippets then showed `ทํา` for `ทำ` and `น้ำ` met `นา` (MN52). Put them back."""
@@ -132,6 +140,8 @@ def _recompose(text: str) -> str:
         text = text.replace("\u0e4d\u0e32", "\u0e33").replace("\u0ecd\u0eb2", "\u0eb3")
     if "\u200c" in text or "\u200d" in text:
         text = _INDIC_JOINER_RE.sub("", text)  # ZWJ/ZWNJ between Indic letters are typed or not by keyboard: `राम` must meet `रा\u200dम` (MN55); between Persian letters the ZWNJ stays a separator
+    if any("\u0386" <= c <= "\u03ce" or c in "\u1e9e\u0259\u018f" for c in text):
+        text = text.translate(_GREEK_ETC)  # Greek tonos/dialytika, capital ẞ, Azeri ə: unicode61 folds none of them (MN62)
     if "\u0130" in text or "\u0131" in text:
         text = text.replace("\u0130", "i").replace("\u0131", "i")  # Turkish dotted I and dotless i: `Diyarbak\u0131r` met neither `diyarbakir` nor `D\u0130YARBAKIR` (AG72)
     if "\u0451" in text or "\u0401" in text or "\u00df" in text:
@@ -178,12 +188,28 @@ def _index_body(frontmatter_json: str, body: str) -> str:
     return text
 
 
+def _cheap_snippet(conn, rowid, query: str, width: int = 90) -> str:
+    """A snippet for a note too large for FTS5's snippet(): the first query term found, in brackets, with context."""
+    try:
+        body = conn.execute("SELECT body FROM memory_fts WHERE rowid = ?", (rowid,)).fetchone()[0] or ""
+    except Exception:  # noqa: BLE001
+        return ""
+    terms = [t for t in re.findall(r"[^\s\"()*:^+]+", query) if t.upper() not in ("AND", "OR", "NOT", "NEAR")]
+    low = body.casefold()
+    for t in terms:
+        i = low.find(t.casefold().replace(_CJK_SEP, ""))
+        if i >= 0:
+            a, b = max(0, i - width), min(len(body), i + len(t) + width)
+            return ("..." if a else "") + body[a:i] + "[" + body[i:i + len(t)] + "]" + body[i + len(t):b] + ("..." if b < len(body) else "")
+    return body[: 2 * width] + ("..." if len(body) > 2 * width else "")
+
+
 def _bigram_fallback(raw: str) -> str:
     """A looser query for a CJK sentence that matched nothing as phrases: every CJK run of three
     characters or more becomes its overlapping bigrams OR-ed together (ranked by how many the
     note shares), Latin terms stay as they are. A natural Japanese sentence found nothing
     because each run had to match whole (MN23). Empty string when it does not apply."""
-    q = unicodedata.normalize("NFKC", raw).replace(_SENTINEL, " ")
+    q = _recompose(unicodedata.normalize("NFKC", raw)).replace(_SENTINEL, " ")  # the index holds recomposed sara am: decomposed bigrams never matched (MN62)
     if not _CJK_RUN_RE.search(q):
         return ""
     long_runs = [m.group(0) for m in _CJK_RUN_RE.finditer(q) if len(m.group(0)) >= 3]
@@ -452,7 +478,7 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
-INDEX_FORMAT = "4"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72)
+INDEX_FORMAT = "5"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62)
 
 
 def _needs_rebuild() -> bool:
@@ -873,8 +899,8 @@ def search(query: str, scope: str = "", limit: int = 10,
             rows = conn.execute(
                 """
                 SELECT path,
-                       snippet(memory_fts, 2, '[', ']', '...', 20) AS snippet,
-                       rank
+                       CASE WHEN length(body) <= 60000 THEN snippet(memory_fts, 2, '[', ']', '...', 20) END AS snippet,
+                       rank, rowid
                 FROM memory_fts
                 WHERE memory_fts MATCH ?
                   AND path LIKE ? ESCAPE '|'
@@ -887,8 +913,8 @@ def search(query: str, scope: str = "", limit: int = 10,
             rows = conn.execute(
                 """
                 SELECT path,
-                       snippet(memory_fts, 2, '[', ']', '...', 20) AS snippet,
-                       rank
+                       CASE WHEN length(body) <= 60000 THEN snippet(memory_fts, 2, '[', ']', '...', 20) END AS snippet,
+                       rank, rowid
                 FROM memory_fts
                 WHERE memory_fts MATCH ?
                 ORDER BY rank
@@ -903,6 +929,8 @@ def search(query: str, scope: str = "", limit: int = 10,
         seen: dict[str, dict] = {}
         for r in rows:
             p, snip, sc = r[0], r[1], r[2]
+            if snip is None:  # a huge note: snippet() walked every hit (MN66: minutes for a common word in a 4 MB note)
+                snip = _cheap_snippet(conn, r[3], query)
             snip = (snip or "").replace(_CJK_SEP, "").replace(" " + _SENTINEL + " ", " ").replace(_SENTINEL, "")
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}

@@ -91,6 +91,7 @@ def remove_session_entry(text: str, marker_prefix: str) -> str:
     section, is left alone (MN37: a user's notes that quoted the marker were deleted). The prefix must
     end the id (`<!-- session:abc` never matches `abc-def`: AG44)."""
     import re as _re
+    text = text.lstrip("\ufeff")  # a BOM before the first heading hid the entry: every refresh wrote a duplicate (MN63: PowerShell 5.1 Set-Content -Encoding UTF8)
     pat = _re.compile(r"^## [^\n]*\n" + _re.escape(marker_prefix) + r"(?: turns:\d+)?(?: partial:\d+)? -->\n", _re.M)
     m = None
     for cand in pat.finditer(text):

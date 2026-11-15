@@ -163,7 +163,7 @@ def test_suggest_facts_dedupes_against_fact_lines_and_redacts_before_the_cut(tmp
     text = sf._load_transcript_text(since="today", conversation_id="sess-1")
     assert "sk-ant-api03-Z" not in text and "[REDACTED" in text
     marker = sf._session_done_marker("sess/../1")
-    assert marker is not None and marker.name == "sess..1.done"
+    assert marker is not None and marker.name.startswith("sess..1") and marker.name.endswith(".done")  # a workspace tag follows since MN63
 
 
 def test_suggest_facts_runs_once_per_session_and_never_auto_writes_identity(tmp_path, monkeypatch, capsys):

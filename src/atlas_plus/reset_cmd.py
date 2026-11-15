@@ -99,6 +99,12 @@ def main() -> None:
             if do_corpus:
                 print("corpus: not reset (state target unsafe; nothing was changed)")
             raise SystemExit(1)
+    if do_state and do_corpus:
+        _pre = uninstall_cmd.derived_state_refusal()
+        if _pre:  # the state step would refuse: nothing is wiped (MN66: the corpus went, the state was refused, rc 1)
+            print(f"state:  {_pre}")
+            print("corpus: not reset (the state step would refuse; nothing was changed)")
+            raise SystemExit(1)
     if do_corpus:
         refusal = uninstall_cmd.confirm_corpus_removal(args.yes, args.confirm_path)
         if refusal is not None:

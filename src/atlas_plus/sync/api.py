@@ -16,6 +16,7 @@ means every request is 401 and serving is safe by construction.
 
 from __future__ import annotations
 
+import hashlib
 import base64
 import binascii
 import os
@@ -260,7 +261,9 @@ def create_app() -> FastAPI:
                     if reason is not None:
                         raise apply.SyncPolicyError(reason)
                     current = apply.current_sha256(root, rel)
-                    if current is not None and current != base_sha:
+                    if current is not None and current == hashlib.sha256(raw).hexdigest():
+                        outcome["result"] = "applied"  # the hub already holds these bytes: two overlapping syncs made 150 fake conflicts (MN65)
+                    elif current is not None and current != base_sha:
                         parked = apply.quarantine(
                             root, rel, raw,
                             reason=f"push conflict from {device.name}: base "
@@ -330,6 +333,8 @@ def main() -> None:
         with _socket.socket(_socket.AF_INET6 if ":" in args.host else _socket.AF_INET) as _s:
             if _os.name != "nt":
                 _s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            elif hasattr(_socket, "SO_EXCLUSIVEADDRUSE"):
+                _s.setsockopt(_socket.SOL_SOCKET, _socket.SO_EXCLUSIVEADDRUSE, 1)  # a listener on 0.0.0.0 was missed (MN65)
             _s.bind((args.host, args.port))
     except OSError:
         print(f"Port {args.port} is already in use on {args.host}: another hub, or another program. Set ATLAS_SYNC_PORT to a free "
