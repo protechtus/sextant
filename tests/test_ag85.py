@@ -120,8 +120,12 @@ def test_posix_workspaces_differing_in_case_stay_two(monkeypatch):
 
 def test_unc_spellings_are_one_workspace_and_root_is_scoped():
     from atlas_plus import setup_cmd as S
+    import os
     back = "\\" * 2 + "srv" + "\\" + "share" + "\\" + "ws"
-    assert S._hook_workspace(_item(back)) == S._hook_workspace(_item("//srv/share/ws"))
-    merged = S._merge([_item(back)], [_item("//srv/share/ws")])
-    assert len(merged) == 1  # the forward-slash spelling replaced the backslash one: one Stop hook
+    if os.name == "nt":  # a share is a Windows notion; on POSIX `//home/u/ws` is an ordinary path (MN79)
+        assert S._hook_workspace(_item(back)) == S._hook_workspace(_item("//srv/share/ws"))
+        merged = S._merge([_item(back)], [_item("//srv/share/ws")])
+        assert len(merged) == 1  # the forward-slash spelling replaced the backslash one: one Stop hook
+    else:
+        assert S._hook_workspace(_item("//home/u/WS")) != S._hook_workspace(_item("//home/u/ws"))
     assert S._hook_workspace(_item("/")) != ""
