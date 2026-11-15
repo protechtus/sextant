@@ -97,9 +97,13 @@ def test_duplicate_scan_stops_at_its_budget(tmp_path, monkeypatch):
     from atlas_plus.curation import duplicates as d
     for i in range(300):
         (tmp_path / f"n{i}.md").write_text("alpha beta gamma delta epsilon zeta eta theta iota kappa " + f"w{i % 7}", encoding="utf-8")
+    import itertools, time as _t
+    _ticks = itertools.count()
+    monkeypatch.setattr(_t, "monotonic", lambda: next(_ticks) * 1.0)  # a fake clock: Windows ticks every ~15 ms, so a 1 us budget never ran out on CI
     monkeypatch.setenv("ATLAS_DUPLICATES_BUDGET_SECONDS", "0.000001")
     d.find_duplicates(memory_root=tmp_path)
     assert d._LAST_PARTIAL[1] == 300 and d._LAST_PARTIAL[0] < 300           # stopped early and said where
+    monkeypatch.undo()
     monkeypatch.setenv("ATLAS_DUPLICATES_BUDGET_SECONDS", "0")
     pairs = d.find_duplicates(memory_root=tmp_path)
     assert d._LAST_PARTIAL == [0, 0] and pairs                                  # no limit: the full scan
@@ -237,6 +241,9 @@ def test_fact_duplicate_scan_honours_the_budget(tmp_path, monkeypatch):
     from atlas_plus.curation import duplicates as d
     for i in range(200):
         (tmp_path / f"n{i}.md").write_text("\n".join(f"- the staging server alpha beta gamma delta number {i} {k}" for k in range(5)), encoding="utf-8")
+    import itertools, time as _t
+    _ticks = itertools.count()
+    monkeypatch.setattr(_t, "monotonic", lambda: next(_ticks) * 1.0)  # a fake clock: Windows ticks every ~15 ms, so a 1 us budget never ran out on CI
     monkeypatch.setenv("ATLAS_DUPLICATES_BUDGET_SECONDS", "0.000001")
     d.find_fact_duplicates(memory_root=tmp_path)
     assert d._LAST_PARTIAL[1] > 0 and d._LAST_PARTIAL[0] < d._LAST_PARTIAL[1]
