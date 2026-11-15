@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -142,6 +143,103 @@ def _next_id(project: str, tickets_root: Path) -> str:
     return f"{project[:3].upper()}-{_next_num(project, tickets_root):03d}"
 
 
+_TICKET_NAME = re.compile(r"([A-Za-z0-9]+)-(\d+)")
+_RACY_NS = 1_000_000_000  # a stamp younger than this may hide a second change in the same tick: re-read
+# Folder path -> _DirInfo, re-read only when the folder's stamp moved; a create updates its own folder's
+# entry, so N creates in one process stay linear (AG84). `.clear()` forgets it (and the high-water marks).
+_NEXT_MEMO: dict = {}
+_ARCHIVE_FULL_AT: dict = {}  # tickets root -> when every _archive folder was last stat-checked
+_ARCHIVE_RECHECK_S = 2.0
+
+
+class _DirInfo:
+    """One folder's ticket names: highest `-<n>` (anymax), highest per PREFIX, subfolders, `.prefix`."""
+    __slots__ = ("mtime", "racy", "anymax", "by_prefix", "has_md", "first", "subdirs", "marker", "fm_project")
+
+    def __init__(self, mtime: int):
+        self.mtime, self.racy, self.anymax, self.by_prefix, self.has_md = mtime, False, 0, {}, False
+        self.first, self.subdirs, self.marker, self.fm_project = "", (), "", None
+
+
+def _dir_info(path: str) -> Optional["_DirInfo"]:
+    try:
+        m = os.stat(path).st_mtime_ns
+    except OSError:
+        _NEXT_MEMO.pop(path, None)
+        return None
+    info = _NEXT_MEMO.get(path)
+    if info is not None and info.mtime == m and not info.racy:
+        return info
+    info, subs = _DirInfo(m), []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                name = e.name
+                if e.is_dir(follow_symlinks=False):
+                    if not name.startswith("."):
+                        subs.append(name)
+                elif name == ".prefix":
+                    try:
+                        with open(e.path, encoding="utf-8") as fh:
+                            info.marker = re.sub(r"[^A-Za-z0-9]", "", fh.read(64)).upper()
+                    except (OSError, ValueError):
+                        pass
+                elif name.endswith(".md") and not name.startswith("_"):
+                    info.has_md = True
+                    info.first = min(info.first or name, name)
+                    a, p = re.search(r"-(\d+)", name[:-3]), _TICKET_NAME.match(name)
+                    if a:
+                        info.anymax = max(info.anymax, int(a.group(1)))
+                    if p:
+                        k = p.group(1).upper()
+                        info.by_prefix[k] = max(info.by_prefix.get(k, 0), int(p.group(2)))
+    except OSError:
+        return None
+    info.subdirs, info.racy = tuple(sorted(subs)), (time.time_ns() - m) < _RACY_NS
+    _NEXT_MEMO[path] = info
+    return info
+
+
+def _snapshot(tickets_root: Path) -> list:
+    """[(kind, path, name, info)]: the root ("root"), each live project folder ("project") and its
+    non-underscore subfolders ("live"), every one stat-checked now."""
+    top = str(tickets_root)
+    rinfo = _dir_info(top)
+    out: list = [("root", top, os.path.basename(top), rinfo)] if rinfo else []
+    stack = [(os.path.join(top, n), n, "project") for n in (rinfo.subdirs if rinfo else ()) if not n.startswith("_")]
+    while stack:
+        p, base, k = stack.pop()
+        info = _dir_info(p)
+        if info is not None:
+            out.append((k, p, base, info))
+            stack += [(os.path.join(p, s), s, "live") for s in info.subdirs if not s.startswith("_")]
+    return out
+
+
+def _archive_dirs(tickets_root: Path, project: str, prefix: str) -> list:
+    """Every ``_archive`` folder at any depth. ``_archive``, folders named after the project, folders
+    holding this prefix and folders not seen before are stat-checked on every call, the rest every
+    _ARCHIVE_RECHECK_S seconds (hundreds of archive folders cost one stat each per create otherwise);
+    a ticket moved into a skipped folder was counted where it lived (the high-water mark in _next_num)."""
+    root = str(tickets_root)
+    now = time.monotonic()
+    full = now - _ARCHIVE_FULL_AT.get(root, -1e9) >= _ARCHIVE_RECHECK_S
+    if full:
+        _ARCHIVE_FULL_AT[root] = now
+    key, want, out = prefix.upper(), os.path.normcase(project), []
+    stack = [(os.path.join(root, "_archive"), "_archive")]
+    while stack:
+        p, base = stack.pop()
+        info = _NEXT_MEMO.get(p)
+        if full or info is None or info.racy or key in info.by_prefix or base in ("_archive",) \
+                or os.path.normcase(base) == want:
+            info = _dir_info(p)
+        if info is not None:
+            out.append(("archive", p, base, info))
+            stack += [(os.path.join(p, s), s) for s in info.subdirs]
+    return out
+
+
 def _prefix_for(project: str, tickets_root: Path) -> str:
     """The id prefix of a project: its first three letters unless another project already owns
     them, then as many letters as make it unique (`PROJ1`), remembered in `<project>/.prefix`.
@@ -180,6 +278,18 @@ def _prefix_for(project: str, tickets_root: Path) -> str:
             taken.add(other)
     except OSError:
         pass
+    own = _dir_info(str(pdir)) if legacy else None
+    inherited = next(iter(own.by_prefix)) if own and len(own.by_prefix) == 1 else default
+    if inherited != default and inherited not in taken:
+        if own.fm_project is None:
+            t = _parse_ticket(pdir / own.first)
+            own.fm_project = (t.project if t else "") or ""
+        if own.fm_project and own.fm_project != project:
+            try:  # a renamed folder (its tickets name another project) keeps their prefix: not two (AG86)
+                marker.write_text(inherited + "\n", encoding="utf-8")
+            except OSError:
+                pass
+            return inherited
     if legacy and default not in taken:
         return default  # legacy project: its ids are already minted with these letters
     cand, k = default, 3
@@ -199,74 +309,39 @@ def _prefix_for(project: str, tickets_root: Path) -> str:
     return cand
 
 
-_NEXT_MEMO: dict[tuple[str, str], tuple[tuple, int]] = {}  # (root, project) -> (folder stamps, highest number seen)
-
-
-def _tree_sig(project: str, tickets_root: Path) -> tuple:
-    """Modification stamps of every folder whose entries decide the next number: the project folder,
-    ``_archive`` and the ``_archive`` folders named after the project one and two levels down. Adding,
-    removing or moving a ticket file changes its folder's stamp (AG84)."""
-    sig: list = []
-    for d in (tickets_root / project, tickets_root / "_archive"):
-        try:
-            sig.append(os.stat(d).st_mtime_ns)
-        except OSError:
-            sig.append(None)
-    try:
-        with os.scandir(tickets_root / "_archive") as it:
-            for e in it:
-                if not e.is_dir(follow_symlinks=False):
-                    continue
-                p = e.path if e.name == project else os.path.join(e.path, project)
-                try:
-                    sig.append((e.name, os.stat(p).st_mtime_ns))
-                except OSError:
-                    pass
-    except OSError:
-        pass
-    return tuple(sig)
-
-
 def _next_num(project: str, tickets_root: Path) -> int:
-    """The next free number. The scan reads every ticket name of the project and its archive; in one
-    process (the MCP server, the dashboard, a bulk import) every create repeated it, so N creates cost
-    N^2/2 directory entries (AG84: 6 ms per create at 1,000 tickets, 17 ms at 4,000). The result is
-    remembered with the folders' stamps and reused while none of them changed; create_ticket's
-    O_EXCL claim still decides, so a number is never taken twice."""
-    key = (str(tickets_root), project)
-    sig = _tree_sig(project, tickets_root)
-    memo = _NEXT_MEMO.get(key)
-    if memo is not None and memo[0] == sig:
-        return memo[1] + 1
-    n = _scan_next_num(project, tickets_root)
-    _NEXT_MEMO[key] = (sig, n - 1)
-    return n
+    """The next free number: above any ticket file of the project folder, any ticket in an ``_archive``
+    folder named after the project, and every `PREFIX-<n>` anywhere else, live or archived, at any
+    depth: a new folder under a renamed project's old name continued nothing and reissued its ids
+    (MN73 F7). The highest number seen is kept per project, so a ticket moved out of sight is not
+    issued again; create_ticket's O_EXCL claim still decides in the project folder."""
+    prefix = _prefix_for(project, tickets_root)
+    key, own_key = prefix.upper(), os.path.normcase(str(tickets_root / project))
+    best = 0
+    for kind, p, name, info in _snapshot(tickets_root) + _archive_dirs(tickets_root, project, prefix):
+        v = info.by_prefix.get(key, 0)
+        if (kind == "project" and os.path.normcase(p) == own_key) or (
+                kind == "archive" and os.path.normcase(name) == os.path.normcase(project)):
+            v = max(v, info.anymax)
+        best = max(best, v)
+    hk = ("high", str(tickets_root), os.path.normcase(project), key)
+    _NEXT_MEMO[hk] = best = max(best, _NEXT_MEMO.get(hk, 0))
+    return best + 1
 
 
-def _scan_next_num(project: str, tickets_root: Path) -> int:
-    project_dir = tickets_root / project
-    existing = []
-    if project_dir.exists():
-        for f in project_dir.glob("*.md"):
-            if f.name.startswith("_"):
-                continue
-            m = re.search(r"-(\d+)", f.stem)
-            if m:
-                existing.append(int(m.group(1)))
-    # IDs never recycle: archived tickets keep their numbers reserved, else a
-    # cleared queue restarts at 001 and new tickets shadow archived history.
-    archive = tickets_root / "_archive"
-    if archive.exists():
-        _flat = re.compile(rf"{re.escape(_prefix_for(project, tickets_root))}-\d+", re.I)
-        for f in archive.rglob("*.md"):
-            if f.name.startswith("_"):
-                continue
-            if f.parent.name != project and not (_flat and f.parent == archive and _flat.match(f.stem)):
-                continue  # a ticket dropped straight into _archive/ had its number issued again (MN73)
-            m = re.search(r"-(\d+)", f.stem)
-            if m:
-                existing.append(int(m.group(1)))
-    return max(existing, default=0) + 1
+def _remember_own_create(project: str, tickets_root: Path, prefix: str, n: int, name: str) -> None:
+    """Our own file moved the project folder's stamp: record it instead of re-reading the folder."""
+    hk = ("high", str(tickets_root), os.path.normcase(project), prefix.upper())
+    _NEXT_MEMO[hk] = max(_NEXT_MEMO.get(hk, 0), n)
+    p = str(tickets_root / project)
+    info = _NEXT_MEMO.get(p)
+    try:
+        info.mtime, info.racy = os.stat(p).st_mtime_ns, False  # O_EXCL guards this folder itself
+    except (OSError, AttributeError):
+        _NEXT_MEMO.pop(p, None)
+        return
+    info.has_md, info.anymax, info.first = True, max(info.anymax, n), min(info.first or name, name)
+    info.by_prefix[prefix.upper()] = max(info.by_prefix.get(prefix.upper(), 0), n)
 
 
 # Windows device names: a project directory called "nul" or "CON" is not a directory.
@@ -453,6 +528,28 @@ def ambiguous_hint() -> str:
     return f"ticket id {LAST_AMBIGUOUS['id']!r} names several tickets: use one of " + ", ".join(LAST_AMBIGUOUS["choices"])
 
 
+def ticket_folder(t: "Ticket", tickets_root: Optional[Path] = None) -> str:
+    """The project folder a ticket file lives in (its first path part under the tickets root), else
+    its frontmatter project. A renamed folder's tickets keep the old name in their frontmatter, so a
+    `project/ID` reference built from `t.project` named another ticket or none (AG86)."""
+    root = tickets_root or TICKETS_ROOT
+    try:
+        parts = Path(t.path).relative_to(root).parts
+    except (TypeError, ValueError):
+        parts = ()
+    return parts[0] if len(parts) > 1 else (getattr(t, "project", "") or "")
+
+
+def ticket_ref(t: "Ticket", tickets_root: Optional[Path] = None) -> str:
+    """`folder/ID` for a ticket in a project folder, the bare id for one at the root."""
+    folder = ticket_folder(t, tickets_root)
+    try:
+        at_root = Path(t.path).parent == Path(tickets_root or TICKETS_ROOT)
+    except TypeError:
+        at_root = False
+    return t.id if at_root or not folder else f"{folder}/{t.id}"
+
+
 def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[Ticket]:
     """Return a Ticket by ID (e.g. 'ATL-007'), or None if not found.
 
@@ -469,10 +566,11 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
         root = root / proj
     if not root.exists():
         return None
+    _want = ticket_id.upper()  # ids are minted upper case: `show alp-001` said "not found" where the dashboard found it (AG86)
     direct = root / f"{ticket_id}.md"
     if "/" not in ticket_id and direct.is_file():
         t = _parse_ticket(direct)
-        if t and t.id == ticket_id:
+        if t and str(t.id).upper() == _want:
             return t  # a bare id names the ROOT-level ticket first when a folder holds the same id (AG49)
     _found: list = []
     for f in _walk_live_ticket_files(root):
@@ -481,20 +579,14 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
         if f.stem.upper() != ticket_id.upper() and not f.stem.upper().startswith(ticket_id.upper() + "-"):
             continue
         t = _parse_ticket(f)
-        if t and t.id == ticket_id:
+        if t and str(t.id).upper() == _want:
             _found.append(t)
     if len(_found) > 1 and "/" not in ticket_id:
         # a bare id that names a ticket in several project folders would act on whichever the walk met first
         # (MN56: a status change rewrote an arbitrary one); the caller gets the qualified ids to choose from
         LAST_AMBIGUOUS["id"] = ticket_id
-        def _folder(t):
-            try:
-                parts = Path(t.path).relative_to(root).parts
-            except (TypeError, ValueError):
-                parts = ()
-            return parts[0] if len(parts) > 1 else (getattr(t, "project", "") or "?")
         # a renamed folder's tickets keep their frontmatter project: the hint named one folder twice (MN73)
-        LAST_AMBIGUOUS["choices"] = sorted(f"{_folder(t)}/{t.id}" for t in _found)
+        LAST_AMBIGUOUS["choices"] = sorted(f"{ticket_folder(t, root) or '?'}/{t.id}" for t in _found)
         return None
     return _found[0] if _found else None
 
@@ -591,7 +683,7 @@ def create_ticket(
             pass
         raise
     ticket.path = dest
-    _NEXT_MEMO[(str(root), project)] = (_tree_sig(project, root), n)  # our own file changed the folder stamp (AG84)
+    _remember_own_create(project, root, prefix, n, dest.name)  # our own file changed the folder stamp (AG84)
     try:
         from atlas_plus import activity
         activity.record("tickets", "ticket_created", ticket_id=ticket_id,
@@ -682,9 +774,9 @@ def update_ticket_status(
     _atomic_write_text(t.path, new_text)
     try:
         from atlas_plus import activity
-        activity.record("tickets", "ticket_status", ticket_id=ticket_id,
+        activity.record("tickets", "ticket_status", ticket_id=t.id,
                         status=status, project=t.project,
-                        ref=f"tickets/{t.project}/{ticket_id}.md")
+                        ref=f"tickets/{ticket_folder(t, tickets_root)}/{t.id}.md")  # the file's own folder (AG86)
     except Exception:
         pass
     return t

@@ -4046,7 +4046,8 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
         if _ah():  # one id in two projects: the first match was dispatched and neither status changed (MN64)
             raise HTTPException(status_code=409, detail=_ah())
         raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} not found")
-    _ref = f"{ticket.project}/{ticket.id}" if getattr(ticket, "project", "") else ticket.id
+    from atlas_plus.tickets.store import ticket_ref as _tref
+    _ref = _tref(ticket)  # the folder it lives in: a renamed folder's frontmatter project set ANOTHER ticket in-progress (AG86)
 
     instruction = body.get("instruction") or f"{ticket.title}\n\n{getattr(ticket, 'body', '') or ''}"
     instruction = instruction.strip()[:2000]

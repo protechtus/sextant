@@ -96,7 +96,10 @@ def cmd_show(ticket_id: str = typer.Argument(...)):
         raise typer.Exit(1)
 
     console.print(f"\n[bold cyan]{t.id}[/bold cyan]  {_clean(t.title)}")
-    console.print(f"Project: {t.project}  |  Status: {t.status}  |  Assignee: {t.assignee}  |  Effort: {t.effort}")
+    from atlas_plus.tickets.store import ticket_folder as _tf
+    _fold = _tf(t)
+    _where = f" (folder {_fold}/)" if _fold and _fold != t.project else ""  # a renamed folder: say where the file is (AG86)
+    console.print(f"Project: {t.project}{_where}  |  Status: {t.status}  |  Assignee: {t.assignee}  |  Effort: {t.effort}")
     if t.requires:
         console.print(f"Requires: {t.requires}")
     console.print(f"Updated: {t.updated}\n")

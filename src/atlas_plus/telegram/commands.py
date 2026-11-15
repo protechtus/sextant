@@ -32,6 +32,13 @@ def _args(context: ContextTypes.DEFAULT_TYPE) -> list[str]:
     return context.args or []
 
 
+def _ticket_arg(raw: str) -> str:
+    """`beta/alp-001` -> `beta/ALP-001`: only the id is upper-cased; `.upper()` on the whole argument
+    turned the folder into `BETA`, which does not exist on a case-sensitive file system (AG86)."""
+    proj, sep, tid = raw.rpartition("/")
+    return f"{proj}/{tid.upper()}" if sep else tid.upper()
+
+
 async def _reply_long(
     update: Update,
     text: str,
@@ -186,7 +193,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Usage: /done <ticket-id>")
         return
 
-    ticket_id = args[0].upper()
+    ticket_id = _ticket_arg(args[0])
     try:
         from atlas_plus.tickets.store import update_ticket_status
         from .notify import push_job_done
@@ -194,8 +201,8 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"*{t.id}* marked done.", parse_mode="Markdown")
         if t.assignee == "claude-code":
             await push_job_done(t.id, t.title)
-    except FileNotFoundError:
-        await update.message.reply_text(f"Ticket `{ticket_id}` not found.")
+    except FileNotFoundError as e:
+        await update.message.reply_text(str(e) or f"Ticket `{ticket_id}` not found.")  # an ambiguous id names its choices (AG86)
     except ValueError as e:
         await update.message.reply_text(f"Error: {e}")
 
@@ -214,7 +221,7 @@ async def cmd_priority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    ticket_id = args[0].upper()
+    ticket_id = _ticket_arg(args[0])
     new_priority = args[1].lower()
     valid = {"critical", "high", "normal", "low"}
     if new_priority not in valid:
@@ -230,7 +237,9 @@ async def cmd_priority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         t = get_ticket(ticket_id)
         if t is None:
-            await update.message.reply_text(f"Ticket `{ticket_id}` not found.", parse_mode="Markdown")
+            from atlas_plus.tickets.store import ambiguous_hint as _ah
+            _h = _ah()  # "not found" for an id two folders hold sent the operator looking for a typo (AG86)
+            await update.message.reply_text(_h or f"Ticket `{ticket_id}` not found.", parse_mode=None if _h else "Markdown")
             return
 
         old_priority = t.priority
@@ -253,7 +262,7 @@ async def cmd_status_update(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Usage: /status <ticket-id> <new-status>")
         return
 
-    ticket_id = args[0].upper()
+    ticket_id = _ticket_arg(args[0])
     new_status = args[1].lower()
 
     try:
@@ -2117,16 +2126,16 @@ async def cmd_ticket_status(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Usage: /ticketstatus <ticket-id>  (e.g. /ticketstatus ATL-007)")
         return
 
-    ticket_id = args[0].upper()
+    ticket_id = _ticket_arg(args[0])
     try:
-        from atlas_plus.tickets.store import list_tickets
-        ticket = next((t for t in list_tickets() if t.id == ticket_id), None)
+        from atlas_plus.tickets.store import get_ticket, ambiguous_hint
+        ticket = get_ticket(ticket_id)  # the first list match answered for an id two folders hold (AG86)
     except Exception as exc:
         await update.message.reply_text(f"Error loading ticket: {exc}")
         return
 
     if not ticket:
-        await update.message.reply_text(f"Ticket {ticket_id} not found.")
+        await update.message.reply_text(ambiguous_hint() or f"Ticket {ticket_id} not found.")
         return
 
     # Status emoji
@@ -2144,13 +2153,13 @@ async def cmd_ticket_status(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # Find linked Brain task (session_id = "ticket-{ID}")
     try:
         from atlas_plus.brain import tasks as task_store
-        session_id = f"ticket-{ticket_id}"
+        session_id = f"ticket-{ticket.id}"  # dispatch names the session by the bare id; `beta/ALP-001` never matched (AG86)
         all_tasks = task_store.list_tasks(limit=50)
         # Also check active tasks
         all_tasks += task_store.list_tasks(status="running", limit=20)
         linked = [t for t in all_tasks if t.session_id == session_id]
         # Also check verify tasks
-        vsession_id = f"verify-ticket-{ticket_id}"
+        vsession_id = f"verify-ticket-{ticket.id}"
         verify_tasks = [t for t in task_store.list_tasks(limit=50) if t.session_id == vsession_id]
 
         if linked:
