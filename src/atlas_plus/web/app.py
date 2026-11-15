@@ -4226,7 +4226,7 @@ async def ticket_detail(ticket_id: str, request: Request):
         f'<pre class="mt-1 text-slate-400 bg-slate-900 p-2 rounded overflow-auto max-h-48 '
         f'whitespace-pre-wrap text-xs">{escaped_body}</pre>'
         f'<div class="mt-2 flex gap-2 flex-wrap">'
-        f'<button onclick="dispatchTicketToBrain({_js_arg((ticket.project + "/" + ticket.id) if getattr(ticket, "project", "") else ticket.id)},{_js_arg(ticket.title)},{_js_arg(body_text[:300])})" '  # the qualified ref, like Start/Done/Block (MN64)
+        f'<button onclick="dispatchTicketToBrain({_js_arg(_tref(ticket))},{_js_arg(ticket.title)},{_js_arg(body_text[:300])})" '  # the folder the file is in, like Start/Done/Block: the frontmatter project of a renamed folder was 404 or ANOTHER ticket (MN83)
         f'class="btn btn-cyan text-xs">Dispatch to Brain</button>'
         f'<button onclick="updateTicket({_js_arg(_tref(ticket))},\'in-progress\')" '
         f'class="btn btn-yellow text-xs">Start</button>'

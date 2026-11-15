@@ -168,6 +168,10 @@ def main() -> None:
         cmd_loop_status,
         cmd_exhausted,
     )
+    try:  # the SLCene tip line is a private module, left out of the public build (public_exclude.txt)
+        from .slcene_tip import cmd_slc
+    except ImportError:
+        cmd_slc = None
     from .commands import cmd_dispatch_plan, cmd_recent_tasks, cmd_system_health, cmd_research_gaps, cmd_gap_report, cmd_decay_report, cmd_ticket_sync, cmd_ticket_health
     from telegram import Update
     from telegram.ext import ContextTypes, MessageHandler, filters
@@ -203,6 +207,7 @@ def main() -> None:
         ("remember", cmd_remember),
         ("task", cmd_task),
         ("inbox", cmd_inbox),
+        *([("slc", cmd_slc)] if cmd_slc else []),  # SLCene tip line (2026-11-15): /slc <link or text>; private
         ("inspire", cmd_inspire),
         ("taskstatus", cmd_taskstatus),
         ("tasks", cmd_tasks),

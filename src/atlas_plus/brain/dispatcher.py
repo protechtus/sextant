@@ -73,7 +73,17 @@ def dispatch_ticket(ticket) -> Optional[object]:
     if ticket.assignee not in _DISPATCHABLE_ASSIGNEES:
         return None
 
-    session_id = f"ticket-{ticket.id.upper()}"
+    # An id two folders hold (a renamed folder and a restored copy) goes out as `folder/ID`, as the dashboard and
+    # Telegram send it (MN79): the bare id set neither in-progress, skipped the other one, and closed neither (MN83)
+    _ref = ticket.id.upper()
+    try:
+        from atlas_plus.tickets.store import get_ticket as _get, ticket_ref as _tref, LAST_AMBIGUOUS as _la
+        if _get(ticket.id) is None and _la.get("choices"):
+            _ref = _tref(ticket)
+        _la.clear()
+    except Exception:  # noqa: BLE001 - the bare id, as before
+        pass
+    session_id = f"ticket-{_ref}"
 
     # Avoid double-dispatch: skip if active task already exists for this ticket
     if _active_task_exists(session_id):
@@ -111,7 +121,7 @@ def dispatch_ticket(ticket) -> Optional[object]:
     # Mark the ticket in-progress so it doesn't get re-dispatched
     try:
         from atlas_plus.tickets.store import update_ticket_status
-        update_ticket_status(ticket.id, "in-progress")
+        update_ticket_status(_ref, "in-progress")
     except Exception as exc:
         log.warning("Failed to set ticket %s to in-progress: %s", ticket.id, exc)
 
