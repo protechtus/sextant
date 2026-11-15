@@ -153,6 +153,7 @@ while the summarizer uses a cloud one:
 | --- | --- | --- |
 | `ATLAS_SYNC_HUB` | -- | Hub URL this device syncs against. |
 | `ATLAS_DUPLICATES_BUDGET_SECONDS` | `60` | Seconds the duplicate scan (`review duplicates`, the weekly report, the dashboard's curation panel) may run before it stops with the strongest pairs found so far and says so; `0` = no limit. |
+| `ATLAS_DUPLICATES_EXACT` | off | `on` makes the file-level duplicate scan exact on every corpus. By default a corpus whose notes share one vocabulary (the exact walk would touch more than `ATLAS_DUPLICATES_EXACT_WORK` posting entries, default 8,000,000; `0` = always) takes its candidate pairs from MinHash bands: similarities are exact, a pair at the threshold is found with probability 99% or more. |
 | `ATLAS_SYNC_TIMEOUT` | `120` | Seconds the sync client waits for the hub. A hub hashing a large corpus for the first time can take more than 30 s to answer its manifest. |
 | `ATLAS_SYNC_SHARE` | -- | Comma-separated corpus prefixes this system agrees to exchange with the hub (`reference/sip/,projects/x/`); same as repeatable `--share`. Required when the hub pairs you as a federation peer; nothing outside it is read, sent or pulled. |
 | `ATLAS_SYNC_MANIFEST_TTL` | code default | Seconds the hub caches its corpus manifest. |

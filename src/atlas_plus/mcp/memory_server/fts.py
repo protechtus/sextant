@@ -863,6 +863,45 @@ def _fts_delete(conn: sqlite3.Connection, rel: str, rowid) -> None:
     conn.execute("DELETE FROM memory_fts WHERE path=?", (rel,))
 
 
+_NOTICE_MIN_NOTES = 200   # fewer changed notes than this re-index in well under a second: no notice
+_LAST_INDEX_WORK: dict = {}  # what the last search's freshness step did, when it was a long one (AG84)
+
+
+def _notice(msg: str) -> None:
+    """One line on stderr (the CLI's terminal, the MCP server's and the dashboard's log): the first search
+    on a large corpus waited a minute in silence (AG84: 53 s on 10,000 notes, nothing printed)."""
+    log.info(msg)
+    try:
+        if sys.stderr is not None:
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def _noticed_rebuild(reason: str) -> int:
+    """rebuild(force=True) from the search path, announced when the corpus is large enough to wait for."""
+    try:
+        total = sum(1 for _ in _walk_memory_stats())  # a stat walk: a fraction of the rebuild's reads
+    except OSError:
+        total = 0
+    loud = total >= _NOTICE_MIN_NOTES
+    if loud:
+        _notice(f"Sextant: building the search index for {total:,} notes ({reason}); this runs once and can take a minute.")
+    t0 = time.monotonic()
+    n = max(rebuild(force=True), 0)
+    secs = round(time.monotonic() - t0, 1)
+    if loud:
+        _LAST_INDEX_WORK.update(kind="rebuild", reason=reason, notes=n, seconds=secs)
+        _notice(f"Sextant: search index built: {n:,} notes in {secs} s.")
+    return n
+
+
+def last_index_work() -> dict:
+    """{kind, reason, notes, seconds} when the last search rebuilt the index or re-indexed many notes, else {}."""
+    return dict(_LAST_INDEX_WORK)
+
+
 def update_incremental() -> int:
     """Bring the index up to date by touching ONLY changed files.
 
@@ -883,12 +922,12 @@ def update_incremental() -> int:
     finally:
         conn.close()
     if empty:
-        return max(rebuild(force=True), 0)
+        return _noticed_rebuild("the index is new")
     _fmt = _index_format_tag()
     if _fmt is not None and _fmt != INDEX_FORMAT:
         with _rebuild_lock:  # re-entrant: a concurrent search may have rebuilt while we waited (AG60: four searches made four full rebuilds)
             if _index_format_tag() != INDEX_FORMAT:
-                return max(rebuild(force=True), 0)  # a normalisation change re-indexes every note once; the tag was read by the rebuild command only (MN46)
+                return _noticed_rebuild("this version indexes text differently")  # a normalisation change re-indexes every note once; the tag was read by the rebuild command only (MN46)
 
     with _rebuild_lock:
         conn = _connect()
@@ -901,15 +940,20 @@ def update_incremental() -> int:
             now = time.time()
             changed = 0
             seen: set[str] = set()
+            # (mtime, size) pair: mtime alone misses a same-mtime rewrite
+            # on coarse-timestamp mounts (SMB, some Docker volumes) --
+            # expert review 2026-09-27. Size catches the common case;
+            # a same-size same-mtime rewrite remains theoretically
+            # invisible until the next real change.
+            todo = []
             for rel, mtime, size in _walk_memory_stats():
                 seen.add(rel)
-                # (mtime, size) pair: mtime alone misses a same-mtime rewrite
-                # on coarse-timestamp mounts (SMB, some Docker volumes) --
-                # expert review 2026-09-27. Size catches the common case;
-                # a same-size same-mtime rewrite remains theoretically
-                # invisible until the next real change.
-                if db_state.get(rel) == (mtime, size):
-                    continue
+                if db_state.get(rel) != (mtime, size):
+                    todo.append((rel, mtime, size))
+            _t0 = time.monotonic()
+            if len(todo) >= _NOTICE_MIN_NOTES:  # a pull, sync or restore re-indexes thousands of notes: say so before the wait (AG84)
+                _notice(f"Sextant: re-indexing {len(todo):,} changed notes for search; this runs once.")
+            for rel, mtime, size in todo:
                 try:
                     raw = (MEMORY_ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
                 except OSError:
@@ -937,6 +981,9 @@ def update_incremental() -> int:
                 )
                 conn.commit()
                 log.info("FTS incremental update: %d row(s) changed", changed)
+            if len(todo) >= _NOTICE_MIN_NOTES:
+                _LAST_INDEX_WORK.update(kind="update", reason="notes changed since the last search",
+                                        notes=len(todo), seconds=round(time.monotonic() - _t0, 1))
             return changed
         finally:
             conn.close()
@@ -1150,6 +1197,8 @@ def search(query: str, scope: str = "", limit: int = 10,
     # letting OperationalError escape a SEARCH call.
     global _last_fresh_sweep, _swept_gen
     now = time.monotonic()
+    if not _healed and not _fallback_stage:
+        _LAST_INDEX_WORK.clear()  # per search: the field names this search's wait only
     if _swept_gen != _dirty_gen or now - _last_fresh_sweep >= _freshness_window():
         gen_before = _dirty_gen
         try:

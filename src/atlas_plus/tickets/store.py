@@ -157,7 +157,12 @@ def _prefix_for(project: str, tickets_root: Path) -> str:
         pass
     base = re.sub(r"[^A-Za-z0-9]", "", project).upper() or "TKT"
     default = base[:3]
-    legacy = pdir.is_dir() and any(f.suffix == ".md" and not f.name.startswith("_") for f in pdir.iterdir())
+    legacy = False
+    try:
+        with os.scandir(pdir) as _it:  # stops at the first ticket: iterdir() listed the whole folder per create (AG84)
+            legacy = any(os.path.splitext(e.name)[1] == ".md" and not e.name.startswith("_") for e in _it)
+    except OSError:
+        legacy = False
     taken: set[str] = set()
     try:
         for d in tickets_root.iterdir():
@@ -194,7 +199,51 @@ def _prefix_for(project: str, tickets_root: Path) -> str:
     return cand
 
 
+_NEXT_MEMO: dict[tuple[str, str], tuple[tuple, int]] = {}  # (root, project) -> (folder stamps, highest number seen)
+
+
+def _tree_sig(project: str, tickets_root: Path) -> tuple:
+    """Modification stamps of every folder whose entries decide the next number: the project folder,
+    ``_archive`` and the ``_archive`` folders named after the project one and two levels down. Adding,
+    removing or moving a ticket file changes its folder's stamp (AG84)."""
+    sig: list = []
+    for d in (tickets_root / project, tickets_root / "_archive"):
+        try:
+            sig.append(os.stat(d).st_mtime_ns)
+        except OSError:
+            sig.append(None)
+    try:
+        with os.scandir(tickets_root / "_archive") as it:
+            for e in it:
+                if not e.is_dir(follow_symlinks=False):
+                    continue
+                p = e.path if e.name == project else os.path.join(e.path, project)
+                try:
+                    sig.append((e.name, os.stat(p).st_mtime_ns))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return tuple(sig)
+
+
 def _next_num(project: str, tickets_root: Path) -> int:
+    """The next free number. The scan reads every ticket name of the project and its archive; in one
+    process (the MCP server, the dashboard, a bulk import) every create repeated it, so N creates cost
+    N^2/2 directory entries (AG84: 6 ms per create at 1,000 tickets, 17 ms at 4,000). The result is
+    remembered with the folders' stamps and reused while none of them changed; create_ticket's
+    O_EXCL claim still decides, so a number is never taken twice."""
+    key = (str(tickets_root), project)
+    sig = _tree_sig(project, tickets_root)
+    memo = _NEXT_MEMO.get(key)
+    if memo is not None and memo[0] == sig:
+        return memo[1] + 1
+    n = _scan_next_num(project, tickets_root)
+    _NEXT_MEMO[key] = (sig, n - 1)
+    return n
+
+
+def _scan_next_num(project: str, tickets_root: Path) -> int:
     project_dir = tickets_root / project
     existing = []
     if project_dir.exists():
@@ -532,6 +581,7 @@ def create_ticket(
             pass
         raise
     ticket.path = dest
+    _NEXT_MEMO[(str(root), project)] = (_tree_sig(project, root), n)  # our own file changed the folder stamp (AG84)
     try:
         from atlas_plus import activity
         activity.record("tickets", "ticket_created", ticket_id=ticket_id,

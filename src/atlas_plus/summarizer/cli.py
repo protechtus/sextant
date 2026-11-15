@@ -354,6 +354,25 @@ def main(
             _event("summarizer_skipped", reason="another run for this session is in progress", conversation_id=conversation_id or "")  # it left no trace (MN57)
             raise typer.Exit(0)  # four Stops in one second each paid for the model (MN33)
 
+    # --- 0. Nothing new? Decided from the bytes written since the last Stop (AG84) ---
+    if conversation_id and source == "claude-code" and not since and not until:
+        from .loader import count_session_turns, single_transcript
+        _one = single_transcript()
+        if _one is not None:
+            from atlas_plus import paths as _ap0
+            try:
+                _n = count_session_turns(_one, conversation_id, _ap0.state_dir() / "summarizer" / f"offsets-{safe_id}.json")
+            except OSError:
+                _n = None
+            if _n is not None and _n > 0:
+                if _gave_up(safe_id, _n):
+                    console.print(f"[yellow]Session {conversation_id} failed to summarise three times at {_n} turns; waiting for new turns.[/yellow]")
+                    _event("summarizer_skipped", reason="gave up until the session grows", conversation_id=conversation_id or "")
+                    raise typer.Exit(0)
+                if prior_turns is not None and prior_turns > 0 and _n - prior_turns < _min_new_turns():
+                    console.print(f"[yellow]Session {conversation_id} is summarised at {prior_turns} turns and has {_n} now: nothing new.[/yellow]")
+                    raise typer.Exit(0)
+
     # --- 1. Load ---
     console.print(f"Loading turns (source={source}, since={since})...")
     try:

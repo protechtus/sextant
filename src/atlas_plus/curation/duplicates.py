@@ -26,6 +26,70 @@ _NON_CURATABLE_DIRS = EXCLUDED_DIRS | {
 _MAX_FILE_PAIRS = 500  # the report shows a handful; snippets for more than this are wasted reads (AG32)
 _LAST_CAPPED = False   # True when the last file-level scan found more pairs than the cap (AG42: the count read as a total)
 _LAST_PARTIAL = [0, 0]  # [notes scanned, notes total] when the last scan stopped at its time budget (AG75)
+# AG84: on a shared vocabulary every rare-first prefix token still sits in thousands of notes, so the exact
+# prefix walk is quadratic (2,500 / 5,000 / 10,000 / 20,000 notes: 2 / 7 / 26 / ~100 s). The walk's size is
+# known before it starts (the posting entries its prefixes touch); above this many the candidates come from
+# MinHash banding instead. Every similarity shown is still the exact Jaccard; only recall is probabilistic.
+_EXACT_MAX_WORK = 8_000_000  # about 3 s of exact walk (0.37 us per posting entry, measured)
+_LSH_RECALL = 0.99      # chance that a pair AT the threshold becomes a candidate (higher pairs: more)
+_LAST_APPROX = [False]  # True when the last file-level scan used the MinHash candidates
+
+
+def _exact_max_work() -> int:
+    """-1 = always exact (ATLAS_DUPLICATES_EXACT=on); else the posting-entry bound, which
+    ATLAS_DUPLICATES_EXACT_WORK overrides (0 = always the banded candidates)."""
+    import os as _os
+    if _os.environ.get("ATLAS_DUPLICATES_EXACT", "").strip().lower() in ("1", "on", "true", "yes"):
+        return -1
+    try:
+        return max(0, int(_os.environ.get("ATLAS_DUPLICATES_EXACT_WORK") or _EXACT_MAX_WORK))
+    except ValueError:
+        return _EXACT_MAX_WORK
+
+
+def _lsh_shape(threshold: float) -> tuple[int, int]:
+    """(rows per band, bands) so that a pair with Jaccard == threshold collides in some band with
+    probability >= _LSH_RECALL: P = 1 - (1 - J**r) ** b."""
+    import math
+    t = min(max(threshold, 0.05), 0.99)
+    r = 2 if t < 0.3 else 3 if t < 0.55 else 4 if t < 0.75 else 6
+    b = math.ceil(math.log(1 - _LSH_RECALL) / math.log(1 - t ** r))
+    return r, max(1, min(b, 400))
+
+
+def _lsh_pairs(shared_toks: list, threshold: float):
+    """Candidate pairs (i, j), i < j, from MinHash bands over each note's SHARED tokens (a token in one
+    note only can never be in an intersection; leaving it out raises every estimate, so it costs no
+    recall). One shake-128 digest per distinct token gives all r*b hash values; a note's signature is
+    the column-wise minimum, computed in C (map/min/zip)."""
+    import hashlib
+    from array import array
+    r, b = _lsh_shape(threshold)
+    k = r * b
+    table: dict[str, array] = {}
+    buckets: dict[int, list[int]] = {}
+    bands = range(b)
+    for i, toks in enumerate(shared_toks):
+        if not toks:
+            continue
+        rows = []
+        for t in toks:
+            h = table.get(t)
+            if h is None:
+                h = table[t] = array("I", hashlib.shake_128(t.encode("utf-8", "surrogatepass")).digest(4 * k))
+            rows.append(h)
+        it = iter(map(min, zip(*rows)))
+        # one key per band, built in C: (band, r minima); a hash collision only adds a candidate, never loses one
+        for key in map(hash, zip(bands, *([it] * r))):
+            buckets.setdefault(key, []).append(i)
+    from itertools import combinations
+    seen: set[int] = set()
+    n = len(shared_toks)
+    for members in buckets.values():
+        if len(members) > 1:  # members ascend, so a < b
+            seen.update(a * n + b for a, b in combinations(members, 2))
+    for c in sorted(seen):
+        yield divmod(c, n)
 
 
 def _tokenize(text: str) -> set[str]:
@@ -321,8 +385,43 @@ def find_duplicates(
         _budget = 60.0
     _deadline = _time.monotonic() + _budget if _budget > 0 else None
     _LAST_PARTIAL[0] = _LAST_PARTIAL[1] = 0
+    _LAST_APPROX[0] = False
     thr = threshold
-    for i in range(len(file_list)):
+    # The exact walk's size, before it runs: the posting entries its prefixes would touch (AG84).
+    ordered = [sorted(tokens[f], key=lambda t: (df[t], t)) for f in file_list]
+    _limit = _exact_max_work()
+    if _limit >= 0:
+        work = 0
+        for i, si in enumerate(sizes):
+            if si:
+                need = int(-(-(threshold * si) // 1))
+                for tok in ordered[i][:max(1, si - need + 1)]:
+                    work += df[tok]
+            if work > 2 * _limit:
+                break
+        if work // 2 > _limit:  # each posting entry is walked from one side of the pair only
+            _LAST_APPROX[0] = True
+    if _LAST_APPROX[0]:
+        shared = [[t for t in o if df[t] >= 2] for o in ordered]
+        last_i = -1
+        for c, (i, j) in enumerate(_lsh_pairs(shared, threshold)):
+            if _deadline is not None and c % 4096 == 0 and _time.monotonic() > _deadline:
+                _LAST_PARTIAL[0], _LAST_PARTIAL[1] = max(last_i, 0), len(file_list)
+                break
+            last_i = i
+            si, sj = sizes[i], sizes[j]
+            if min(si, sj) < thr * max(si, sj):
+                continue
+            common = (bits[i] & bits[j]).bit_count() if use_bits else len(tokens[file_list[i]] & tokens[file_list[j]])
+            sim = common / (si + sj - common)
+            if sim >= thr:
+                found.append((sim, i, j))
+                if len(found) >= 2 * _MAX_FILE_PAIRS:
+                    found.sort(key=lambda t: t[0], reverse=True)
+                    del found[_MAX_FILE_PAIRS:]
+                    thr = max(thr, found[-1][0])
+                    _OVERFLOWED[0] = True
+    for i in range(len(file_list) if not _LAST_APPROX[0] else 0):
         if _deadline is not None and i % 64 == 0 and _time.monotonic() > _deadline:
             _LAST_PARTIAL[0], _LAST_PARTIAL[1] = i, len(file_list)  # the strongest pairs so far; 20,000 notes took 250 s and 3 GB (AG75)
             break
@@ -332,7 +431,7 @@ def find_duplicates(
         toks1 = tokens[file_list[i]]
         bi = bits[i] if use_bits else 0
         need = int(-(-(thr * si) // 1))                  # ceil(t * |A|)
-        prefix = sorted(toks1, key=lambda t: (df[t], t))[:max(1, si - need + 1)]
+        prefix = ordered[i][:max(1, si - need + 1)]
         cand: set[int] = set()
         for tok in prefix:
             post = index[tok]

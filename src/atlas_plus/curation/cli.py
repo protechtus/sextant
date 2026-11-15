@@ -72,6 +72,10 @@ def cmd_duplicates(
     if _dupmod._LAST_PARTIAL[1]:
         console.print(f"[yellow]The scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of {_dupmod._LAST_PARTIAL[1]:,} notes: "
                       "the pairs below are the strongest found so far. Use --scope <folder>, or raise ATLAS_DUPLICATES_BUDGET_SECONDS (0 = no limit).[/yellow]")  # AG75
+    if _dupmod._LAST_APPROX[0]:
+        console.print("[dim]The notes share much of one vocabulary, so the candidate pairs came from MinHash bands (AG84): a pair AT the "
+                      "threshold is found with probability 99% or more, a stronger pair more often; every similarity shown is exact. "
+                      "ATLAS_DUPLICATES_EXACT=on forces the exact scan (quadratic on such a corpus).[/dim]")
     console.print(f"\n[yellow]{len(pairs)}{'+' if _dupmod._LAST_CAPPED else ''} pair(s) found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + '; the strongest pairs are shown: raise the threshold for fewer, or use --scope <folder> for one part of the corpus)' if _dupmod._LAST_CAPPED else ''}.[/yellow]")
 
 

@@ -323,6 +323,14 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10) -> dict:
     temporal_context: list[dict] = _temporal_context_for_query(query)
 
     response: dict = {"confidence": confidence, "results": results, "retrieval": retrieval}
+    try:
+        from .fts import last_index_work as _liw
+        _work = _liw()
+    except Exception:  # noqa: BLE001
+        _work = {}
+    if _work:
+        # the agent waited a minute and was told nothing (AG84): name the one-time index work
+        response["index_rebuilt"] = _work
     if not results:
         try:
             from .fts import last_connect_error as _lce

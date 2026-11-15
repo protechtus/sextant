@@ -221,6 +221,7 @@ def generate_report(
         *([f"- ... and {len(never) - 30} more (`atlas-review-memory unconfirmed-decay --json`)"] if len(never) > 30 else []),
         "",
         *([f"_The duplicate scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of {_dupmod._LAST_PARTIAL[1]:,} notes (ATLAS_DUPLICATES_BUDGET_SECONDS)._", ""] if _dupmod._LAST_PARTIAL[1] else []),
+        *(["_Candidate pairs came from MinHash bands (a shared vocabulary made the exact scan quadratic): a pair at the threshold is found with probability 99% or more; similarities are exact (ATLAS_DUPLICATES_EXACT=on forces the exact scan)._", ""] if _dupmod._LAST_APPROX[0] else []),
         f"## Potential Duplicates ({len(dups)}{'+' if _dupmod._LAST_CAPPED else ''} found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + ')' if _dupmod._LAST_CAPPED else ''}, threshold={dup_threshold})",
         "",
     ]
