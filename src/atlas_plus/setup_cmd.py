@@ -39,7 +39,7 @@ PATH_VARS = ("ATLAS_WORKSPACE_ROOT", "ATLAS_MEMORY_ROOT", "ATLAS_STATE_DIR", "AT
              "ATLAS_UPDATES_FILE")
 #: Variables only the HOOK processes read (identity file, display name, clock anchor). They go
 #: on the POSIX hook command line, not into the server registration.
-HOOK_VARS = PATH_VARS + ("ATLAS_IDENTITY_PATH", "ATLAS_USER_NAME", "ATLAS_HOME_TZ")
+HOOK_VARS = PATH_VARS + ("ATLAS_IDENTITY_PATH", "ATLAS_USER_NAME", "ATLAS_HOME_TZ", "ATLAS_HOOK_SCOPE")
 
 
 class UnquotableValue(ValueError):
@@ -432,7 +432,10 @@ def render(info: dict, client: str = "all") -> str:
         _hint = ("   The session-start hook prints the corpus it read; the Stop hook writes "
                  "nothing until ATLAS_SESSION_AUTONOMOUS=on reaches it: add `--env ATLAS_SESSION_AUTONOMOUS=on` "
                  "(and `--env ATLAS_OLLAMA_URL=...` when Ollama is not on localhost) to the stop command; "
-                 "in the Windows-to-WSL form (`sextant setup` with no --client prints it), put `ATLAS_SESSION_AUTONOMOUS=on` right after `env` instead.")
+                 "in the Windows-to-WSL form (`sextant setup` with no --client prints it), put `ATLAS_SESSION_AUTONOMOUS=on` right after `env` instead. "
+                 "A re-run of `--out` keeps --env flags you added. One settings file runs every install's hooks for every "
+                 "session: a second install needs ATLAS_HOOK_SCOPE=<its project directories> (set it before running setup) "
+                 "or only one install's hooks.")
         if client == "all":
             lines.append(_hint)
         else:
@@ -495,6 +498,63 @@ def _hook_workspace(item) -> str:
     return m.group(1).strip().rstrip("\\/").casefold() if m else ""
 
 
+_HOOK_TARGETS = ("session-start", "stop")
+
+
+def _env_flags(command: str) -> tuple[list[tuple[str, str]], str]:
+    """The `--env NAME=VALUE` pairs of a hooks.run command line, in order, and its target."""
+    try:
+        argv = shlex.split(command, posix=True)
+    except ValueError:
+        return [], ""
+    pairs, target, i = [], "", 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--env" and i + 1 < len(argv) and "=" in argv[i + 1]:
+            pairs.append(tuple(argv[i + 1].split("=", 1)))
+            i += 2
+            continue
+        if a.startswith("--env=") and "=" in a[6:]:
+            pairs.append(tuple(a[6:].split("=", 1)))
+        elif a in _HOOK_TARGETS:
+            target = a
+        i += 1
+    return pairs, target
+
+
+def _commands(item) -> list[dict]:
+    hooks = item.get("hooks") if isinstance(item, dict) else None
+    return [h for h in hooks if isinstance(h, dict) and isinstance(h.get("command"), str)] if isinstance(hooks, list) else []
+
+
+def _keep_hand_env(item, replaced: list):
+    """The new entry with every `--env NAME=VALUE` the replaced entry of the same workspace and
+    target carried and the new one does not name: re-running `setup --client hooks --out` dropped
+    the `--env ATLAS_SESSION_AUTONOMOUS=on` setup itself tells the user to add (AG81). The new
+    command's own variables win; only names it lacks are carried."""
+    import copy
+    new = copy.deepcopy(item)
+    for h in _commands(new):
+        cmd = h["command"]
+        have, target = _env_flags(cmd)
+        if not target or not cmd.endswith(" " + target):
+            continue
+        names = {k for k, _ in have}
+        extra = []
+        for old in replaced:
+            for oh in _commands(old):
+                pairs, otarget = _env_flags(oh["command"])
+                if otarget != target:
+                    continue
+                for k, v in pairs:
+                    if k not in names:
+                        names.add(k)
+                        extra.append(f" --env {shlex.quote(f'{k}={v}')}")
+        if extra:
+            h["command"] = cmd[: -len(target)].rstrip() + "".join(extra) + " " + target
+    return new
+
+
 def _merge(existing, piece):
     """Deep-merge a JSON piece into an existing object: mappings merge key by key, a NAMED
     registration (`mcpServers.<name>`, `mcp.<name>`) is replaced whole, hook arrays drop the
@@ -515,7 +575,10 @@ def _merge(existing, piece):
         if any(_is_ours(i) for i in piece):
             # replace only this workspace's entries: a second install's merge removed the first install's hooks (AG76)
             _mine = {_hook_workspace(i) for i in piece if _is_ours(i)}
-            out = [i for i in existing if not (_is_ours(i) and (_hook_workspace(i) in _mine or _hook_workspace(i) == ""))]
+            _gone = [i for i in existing if _is_ours(i) and (_hook_workspace(i) in _mine or _hook_workspace(i) == "")]
+            out = [i for i in existing if not any(i is g for g in _gone)]
+            piece = [_keep_hand_env(i, [g for g in _gone if _hook_workspace(g) == _hook_workspace(i)]) if _is_ours(i) else i
+                     for i in piece]
         else:
             out = list(existing)
         for item in piece:
@@ -523,6 +586,28 @@ def _merge(existing, piece):
                 out.append(item)
         return out
     return piece
+
+
+def _note_other_installs(merged, piece) -> None:
+    """One stderr paragraph when the merged settings hold Stop hooks of more than one Sextant
+    install and they are not scoped: each would summarise EVERY session into its own corpus (AG81)."""
+    try:
+        stops = (merged.get("hooks") or {}).get("Stop") or []
+    except AttributeError:
+        return
+    ours = [i for i in stops if _is_ours(i)]
+    spaces = {_hook_workspace(i) for i in ours}
+    if len(ours) < 2 or len(spaces) < 2:
+        return
+    unscoped = [i for i in ours if "ATLAS_HOOK_SCOPE=" not in json.dumps(i)]
+    if not unscoped:
+        return
+    print("sextant setup: this settings file now holds the Stop hooks of "
+          f"{len(spaces)} Sextant installs; Claude Code runs every one for every session, so each "
+          "install summarises every session into its own corpus (and every SessionStart hook primes "
+          "it). Keep one install's hooks, or scope each: re-run setup with ATLAS_HOOK_SCOPE=<the "
+          f"directories whose sessions it owns, '{os.pathsep}'-separated> in the environment (or add "
+          "`--env ATLAS_HOOK_SCOPE=<dir>` to both of its commands).", file=sys.stderr)
 
 
 def _write_out(path: Path, file_text: str, piece) -> None:
@@ -545,6 +630,7 @@ def _write_out(path: Path, file_text: str, piece) -> None:
             if not isinstance(existing, dict):
                 raise ValueError(f"{path} exists and is not a JSON object; merge the block by hand")
             merged = _merge(existing, piece)
+            _note_other_installs(merged, piece)
             from datetime import datetime as _dt
             if merged == existing:
                 # Nothing to merge: no backup, no rewrite (FN1, final readiness pass).

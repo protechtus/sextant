@@ -351,6 +351,9 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print("Usage: atlas-session-start\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
         return
+    from atlas_plus.hooks.scope import in_scope as _in_scope
+    if not _in_scope(os.getcwd()):
+        return  # another install's session (ATLAS_HOOK_SCOPE, AG81): Claude Code runs the hook in the session's directory
     # Task-aware mode: if ATLAS_TASK_HINT is set, emit only relevant context
     task_hint = os.environ.get("ATLAS_TASK_HINT", "").strip()
     if task_hint:

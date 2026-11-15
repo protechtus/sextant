@@ -113,6 +113,7 @@ the README before exposing anything.
 | `ATLAS_INTERACTIVE_WRITES` | `on` | Interactive writes: you asking your assistant to remember something. `off` makes memory tools effectively read-only. |
 | `ATLAS_AUTONOMOUS` | `off` | Background writes: nightly jobs editing memory unattended. Fail-closed allowlist; leave off until you trust the loop. |
 | `ATLAS_SESSION_AUTONOMOUS` | `off` | Session-scoped autonomous override: `on` lets the Stop hook's summarizer AND its suggest-facts stage write, without `ATLAS_AUTONOMOUS`. Put it on the hook command as `--env ATLAS_SESSION_AUTONOMOUS=on` (hooks run outside your shell). |
+| `ATLAS_HOOK_SCOPE` | -- | Directories this install's hooks serve, separated by `;` on Windows and `:` elsewhere. When two installs share one Claude Code settings file, each hook primes and summarises only sessions whose working directory is inside its scope (without it every install's hooks run for every session). `sextant setup` bakes it in. |
 | `ATLAS_MEMORY_AUTOCOMMIT` | `off` | Git-commit the corpus after each interactive write (corpus must be a git repo). |
 
 ## Search and embeddings

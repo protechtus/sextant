@@ -48,12 +48,16 @@ _SCOPE_ALIASES = {
 # Transcript loading helpers
 # ---------------------------------------------------------------------------
 
+_LAST_TURNS: dict = {"n": None}  # turns loaded by the last _load_transcript_text call (AG81)
+
+
 def _load_transcript_text(since: str = "today", source: str = "claude-code", conversation_id: str | None = None) -> str:
     """Load turns and return a condensed plain-text transcript."""
     from atlas_plus.summarizer.loader import load_turns
     if conversation_id:
         since = None  # the session is the unit: `--since 2h` dropped the start of a long session (AG40)
-    turns = load_turns(source=source, since=since, conversation_id=conversation_id)
+    turns = list(load_turns(source=source, since=since, conversation_id=conversation_id))
+    _LAST_TURNS["n"] = len(turns)  # the gate counts turns like the summarizer, not text lines (AG81)
     try:
         from atlas_plus.redaction import redact as _redact_turn
     except Exception:  # noqa: BLE001
@@ -467,7 +471,7 @@ def _facts_failure_file(conversation_id: str | None):
     return atlas_paths.state_dir() / "suggest-facts" / f"failed-{safe}.json" if safe else None
 
 
-_FACTS_N_LINES: dict = {}  # conversation id -> transcript line count of the current run
+_FACTS_N_LINES: dict = {}  # conversation id -> transcript TURN count of the current run (AG81: was lines)
 
 
 def _note_facts_failure(conversation_id: str | None, n_lines: int) -> None:
@@ -479,7 +483,7 @@ def _note_facts_failure(conversation_id: str | None, n_lines: int) -> None:
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
         prev = _json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
-        count = int(prev.get("count", 0)) + 1 if prev.get("lines") == n_lines else 1
+        count = int(prev.get("count", 0)) + 1 if prev.get("lines") == n_lines else 1  # the key keeps its name; the value is turns since AG81
         f.write_text(_json.dumps({"lines": n_lines, "count": count}), encoding="utf-8")
     except Exception:  # noqa: BLE001
         pass
@@ -804,12 +808,17 @@ def _suggest_facts_run(
     _prior_lines = None
     if _done is not None and _done.exists() and not dry_run:
         try:
-            _prior_lines = int((_done.read_text(encoding="utf-8").strip() or "0").split()[0])
+            _tok = (_done.read_text(encoding="utf-8").strip() or "0").split()
+            # "<n> turns" since AG81; a bare number is a legacy LINE count, not comparable: run once more
+            _prior_lines = int(_tok[0]) if len(_tok) > 1 and _tok[1] == "turns" else None
         except (OSError, ValueError, IndexError):
             _prior_lines = 0
     print(f"Loading transcript since '{since}'...", flush=True)
+    _LAST_TURNS["n"] = None
     transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
-    _n_lines = transcript_text.count("\n") + (1 if transcript_text.strip() else 0)
+    _n_lines = _LAST_TURNS["n"]  # turns, as the summarizer counts them (AG81: a 4-line reply was 4 "turns")
+    if _n_lines is None:  # a replaced loader (tests): fall back to its line count
+        _n_lines = transcript_text.count("\n") + (1 if transcript_text.strip() else 0)
     _FACTS_N_LINES[conversation_id or ""] = _n_lines  # read by the failure wrapper (AG69)
     if _facts_gave_up(conversation_id, _n_lines):
         print("The facts stage failed three times at this length; waiting for the session to grow.", flush=True)
@@ -834,7 +843,7 @@ def _suggest_facts_run(
     if _done is not None and not dry_run:
         try:
             _done.parent.mkdir(parents=True, exist_ok=True)
-            _done.write_text(f"{_n_lines}\n", encoding="utf-8")  # the model answered: this many turns are covered
+            _done.write_text(f"{_n_lines} turns\n", encoding="utf-8")  # the model answered: this many turns are covered
         except OSError:
             pass
     if rejected_low_confidence > 0:

@@ -575,7 +575,7 @@ def test_suggest_facts_marks_done_only_after_the_model_answered(tmp_path, monkey
     assert not sf._session_done_marker("sess-F").exists()                       # a failed run leaves no marker (MN31)
     monkeypatch.setattr(sf, "_extract_candidates", lambda text, confidence_threshold=None: ([], 0))
     sf.suggest_facts(since="today", auto=True, conversation_id="sess-F")
-    assert sf._session_done_marker("sess-F").read_text(encoding="utf-8").strip() == "3"
+    assert sf._session_done_marker("sess-F").read_text(encoding="utf-8").strip() == "3 turns"  # AG81: the marker names its unit; a bare number is a legacy line count
     r = sf.suggest_facts(since="today", auto=True, conversation_id="sess-F")
     assert r.get("already_done")                                                  # same turns: nothing new
     monkeypatch.setattr(sf, "_load_transcript_text", lambda **kw: "\n".join(f"USER: t{i}" for i in range(20)))

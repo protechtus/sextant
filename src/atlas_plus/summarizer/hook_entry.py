@@ -222,6 +222,8 @@ def _transcript_root_from_payload() -> str:
             _PAYLOAD["seen"] = True  # something arrived on stdin that is not a payload: refuse, never summarise the whole day (MN45: PowerShell 5.1 mangles the quoted JSON)
             _PAYLOAD["garbled"] = True
             return ""
+        if isinstance(payload, dict) and isinstance(payload.get("cwd"), str):
+            _PAYLOAD["cwd"] = _posix_path_for(payload["cwd"].replace("\x00", ""))  # ATLAS_HOOK_SCOPE decides on it (AG81)
         if isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
             _SESSION["id"] = "".join(c for c in payload["session_id"] if ord(c) >= 32 and ord(c) != 127).strip()[:120]  # a NUL crashed Popen (MN63)
         _PAYLOAD["seen"] = True
@@ -246,6 +248,22 @@ def _transcript_root_from_payload() -> str:
         return ""
     except Exception:  # noqa: BLE001 - a hook never fails the session over its payload
         return ""
+
+
+def _workspace_missing() -> str:
+    """'' when the corpus and the state dir both exist, else one clause naming what is missing."""
+    try:
+        _corpus = atlas_paths.memory_root()
+        if not _corpus.is_dir():
+            return f"the corpus {_corpus} is missing or not a directory"
+        _state = atlas_paths.state_dir()
+        if not _state.is_dir():
+            return f"the state dir {_state} is missing or not a directory (the corpus {_corpus} is there)"
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return f"the corpus or state dir cannot be resolved ({exc})"
+    return ""
 
 
 def main() -> int:
@@ -274,12 +292,23 @@ def main() -> int:
     _PAYLOAD["empty"] = False
     _PAYLOAD["transcript_file"] = ""
     _PAYLOAD["refused"] = ""
+    _PAYLOAD["cwd"] = ""
+
+    # A hook command still naming a workspace that moved (restore to a new path or drive, a new
+    # machine) wrote a fresh day log and state dir at the old place, silently, while the
+    # session-start hook said "missing" for the same path (AG78). The state dir counts too: a
+    # corpus that is still there beside a state dir that is not grew a new state dir (AG81).
+    # Decided BEFORE anything can write, the gate's own activity record included (AG81: a gate
+    # typo created <old>/.atlas/logs/activity.ndjson while saying "wrote nothing").
+    _missing = _workspace_missing()
 
     if not is_session_autonomous():
         _raw = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip()
         if _raw and _raw.lower() not in ("off", "0", "false", "no"):  # an explicit opt-out is not a typo (MN39)
             # `--env ATLAS_SESSION_AUTONOMOUS=yes` was a silent no-op (AG43): only on/1/true opens the gate
             _sys.stderr.write(f"Sextant: ATLAS_SESSION_AUTONOMOUS={_raw!r} is not one of on/1/true; the Stop hook wrote nothing.\n")
+            if _missing:
+                return 0  # no activity record into a state dir that is not there (AG81)
             try:
                 from atlas_plus import activity as _act
                 _act.record("hook", "summarizer_skipped", reason=f"gate value {_raw!r} is not on/1/true")
@@ -287,18 +316,8 @@ def main() -> int:
                 pass
         return 0
 
-    # A hook command still naming a workspace that moved (restore to a new path or drive, a new
-    # machine) wrote a fresh day log and state dir at the old place, silently, while the
-    # session-start hook said "missing" for the same path (AG78). Write nothing, say so once.
-    try:
-        _corpus = atlas_paths.memory_root()
-        _corpus_ok = _corpus.is_dir()
-    except SystemExit:
-        raise
-    except Exception:  # noqa: BLE001
-        _corpus, _corpus_ok = None, False
-    if not _corpus_ok:
-        _sys.stderr.write(f"Sextant: the corpus {_corpus} is missing or not a directory; the Stop hook wrote nothing "
+    if _missing:
+        _sys.stderr.write(f"Sextant: {_missing}; the Stop hook wrote nothing "
                           f"(moved the workspace? re-merge the hook commands `sextant setup --client hooks` prints, "
                           f"or run sextant-init there).\n")
         return 0
@@ -326,6 +345,12 @@ def main() -> int:
             _act.record("hook", "summarizer_skipped", reason=("no payload on stdin" if _PAYLOAD.get("empty") else "payload is not JSON" if _PAYLOAD.get("garbled") else "payload has no session_id"))  # the recorded reason matches stderr (AG60)
         except Exception:  # noqa: BLE001
             pass
+        return 0
+    from atlas_plus.hooks.scope import in_scope as _in_scope, scope_dirs as _scope_dirs
+    if _scope_dirs() and not _in_scope(_PAYLOAD.get("cwd") or "", _PAYLOAD.get("transcript_file") or ""):
+        # two installs in one settings file both summarised every session (AG81): this one owns
+        # only the sessions under ATLAS_HOOK_SCOPE. Not an error, so no activity record per reply.
+        _sys.stderr.write(f"Sextant: session {_SESSION.get('id') or '?'} ran outside ATLAS_HOOK_SCOPE; this install's Stop hook left it alone.\n")
         return 0
     if root and not _child_env.get("ATLAS_CLAUDE_CODE_ROOT"):  # root set, every session of the day was summarised)
         _child_env["ATLAS_CLAUDE_CODE_ROOT"] = root
