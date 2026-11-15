@@ -621,5 +621,7 @@ still reads the new index if you roll back.
   `sextant`; a second install on the same machine must use a different name:
   `sextant setup --name sextant-work` prints every form (Claude Code, JSON,
   Codex, opencode) under that name, and `claude mcp get` / `remove` take the
-  same name. Two installs also mean two sets of hook commands: Claude Code's
-  settings.json holds one, so pick the install that primes your sessions.
+  same name. Two installs also mean two sets of hook commands in one settings.json,
+  and each runs for every session: set `ATLAS_HOOK_SCOPE` to each install's project
+  directories before running its `sextant setup` (it bakes the scope into the hook
+  commands), or merge only one install's hooks.

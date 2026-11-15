@@ -21,7 +21,7 @@ machine, a browser export). The next intake run picks it up and:
 9. runs the rule's post-import actions (ticket, notify).
 
 Nothing here deletes. The ledger is the authority; the manifest is a view
-of it. Design: docs/INTAKE-DESIGN-2026-11.md.
+of it. Design: `sextant-intake --help` (the design note is not shipped).
 """
 
 from __future__ import annotations

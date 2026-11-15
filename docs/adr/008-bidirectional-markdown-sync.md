@@ -11,7 +11,7 @@ Status: accepted
 
 A single Markdown Sync component owns both directions:
 
-- **Read** — reuses [migration/markdown_bootstrap.py](../../../atlas-memory/src/atlas_memory/migration/markdown_bootstrap.py) to import `.md` files as `memory.proposed` + `memory.committed` events.
+- **Read** — reuses `migration/markdown_bootstrap.py` (from the predecessor atlas-memory project, not shipped in this repository) to import `.md` files as `memory.proposed` + `memory.committed` events.
 - **Write** — projects events to `.md` files via templated renderers, with the rules implemented as preconditions:
   - `version_before_edit(path)` runs before any overwrite.
   - `archive_on_remove(path, reason)` is the only way to "delete".

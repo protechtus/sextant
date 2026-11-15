@@ -546,7 +546,7 @@ def test_cli_triple_dash_fact_says_what_to_do(tmp_path):
     env = _sandbox_env(tmp_path)
     r = _run_cli(["remember", "---bad"], env, tmp_path)
     assert r.returncode == 2
-    assert "standard input" in r.stderr and "No such option" not in r.stderr
+    assert "drop the leading dashes" in r.stderr and "No such option" not in r.stderr  # the `--` / `-` advice could not work (AG93 F4)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="console code pages are a Windows notion")

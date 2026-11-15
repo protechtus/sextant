@@ -9,8 +9,10 @@ optional layers you turn on.
 Conventions: opt-in switches (default off) are fail-closed allowlists -- only
 `on`, `1`, or `true` enables; any other value (including typos) is off. Default-on switches
 (`ATLAS_INTERACTIVE_WRITES`, `ATLAS_SEMANTIC_SEARCH`, `ATLAS_WEB_REPORT_SUBPROCESS`) turn off for `off`, `0`, `false` or `no`;
-the `ATLAS_DISABLE_*` stop-hook opt-outs take effect for `on`, `1`, `true` or `yes`. A number variable that is not a whole number
-is refused with a sentence naming it.
+the `ATLAS_DISABLE_*` stop-hook opt-outs take effect for `on`, `1`, `true` or `yes`. A port, lockout or rate-limit number
+(`ATLAS_*_PORT`, `ATLAS_MCP_LOCKOUT_*`, `ATLAS_BRAIN_RATE_LIMIT_RPM`, the job-poller numbers) that is not a whole number is
+refused with a sentence naming it; the tuning numbers (timeouts, budgets, thresholds such as `ATLAS_EMBED_TIMEOUT`,
+`ATLAS_FTS_FRESHNESS_WINDOW`, `ATLAS_DUPLICATES_BUDGET_SECONDS`) fall back to their default instead.
 Paths accept absolute paths on any OS. Every variable uses the `ATLAS_`
 prefix -- the engine's namespace -- even though the commands are
 `sextant-*`. A `SEXTANT_`-prefixed twin (the natural guess) is never
@@ -66,7 +68,7 @@ registration reaches only the MCP server process, not the hooks.
 | `ATLAS_WEB_REPORT_SUBPROCESS` | `on` | The dashboard's curation panel computes its report in a spawned worker process, so a long report never stalls the other panels; `off` runs it in the serving process. |
 | `SSL_CERT_FILE` | (Python's) | Read only, by the HTTP client while a sync client is built (`REQUESTS_CA_BUNDLE` is not read): the CA bundle that signs the hub's certificate (`tls internal` or a private CA). A missing or unreadable file is named in one sentence by `sextant-sync` (it was a traceback). |
 | `ATLAS_SUMMARIZER_DRY_RUN` | (unset) | `on` makes the Stop hook call the model and write nothing: the summarizer child runs with `--dry-run` and prints the entry it would have written, stamped with the time and session, into `<state>/logs/summarizer-dry-run.log` (started over past 1 MB); the facts stage is skipped; the activity log records `summarizer_dry_run` with the log path. For a hand test of the hook without touching the corpus. |
-| `ATLAS_TRANSCRIPT_FILE` | (set by the hook) | The Stop hook passes the payload's `transcript_path` to the summarizer and facts children so they read that one transcript instead of every transcript under the root (a 200 MB sibling file had cost 70 s per Stop). Honoured only when the file lies under `ATLAS_CLAUDE_CODE_ROOT`. Not meant to be set by hand. |
+| `ATLAS_TRANSCRIPT_FILE` | (set by the hook) | The Stop hook passes the payload's `transcript_path` to the summarizer and facts children so they read that one transcript instead of every transcript under the root (a 200 MB sibling file had cost 70 s per Stop). Honoured only when the file lies under `ATLAS_CLAUDE_CODE_ROOT`; when the payload's transcript sits under another `.../projects` folder, the hook points the children at that folder instead and says so on stderr. Not meant to be set by hand. |
 | `ATLAS_FACT_NEAR_DUP` | `0.8` | The facts stage skips a proposed fact when an existing line of the same note shares at least this fraction of its tokens (Jaccard) AND the tokens that differ are all articles, pronouns or connectives (the, a, of, to, it, that ...) AND the content words keep their order: a rewording. Tense, modality, quantity and direction words (is/was, must/may, all, over/under) count as content. A fact that changes any content word (`room B` to `room C`, `Alice` to `Bob`, a number, a negation) is written. `0` turns the near-duplicate check off; the exact check always runs. |
 | `PYTHONUTF8` / `LC_ALL` | (Python's) | Read only. On a POSIX system whose locale is not UTF-8 (`LC_ALL=C` with `PYTHONUTF8=0`), notes with non-ASCII names cannot be written or read; every command prints the locale note and says to set `PYTHONUTF8=1` or `LANG=C.UTF-8`. Python 3.7 and later (PEP 540) already run in UTF-8 mode under the C locale, so this bites only with `PYTHONUTF8=0`. |
 | `MSYSTEM` | (set by Git Bash) | Read only: when Git Bash or MSYS2 sets it, PIPED output is UTF-8 whatever the console code page says (a Git Bash terminal decodes UTF-8; every Japanese character was `?` before). On a console, text goes through Python's console stream, which handles the code page itself. |
@@ -137,7 +139,7 @@ while the summarizer uses a cloud one:
 | `ATLAS_BRAIN_MODEL` | `qwen3:8b` | Brain + inspiration model. |
 | `ATLAS_FAST_MODEL` | `qwen3:1.7b` | Small fast-path model. |
 | `ATLAS_BRAIN_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for the Brain. |
-| `OLLAMA_HOST` | -- | Read only when `ATLAS_BRAIN_OLLAMA_URL` is unset: the standard Ollama variable (`host:port` or a URL), as the Ollama CLI reads it. |
+| `OLLAMA_HOST` | -- | Read only when `ATLAS_BRAIN_OLLAMA_URL` and `OLLAMA_BASE_URL` are both unset: the standard Ollama variable (`host:port` or a URL), as the Ollama CLI reads it. |
 | `ATLAS_SUMMARIZER_PROVIDER` | `auto` | Alias of `ATLAS_MODEL_SUMMARIZER_PROVIDER` (that name wins). The session summarizer and the facts stage take `ollama`, `claude` (or `anthropic`) or `auto` (Ollama, plus Claude only when `ATLAS_LOCAL_ONLY=off`); any other value is refused with a sentence and runs Ollama only. |
 | `ATLAS_SUMMARIZER_MODEL` | `ATLAS_BRAIN_MODEL`, else `qwen3:8b` | Session-summarizer and suggest-facts model; the Stop hook's probe says so when it is not pulled. |
 | `ATLAS_SUMMARIZER_CLAUDE_MODEL` | code default | Model used when the summarizer runs on Anthropic. |
@@ -166,7 +168,7 @@ while the summarizer uses a cloud one:
 | `ATLAS_INTAKE_LANDING` | `<workspace>/intake` | Where files without a frontmatter `project` or `destination` land, grouped by type and date. |
 | `ATLAS_INTAKE_RULES` | `<state>/intake/rules.json` | Optional JSON file of routing rules; prepended to the built-in rules (or replaces them with `"replace_defaults": true`). |
 
-Intake never deletes: imported originals move to `<ATLAS_INTAKE_DIR>/_imported/<date>/` with a `.meta.json` sidecar, and `_imported/MANIFEST.md` is regenerated from the ledger at `<state>/intake/ledger.jsonl`. See docs/INTAKE-DESIGN-2026-11.md.
+Intake never deletes: imported originals move to `<ATLAS_INTAKE_DIR>/_imported/<date>/` with a `.meta.json` sidecar, and `_imported/MANIFEST.md` is regenerated from the ledger at `<state>/intake/ledger.jsonl`. `sextant-intake --help` lists the commands.
 
 ## Telegram and push notifications (optional layers)
 
@@ -234,6 +236,6 @@ Defaults live in code and are deliberate; unset means a sensible value.
 | `ATLAS_TUNNEL_CHECK` | `on` makes `sextant-doctor` probe for a Cloudflare tunnel even when `cloudflared` is not on PATH (default: probe only when it is). |
 
 Optional-integration variables you may see in source (`ATLAS_BRAIN_GATEKEEPER`,
-`ATLAS_GATEKEEPER_PROJECT`, `ATLAS_BRAIN_BREAKGLASS_FILE`, `ATLAS_LOOP_STATE_FILE`):
+`ATLAS_LOOP_STATE_FILE`):
 hooks for extensions that are not part of the public distribution; unset means
 disabled.

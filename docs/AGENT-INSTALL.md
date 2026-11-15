@@ -303,7 +303,7 @@ package install those live at https://github.com/protechtus/sextant/tree/main/do
 | :- | :- | :- |
 | `Invalid environment variable format: sextant` from `claude mcp add` | `-e` placed before the server name | put the name first, then `-e KEY=VAL`, then `--` |
 | `Scope 'reference' requires a topic` | bare scope | use `reference:<topic>` |
-| Session start says "not in a known project directory" | the hook primes a project note only when the working directory is inside a git repository under `ATLAS_PROJECTS_ROOT` (default `~/projects`) | set `ATLAS_PROJECTS_ROOT`, or use `atlas-prime <task>` for task context |
+| Session start says "not in a known project directory" | the hook primes a project note only when the working directory is under `ATLAS_PROJECTS_ROOT` (default `~/projects`) and a project note matches its git root or the first folder below that root | set `ATLAS_PROJECTS_ROOT`, or use `atlas-prime <task>` for task context |
 | HTTP server refuses to start | `sextant-mcp` over HTTP needs `ATLAS_MCP_TOKEN`; stdio mode does not | use stdio for clients; set the token only for HTTP |
 | Corpus "vanished" | `ATLAS_WORKSPACE_ROOT` was set after init | set it before init, or unset it |
 | `memory_health` says `ok` but its `memory_root` is `~/.memory`, not the chosen corpus | the `-e` variables never reached the server (GUI-launched client, or Windows to WSL without `WSLENV`) | re-register with the command `setup` prints |

@@ -731,8 +731,8 @@ def main() -> None:
     # exit 2) instead of the documented refusal (FN2, final pass): say what to do.
     if len(_sys.argv) > 2 and _sys.argv[1] in ("remember", "search") and any(
             a.startswith("---") for a in _sys.argv[2:]):
-        _sys.stderr.write("A fact or query cannot start with `---` (it would close a note's frontmatter). "
-                          "Put the text after `--`, or pass `-` and send it on standard input.\n")
+        _sys.stderr.write("A fact or query cannot start with `---` (it would close a note's frontmatter): drop the "
+                          "leading dashes; dashes later in the text are fine.\n")  # `--` and `-` do not help (AG93 F4)
         raise SystemExit(2)
     try:
         app()

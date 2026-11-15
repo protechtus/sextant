@@ -324,6 +324,11 @@ def main() -> int:
     # 2026-11-10).
     _child_env = dict(os.environ)
     root = _transcript_root_from_payload()  # always read: it carries the session id (MN25/MN28: with the
+    if _PAYLOAD.get("refused") and os.environ.get("ATLAS_CLAUDE_CODE_ROOT"):
+        # the documented escape hatch for a path form the hook cannot read: the session is looked up by id under the
+        # root. Say so: a stale copy there was summarised with nothing on stderr (AG93 F1).
+        _sys.stderr.write(f"Sextant: the Stop payload's transcript_path '{str(_PAYLOAD['refused'])[:200]}' is not under a .../projects folder; "
+                          f"looking the session up by id under ATLAS_CLAUDE_CODE_ROOT ({os.environ.get('ATLAS_CLAUDE_CODE_ROOT', '')[:200]}) instead.\n")
     if _PAYLOAD.get("refused") and not os.environ.get("ATLAS_CLAUDE_CODE_ROOT"):
         _sys.stderr.write(f"Sextant: the Stop payload's transcript_path '{_PAYLOAD['refused']}' does not exist or does not sit under a .../projects folder; nothing summarised (set ATLAS_CLAUDE_CODE_ROOT to the transcripts root if the path form differs).\n")
         try:
