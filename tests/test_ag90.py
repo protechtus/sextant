@@ -56,8 +56,9 @@ def test_scope_breakdown_uses_the_quality_gate(tmp_path):
 
 def _help(app, args):
     from typer.testing import CliRunner
-    r = CliRunner().invoke(app, args, env={"COLUMNS": "100", "NO_COLOR": "1"})
-    return r.output
+    import re as _re
+    r = CliRunner().invoke(app, args, env={"COLUMNS": "100", "NO_COLOR": "1", "FORCE_COLOR": None, "TERM": "dumb"})
+    return _re.sub(r"\x1b\[[0-9;]*m", "", r.output)  # CI forces colour: the escapes split `--version` apart
 
 
 def test_help_shows_no_bool_on_flags():
