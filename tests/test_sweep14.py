@@ -403,7 +403,10 @@ def test_stop_hook_reads_its_payload_even_with_the_root_set(tmp_path, monkeypatc
         pass
     summ = [c for c in calls if "atlas_plus.summarizer.cli" in c[0]]
     assert summ and "--conversation-id" in summ[0][0] and "sess-AAA" in summ[0][0]
-    assert summ[0][1]["env"]["ATLAS_CLAUDE_CODE_ROOT"] == str(tmp_path / "elsewhere")  # the variable still wins for the root
+    # MN75: with the variable pointing elsewhere the loader ignored the named file and summarised another copy (or
+    # nothing); the child now reads the payload's transcript from its own .../projects root
+    assert Path(summ[0][1]["env"]["ATLAS_CLAUDE_CODE_ROOT"]) == (tmp_path / "projects").resolve()
+    assert Path(summ[0][1]["env"]["ATLAS_TRANSCRIPT_FILE"]).resolve() == (root / "sess-AAA.jsonl").resolve()
 
 
 def test_summary_is_written_once_per_session(tmp_path, monkeypatch):

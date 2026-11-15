@@ -30,6 +30,12 @@ def cmd_duplicates(
     from atlas_plus.curation.duplicates import find_duplicates, find_fact_duplicates
     if facts:
         rows = find_fact_duplicates(scope=scope)
+        from atlas_plus.curation import duplicates as _dupmod
+        if _dupmod._LAST_PARTIAL[1]:
+            import sys as _sys
+            print(f"The repeated-facts scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of "
+                  f"{_dupmod._LAST_PARTIAL[1]:,} facts (ATLAS_DUPLICATES_BUDGET_SECONDS; 0 = no limit): the list is partial.",
+                  file=_sys.stderr)  # MN73: the facts run said nothing when it stopped early
         if json_output:
             import json
             typer.echo(json.dumps(rows, indent=2))
@@ -53,6 +59,12 @@ def cmd_duplicates(
 
     if json_output:
         import json
+        import sys as _sys
+        from atlas_plus.curation import duplicates as _dupmod
+        if _dupmod._LAST_APPROX[0]:
+            print("duplicates: candidate pairs came from MinHash bands (ATLAS_DUPLICATES_EXACT=on forces the exact scan)", file=_sys.stderr)
+        if _dupmod._LAST_PARTIAL[1]:
+            print(f"duplicates: the scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of {_dupmod._LAST_PARTIAL[1]:,} notes", file=_sys.stderr)
         typer.echo(json.dumps([p.as_dict() for p in pairs], indent=2))
         return
 

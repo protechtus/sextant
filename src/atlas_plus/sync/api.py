@@ -67,6 +67,10 @@ def _cached_full_manifest(root: Path) -> dict:
     ):
         return _MANIFEST_CACHE["manifest"]
     built = manifest.build_manifest(root)
+    try:
+        store.observe_corpus(str(built.get("manifest_hash") or ""))  # a hub-local write is a new count too (MN77)
+    except OSError:
+        pass
     _MANIFEST_CACHE.update(
         path=str(root), expires=now + _manifest_ttl(), manifest=built
     )

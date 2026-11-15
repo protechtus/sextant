@@ -77,6 +77,36 @@ def _record_generation_mark(d: Path, g: int) -> str:
     return mark
 
 
+_CORPUS_FILE = "generation-corpus"
+
+
+def observe_corpus(corpus_hash: str, root: Path | None = None) -> int:
+    """Count a corpus change that did not come through a push (MN77).
+
+    Only pushes bumped the generation, so a note the hub itself wrote (its own assistant, `remember`, an editor) and a
+    device then pulled was invisible to the restore check: a hub restored from a backup taken before that write showed
+    the same count and mark, and every device pulled the older copy over the newer one without a word. The hub records
+    the corpus hash it served at each count; a different hash at the same count is a local write and gets a new count.
+    A count without a record (a push just bumped it, or a hub older than this build) is recorded, not bumped.
+    """
+    d = root or sync_dir()
+    g = hub_generation(root)
+    p = d / _CORPUS_FILE
+    try:
+        rec_g, rec_h = p.read_text(encoding="ascii").split()
+    except (OSError, ValueError):
+        rec_g, rec_h = None, None
+    if rec_g == str(g) and rec_h == corpus_hash:
+        return g
+    if rec_g == str(g):
+        g = bump_hub_generation(root)
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{_CORPUS_FILE}.{os.getpid()}.part")
+    tmp.write_text(f"{g} {corpus_hash}", encoding="ascii")
+    os.replace(tmp, p)
+    return g
+
+
 def generation_mark(g: int, root: Path | None = None) -> str | None:
     """The mark this hub gave count ``g`` (the newest one, should a restore have reused the count), or None when unknown."""
     if not isinstance(g, int) or g <= 0:

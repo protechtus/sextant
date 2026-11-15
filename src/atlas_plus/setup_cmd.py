@@ -497,6 +497,9 @@ def _hook_workspace(item) -> str:
     whitespace (CI: a re-run left two Stop entries on Linux and macOS because the bare value ran to the end of the line)."""
     import re as _re
     s = json.dumps(item, sort_keys=True).replace("\\\\", "\\").replace('\\"', '"')
+    # shlex.quote writes a single quote inside the value as '"'"': the value ended at the first quote, so
+    # `ws o'q` and `ws o'r` were one workspace and the second install removed the first one's hooks (MN73)
+    s = s.replace("'\"'\"'", "\x00")
     m = _re.search(r"(['\"]?)ATLAS_WORKSPACE_ROOT=(['\"]?)", s)
     if not m:
         return ""
@@ -507,7 +510,10 @@ def _hook_workspace(item) -> str:
     else:
         mm = _re.match(r"[^\s'\"]+", rest)
         val = mm.group(0) if mm else ""
-    return val.strip().rstrip("\\/").casefold()
+    val = val.replace("\x00", "'").strip()
+    if _re.match(r"[A-Za-z]:[\\/]", val):
+        val = val.replace("/", "\\")  # E:/ws and E:\ws are one Windows workspace (MN73: the Git Bash spelling added a second Stop hook)
+    return val.rstrip("\\/").casefold()
 
 
 _HOOK_TARGETS = ("session-start", "stop")
@@ -559,6 +565,8 @@ def _keep_hand_env(item, replaced: list):
                 if otarget != target:
                     continue
                 for k, v in pairs:
+                    if k in os.environ and not os.environ[k].strip():
+                        continue  # `ATLAS_HOOK_SCOPE= sextant setup ...` un-scopes: a baked value could never be removed (MN73)
                     if k not in names:
                         names.add(k)
                         extra.append(f" --env {shlex.quote(f'{k}={v}')}")

@@ -139,6 +139,10 @@ _GREEK_ETC = str.maketrans({
     "\u03ca": "\u03b9", "\u03cb": "\u03c5", "\u0390": "\u03b9", "\u03b0": "\u03c5",
     "\u0386": "\u0391", "\u0388": "\u0395", "\u0389": "\u0397", "\u038a": "\u0399", "\u038c": "\u039f", "\u038e": "\u03a5", "\u038f": "\u03a9",
     "\u03aa": "\u0399", "\u03ab": "\u03a5", "\u1e9e": "ss", "\u0259": "e", "\u018f": "E",
+    # MN74: letters with a stroke or a slash have no decomposition, so remove_diacritics kept them and `da nang`,
+    # `duoc`, `lodz`, `kobenhavn`, `gudrun` found nothing (Vietnamese is very often typed without its marks)
+    "\u0111": "d", "\u0110": "D", "\u0142": "l", "\u0141": "L", "\u00f8": "o", "\u00d8": "O",
+    "\u00f0": "d", "\u00d0": "D", "\u00fe": "th", "\u00de": "TH",
 })
 
 
@@ -149,7 +153,7 @@ def _recompose(text: str) -> str:
         text = text.replace("\u0e4d\u0e32", "\u0e33").replace("\u0ecd\u0eb2", "\u0eb3")
     if "\u200c" in text or "\u200d" in text:
         text = _INDIC_JOINER_RE.sub("", text)  # ZWJ/ZWNJ between Indic letters are typed or not by keyboard: `राम` must meet `रा\u200dम` (MN55); between Persian letters the ZWNJ stays a separator
-    if any("\u0386" <= c <= "\u03ce" or c in "\u1e9e\u0259\u018f" for c in text):
+    if any("\u0386" <= c <= "\u03ce" or c in "\u1e9e\u0259\u018f\u0111\u0110\u0142\u0141\u00f8\u00d8\u00f0\u00d0\u00fe\u00de" for c in text):
         text = text.translate(_GREEK_ETC)  # Greek tonos/dialytika, capital ẞ, Azeri ə: unicode61 folds none of them (MN62)
     if "\u0130" in text or "\u0131" in text:
         text = text.replace("\u0130", "i").replace("\u0131", "i")  # Turkish dotted I and dotless i: `Diyarbak\u0131r` met neither `diyarbakir` nor `D\u0130YARBAKIR` (AG72)
@@ -168,8 +172,8 @@ _EMOJI_CLASS = "".join(chr(a) + "-" + chr(b) if a != b else chr(a) for a, b in _
 _EMOJI_RE = re.compile(
     "[\U0001F1E6-\U0001F1FF]{2}"
     "|[0-9#*][\ufe0e\ufe0f]?\u20e3"
-    "|[" + _EMOJI_CLASS + "][\ufe0e\ufe0f]?[\U000E0020-\U000E007F]*"
-    "(?:\u200d[" + _EMOJI_CLASS + "][\ufe0e\ufe0f]?[\U000E0020-\U000E007F]*)*")
+    "|[" + _EMOJI_CLASS + "][\ufe0e\ufe0f]?[\U0001F3FB-\U0001F3FF]?[\U000E0020-\U000E007F]*"
+    "(?:\u200d[" + _EMOJI_CLASS + "][\ufe0e\ufe0f]?[\U0001F3FB-\U0001F3FF]?[\U000E0020-\U000E007F]*)*")
 _EMOJI_DROP = str.maketrans("", "", "\ufe0e\ufe0f\u200d")
 _SKIN_RE = re.compile("(?<=.)(?=[\U0001F3FB-\U0001F3FF]$)")
 
@@ -178,7 +182,13 @@ def _emoji_canon(cluster: str) -> str:
     """No VS15/VS16 and no ZWJ (`❤️` meets `❤`; the family sequence and a tag-sequence flag are one token each); a
     lone emoji's skin tone is a token of its own right after it, so `👍` finds `👍🏽` and `👍🏽` asks for both."""
     c = cluster.translate(_EMOJI_DROP)
-    return _SKIN_RE.sub(_CJK_SEP, c) if "\u200d" not in cluster and len(c) == 2 else c
+    if "\u200d" in cluster:
+        # MN74: a toned ZWJ sequence split at its tone into two tokens, so the untoned sequence never found it and
+        # the snippet closed mid-sequence; the untoned sequence is the token and each tone follows as its own
+        tones = [ch for ch in c if "\U0001F3FB" <= ch <= "\U0001F3FF"]
+        base = "".join(ch for ch in c if not "\U0001F3FB" <= ch <= "\U0001F3FF")
+        return _CJK_SEP.join([base] + tones) if tones and base else c
+    return _SKIN_RE.sub(_CJK_SEP, c) if len(c) == 2 else c
 
 
 def _emoji_split(text: str, sep: str = _CJK_SEP) -> str:
@@ -318,7 +328,7 @@ def _letter_fold(ch: str) -> str:
     f = _FOLD_MEMO.get(ch)
     if f is None:
         d = unicodedata.normalize("NFKD", _recompose(ch)).casefold()
-        f = "".join(c for c in d if unicodedata.category(c)[0] in "LNS")
+        f = "".join(c for c in d if unicodedata.category(c)[0] in "LNS" and not "\U0001F3FB" <= c <= "\U0001F3FF")  # a skin tone is a tail (MN74)
         if len(_FOLD_MEMO) < 65536:
             _FOLD_MEMO[ch] = f
     return f
@@ -455,6 +465,23 @@ def _snippet_from_fts(raw: str, indexed: str, orig: str) -> str:
     return raw.replace(_SNIP_OPEN, "[").replace(_SNIP_CLOSE, "]").replace(_SNIP_ELL, "...")
 
 
+def _cheap_pick(orig: str, low: str, pos: list, needle: str, cap: int = 4096) -> int:
+    """Where the term sits in the folded note text: the first occurrence that ends a word (a whole word, or a stem behind
+    an Arabic/Hebrew prefix), else the first one. The first substring bracketed another word: `cat` showed
+    `[concatenate]`, `strasse` showed `[Straßenbahn]` while the hit was further down (MN74)."""
+    first = j = low.find(needle)
+    n = 0
+    while j >= 0 and n < cap:
+        e = pos[j + len(needle) - 1] + 1
+        while e < len(orig) and _is_tail(orig[e]):
+            e += 1
+        if _word_edge(orig, e, 1) == e:
+            return j
+        j = low.find(needle, j + 1)
+        n += 1
+    return first
+
+
 def _cheap_snippet(conn, rowid, query: str, width: int = 90, orig: str = "") -> str:
     """A snippet for a note too large for FTS5's snippet(): the first query term found, in brackets, with context.
     With `orig` (the note's own text) the term is found and shown there (AG83), else in the indexed text."""
@@ -463,7 +490,7 @@ def _cheap_snippet(conn, rowid, query: str, width: int = 90, orig: str = "") -> 
         low, pos = _fold_map(orig)
         for t in terms:
             needle = _fold_map(t)[0]
-            j = low.find(needle) if needle else -1
+            j = _cheap_pick(orig, low, pos, needle) if needle else -1
             if j >= 0:
                 i, e = _word_edge(orig, pos[j], -1), pos[j + len(needle) - 1] + 1
                 while e < len(orig) and _is_tail(orig[e]):
@@ -779,7 +806,7 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
-INDEX_FORMAT = "6"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83)
+INDEX_FORMAT = "7"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74)
 
 
 def _needs_rebuild() -> bool:

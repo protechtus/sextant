@@ -103,7 +103,8 @@ def count_session_turns(path: Path, conversation_id: str, cache_file: Path) -> i
     written since the last count. Claude Code fires Stop after every reply and the summarizer parsed the
     whole transcript each time just to find that fewer than six turns were new (AG84: 1.4 s and 0.6 GB on a
     100 MB session per reply). The cache keeps the offset of the last complete line, the turns before it and
-    a hash of the 4 KB before it; a file that shrank or was rewritten is counted from the start."""
+    a hash of the 4 KB before it; a file that shrank, or whose last 4 KB before the offset changed, is counted from the start (a
+    same-size rewrite further back is not noticed: Claude Code only appends)."""
     import hashlib
     try:
         cache = json.loads(cache_file.read_text(encoding="utf-8"))

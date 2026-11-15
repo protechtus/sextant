@@ -352,6 +352,21 @@ def main() -> int:
         # only the sessions under ATLAS_HOOK_SCOPE. Not an error, so no activity record per reply.
         _sys.stderr.write(f"Sextant: session {_SESSION.get('id') or '?'} ran outside ATLAS_HOOK_SCOPE; this install's Stop hook left it alone.\n")
         return 0
+    _set_root = (_child_env.get("ATLAS_CLAUDE_CODE_ROOT") or "").strip()
+    if _set_root and _PAYLOAD.get("transcript_file"):
+        try:
+            _under = Path(_PAYLOAD["transcript_file"]).resolve().is_relative_to(Path(_set_root).resolve())
+        except (OSError, ValueError):
+            _under = False
+        if not _under:
+            # the loader honours the named file only under ATLAS_CLAUDE_CODE_ROOT; outside it the summarizer walked
+            # that root instead and summarised another (stale) copy of the session, or recorded "no turns found",
+            # with nothing on stderr (MN75). The payload names the live transcript and was already checked to be an
+            # existing file under a .../projects folder, so the children read it from its own root, and say so.
+            _tf = Path(_PAYLOAD["transcript_file"]).resolve()
+            _own = next((a for a in _tf.parents if a.name.casefold() == "projects"), _tf.parent.parent)
+            _child_env["ATLAS_CLAUDE_CODE_ROOT"] = str(_own)
+            _sys.stderr.write(f"Sextant: the Stop payload's transcript is not under ATLAS_CLAUDE_CODE_ROOT ({_set_root[:200]}); summarising it from {str(_own)[:200]} (point ATLAS_CLAUDE_CODE_ROOT at the folder Claude Code writes to, or unset it).\n")
     if root and not _child_env.get("ATLAS_CLAUDE_CODE_ROOT"):  # root set, every session of the day was summarised)
         _child_env["ATLAS_CLAUDE_CODE_ROOT"] = root
     if _PAYLOAD.get("transcript_file"):

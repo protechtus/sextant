@@ -85,6 +85,16 @@ parked copy is only a copy. Archive or delete it afterwards so `status` stops co
 under a subdirectory of `_atlas/` never syncs, so archiving it there is safe.
 The `sync` output names the parked path.
 
+### After the hub was restored from a backup
+
+A device that synced after the backup was taken notices the older hub at its next `sync`: it pulls nothing over your
+copies, parks every difference as a conflict, and says "the hub reports an older state than this device last synced (it
+was restored from a backup?)". After a restore the PARKED copy is the hub's OLDER one, so do not copy it over your file.
+Instead, on the device with the newest edits, check the parked copies against your files (anything only the hub had goes
+into your file by hand), then archive the parked folder and run `sync`: your files are pushed and the other devices pull
+them. Notes written on the hub itself (its own assistant, `remember`, an editor) count as a change too: a device refuses
+a restored hub that lost them, the same way.
+
 ## Sharing with another system (federation)
 
 ```bash

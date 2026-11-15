@@ -192,7 +192,7 @@ def test_index_format_tag_forces_a_rebuild_and_breaker_is_wired():
     from atlas_plus.mcp.memory_server import fts
     from atlas_plus.web import app as web
 
-    assert fts.INDEX_FORMAT == "6" and fts._index_format_tag() in ("", "3", "4", "5", "6", None)
+    assert fts.INDEX_FORMAT == "7" and fts._index_format_tag() in ("", "3", "4", "5", "6", "7", None)
     page = inspect.getsource(web)
     assert page.count("= httpx.AsyncClient(") == 1 and "async with httpx.AsyncClient(" not in page and "_PeerClient(" in page   # the one real client lives inside the breaker wrapper
     assert ".tk-id{{width:3.6rem" in page and "scrollIntoView" in page and "_same_bytes_as_disk" in page
@@ -345,7 +345,7 @@ def test_bitset_table_holds_indexes_and_hebrew_punctuation_survives_the_fold():
     assert "shared_bit[tok] = len(shared_bit)" in src and "ba[bit >> 3] |= 1 << (bit & 7)" in src
     assert fts._fold_marks("\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8") == "\u05d1\u05d9\u05ea\u05be\u05e1\u05e4\u05e8"   # maqaf kept
     assert fts._fold_marks("\u05e9\u05c1\u05b8\u05dc\u05d5\u05b9\u05dd") == "\u05e9\u05dc\u05d5\u05dd"                     # points folded
-    assert fts.INDEX_FORMAT == "6"  # AG83 bumped it
+    assert fts.INDEX_FORMAT == "7"  # AG83 bumped it to 6, MN74 to 7
 
 
 def test_unchanged_large_save_condition_is_live_and_breaker_clears_on_any_answer():

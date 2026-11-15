@@ -762,7 +762,7 @@ def _extract_transcript_metadata(path: Path) -> dict:
         "tokens_out": 0,
     }
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):  # splitlines() broke a turn at a raw U+2028/U+2029 and dropped it (MN75, sibling of AG84)
             line = line.strip()
             if not line:
                 continue
@@ -1034,7 +1034,7 @@ def _extract_tool_patterns(path: Path) -> dict:
     files_touched: set[str] = set()
 
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):  # splitlines() broke a turn at a raw U+2028/U+2029 and dropped it (MN75, sibling of AG84)
             line = line.strip()
             if not line:
                 continue

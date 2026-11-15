@@ -257,9 +257,12 @@ def _scan_next_num(project: str, tickets_root: Path) -> int:
     # cleared queue restarts at 001 and new tickets shadow archived history.
     archive = tickets_root / "_archive"
     if archive.exists():
+        _flat = re.compile(rf"{re.escape(_prefix_for(project, tickets_root))}-\d+", re.I)
         for f in archive.rglob("*.md"):
-            if f.name.startswith("_") or f.parent.name != project:
+            if f.name.startswith("_"):
                 continue
+            if f.parent.name != project and not (_flat and f.parent == archive and _flat.match(f.stem)):
+                continue  # a ticket dropped straight into _archive/ had its number issued again (MN73)
             m = re.search(r"-(\d+)", f.stem)
             if m:
                 existing.append(int(m.group(1)))
@@ -484,7 +487,14 @@ def get_ticket(ticket_id: str, tickets_root: Optional[Path] = None) -> Optional[
         # a bare id that names a ticket in several project folders would act on whichever the walk met first
         # (MN56: a status change rewrote an arbitrary one); the caller gets the qualified ids to choose from
         LAST_AMBIGUOUS["id"] = ticket_id
-        LAST_AMBIGUOUS["choices"] = sorted(f"{getattr(t, 'project', '') or '?'}/{t.id}" for t in _found)
+        def _folder(t):
+            try:
+                parts = Path(t.path).relative_to(root).parts
+            except (TypeError, ValueError):
+                parts = ()
+            return parts[0] if len(parts) > 1 else (getattr(t, "project", "") or "?")
+        # a renamed folder's tickets keep their frontmatter project: the hint named one folder twice (MN73)
+        LAST_AMBIGUOUS["choices"] = sorted(f"{_folder(t)}/{t.id}" for t in _found)
         return None
     return _found[0] if _found else None
 

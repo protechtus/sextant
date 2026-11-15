@@ -75,8 +75,8 @@ _MARKED_NAMES = "|" + "|".join([
     _marked("טוקן", _HE_MARKS),
     _marked("סוד", _HE_MARKS),
 ])
-_KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|client[_-]?secret|private[_-]?key"
-             r"|access[_-]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
+_KV_NAMES = (r"(?:api[_ -]?key|apikey|secret|token|password|passwd|pwd|pass|client[_ -]?secret|private[_ -]?key"
+             r"|secret[ ]key|access[_ -]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
              r"|(?:master|encryption|decryption|signing|hmac|jwt|license)[_-]?key"  # AG62: RAILS_MASTER_KEY=V leaked
              r"|パスワード|トークン|シークレット|秘密鍵|秘密|鍵|APIキー"
              r"|비밀번호|비밀|비밀키|시크릿|토큰|API키|密码|密碼|口令|令牌|密钥|密鑰|暗証番号"
@@ -84,7 +84,9 @@ _KV_NAMES = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|pass|clien
              r"|API-Schlüssel|Geheimnis|מפתח[ _]API|קוד[ _]גישה|توکن|کلید[ _]API|رمز[\u200c _]عبور|گذرواژه|رمز|سرّ?"  # MN52
              r"|пароль|токен|секрет|passwort|kennwort|mot[ _]de[ _]passe|contraseña|contrasena|senha|şifre"  # AG55: Russian, German, French, Spanish, Portuguese, Turkish
              r"|hasło|haslo|jelszó|jelszo|nenosiri|mật[ _]khẩu|mat[ _]khau|kata[ _]sandi|κωδικός[ _]πρόσβασης|συνθηματικό"  # AG68: Polish, Hungarian, Swahili, Vietnamese, Indonesian, Greek
-             r"|رمز[ _]عبور|گذرواژه|کلمه[ _]عبور" + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
+             r"|رمز[ _]عبور|گذرواژه|کلمه[ _]عبور"
+             r"|clave[ _]API|clave[ _]de[ _]API|API[ _-]?ключ|ключ[ _]API|API[ _]anahtar[ıi]|API[ ]키|API[ _]कुंजी|الرمز[ _]السري"  # MN74: two-word key names (`API key: V`, `secret key: V`, `clave API=V`, `API-ключ=V`) leaked
+             + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
 # Exact key NAMES: a bounded prefix of up to eight `_`/`-` segments (`MY_APP_PROD_EU_WEST_DB_`), an
 # optional camelCase head (`dbPassword`, `AccessToken`), the name, and up to two short suffixes
@@ -287,8 +289,8 @@ _URL_CRED_RE = re.compile(r"(://[^/\s:@]*:)([^\s/]+)(@)(?=[^\s/@]+)")  # an empt
 
 
 # ---- AG55 (sweep 18): shapes the key=value rule cannot see ------------------------------------------------------
-_NAME_ASCII = (r"(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|passphrase|client[_-]?secret|private[_-]?key"
-               r"|access[_-]?key|auth[_-]?token|credentials?)")
+_NAME_ASCII = (r"(?:api[_ -]?key|apikey|secret|token|password|passwd|pwd|passphrase|client[_ -]?secret|private[_ -]?key"
+               r"|access[_ -]?key|auth[_-]?token|credentials?)")
 _NAME_FULL = r"(?:(?:[A-Za-z0-9]{1,32}[_.-]){0,4}" + _NAME_ASCII + r"(?:[_-]?[A-Za-z0-9]{1,8})?)"  # dotted names too: `spring.datasource.password` (MN49)
 _ANY_NAME = r"(?:" + _NAME_FULL + r"|" + _KV_NAMES[3:-1] + r")"
 _VAL = r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[^\s'\"<>]{6,})"

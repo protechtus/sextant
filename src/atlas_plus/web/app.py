@@ -2750,6 +2750,7 @@ async def memory_curation_report_panel(request: Request):
 
         from atlas_plus.curation.weekly_report import curation_counts
         counts = curation_counts(report_text)
+        counts["_banded"] = "came from MinHash bands" in report_text  # MN73: the CLI and report said it, the panel did not
         return counts
 
     try:
@@ -2757,6 +2758,7 @@ async def memory_curation_report_panel(request: Request):
     except Exception as exc:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Curation report error: {_html_mod.escape(str(exc))}</div>')
 
+    banded = bool(counts.pop("_banded", False))
     total = sum(counts.values())
 
     if total == 0:
@@ -2782,6 +2784,9 @@ async def memory_curation_report_panel(request: Request):
                 f'<div class="text-{color} text-xs">'
                 f'{label}: <span class="font-semibold">{count}</span></div>'
             )
+    if banded and counts.get("duplicates"):
+        rows.append('<div class="text-slate-500 text-xs">Duplicate candidates came from MinHash bands '
+                    '(shared vocabulary); ATLAS_DUPLICATES_EXACT=on forces the exact scan.</div>')
     rows.append('</div>')
     return HTMLResponse("\n".join(rows))
 
@@ -4315,8 +4320,21 @@ async def memory_search(request: Request, q: str = ""):
         except Exception:
             return '<div class="text-red-400 text-xs">Could not scan memory directory.</div>'
 
+        from atlas_plus._fsutil import is_link
+        try:
+            _root_real = MEMORY_ROOT.resolve()
+        except OSError:
+            _root_real = MEMORY_ROOT
         for md_file in md_files:
             if "_inbox" in md_file.parts:
+                continue
+            # a note swapped for a link (or a linked folder) is not indexed and the file viewer refuses it:
+            # the grep fallback printed the target's text, even a file outside the corpus (MN74)
+            if is_link(md_file) or any(is_link(a) for a in md_file.parents if a != MEMORY_ROOT and MEMORY_ROOT in a.parents):
+                continue
+            try:
+                md_file.resolve().relative_to(_root_real)
+            except (OSError, ValueError):
                 continue
             try:
                 rel_parts = md_file.relative_to(MEMORY_ROOT).parts

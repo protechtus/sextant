@@ -192,9 +192,11 @@ def generate_report(
 
     from atlas_plus.curation import duplicates as _dupmod
     dups = find_duplicates(memory_root=root, threshold=dup_threshold, scope=scope)
+    _file_partial = list(_dupmod._LAST_PARTIAL)  # the facts scan below resets and reuses it (MN73)
     stale = find_stale(memory_root=root, months=stale_months, scope=scope)
     from atlas_plus.curation.duplicates import find_fact_duplicates
     fact_dups = find_fact_duplicates(memory_root=root, scope=scope, limit=501)
+    _fact_partial = list(_dupmod._LAST_PARTIAL)
     _capped = len(fact_dups) > 500  # the count read as a total; it was the cap (MN30)
     fact_dups = fact_dups[:500]
     from atlas_plus.mcp.memory_server.routing import downgrade_stale_confirmations
@@ -211,6 +213,7 @@ def generate_report(
         f"{sum(1 for d in fact_dups if d['kind'] == 'exact')} exact, "
         f"{sum(1 for d in fact_dups if d['kind'] != 'exact')} near)",
         "",
+        *([f"_The repeated-facts scan stopped at its time budget after {_fact_partial[0]:,} of {_fact_partial[1]:,} facts (ATLAS_DUPLICATES_BUDGET_SECONDS): the count is a floor._", ""] if _fact_partial[1] else []),
         *[f"- {d['kind']}: `{d['file1']}` and `{d['file2']}`: {d['fact'][:120]}" for d in _diverse(fact_dups, 30)],
         *([f"- ... and {len(fact_dups) - 30} more (`atlas-review-memory duplicates --facts --json`)"]
           if len(fact_dups) > 30 else []),
@@ -220,7 +223,7 @@ def generate_report(
         *[f"- `{c['path']}` ({c['age_days']} days; `memory_confirm_tool` when still true, or archive)" for c in never[:30]],
         *([f"- ... and {len(never) - 30} more (`atlas-review-memory unconfirmed-decay --json`)"] if len(never) > 30 else []),
         "",
-        *([f"_The duplicate scan stopped at its time budget after {_dupmod._LAST_PARTIAL[0]:,} of {_dupmod._LAST_PARTIAL[1]:,} notes (ATLAS_DUPLICATES_BUDGET_SECONDS)._", ""] if _dupmod._LAST_PARTIAL[1] else []),
+        *([f"_The duplicate scan stopped at its time budget after {_file_partial[0]:,} of {_file_partial[1]:,} notes (ATLAS_DUPLICATES_BUDGET_SECONDS)._", ""] if _file_partial[1] else []),
         *(["_Candidate pairs came from MinHash bands (a shared vocabulary made the exact scan quadratic): a pair at the threshold is found with probability 99% or more; similarities are exact (ATLAS_DUPLICATES_EXACT=on forces the exact scan)._", ""] if _dupmod._LAST_APPROX[0] else []),
         f"## Potential Duplicates ({len(dups)}{'+' if _dupmod._LAST_CAPPED else ''} found{' (capped at ' + str(_dupmod._MAX_FILE_PAIRS) + ')' if _dupmod._LAST_CAPPED else ''}, threshold={dup_threshold})",
         "",
