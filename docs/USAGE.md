@@ -58,6 +58,13 @@ plain keyword otherwise, automatically). For targeted reads there are
 `memory_topics_tool` (the tag index). If you maintain a local research
 library, `research_search_tool` searches it with citations.
 
+Keyword search folds case and accents (`zurich` finds `Zürich`, `kobenhavn` finds `København`), and a word typed with
+`å`, `ø`, `ö` or `ä` also finds its spelling with `aa`, `oe` or `ae` (`Ålborg` finds `Aalborg`). The other direction is
+not folded: `aalborg` finds only `Aalborg`, since treating `aa` as `å` would merge Finnish and Dutch words (`saada` and
+`sada`). Words are matched whole, with an English stemmer: a Danish, Norwegian, Swedish, Finnish or Icelandic compound
+or definite form is its own word, so `sommerhus` does not find `sommerhusudlejning` and `hus` does not find `huset`; add
+a star for the prefix (`sommerhus*`, `hus*`). The second part of a compound (`udlejning`) is not found. <!-- AG91 -->
+
 ## Keeping memory honest
 
 Facts go stale; a memory system that cannot say "this might be outdated"

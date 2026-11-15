@@ -75,6 +75,17 @@ _MARKED_NAMES = "|" + "|".join([
     _marked("טוקן", _HE_MARKS),
     _marked("סוד", _HE_MARKS),
 ])
+# AG91: Danish, Norwegian (bokmal and nynorsk), Swedish, Finnish, Icelandic and Faroese key names in their bare, definite
+# and plural forms (`kodeord: V`, `nøglen: V`, `API-nøgle: V`, `hemmelighed: V`, `lykilorð: V` leaked); compounds such as
+# `klienthemmelighed` and `db_kodeord` come through the camel head and the prefix segments
+# AG91c: a decomposed letter (a macOS paste: `o` + U+0308) matches too
+_NORDIC_NAMES = (r"|kodeord(?:et|ene)?|adgangskode(?:n|r|rne)?|passord(?:et|ene)?|l[øo]sen(?:et)?|l(?:ö|o\u0308?)senord(?:et|en)?"
+                 r"|n[øo]gle(?:n|r|rne)?|n[øo]kkel(?:en)?|n[øo]kler(?:ne)?|n[øo]klene|nykel(?:en)?|nyklar(?:ne)?|nyckel(?:n)?|nycklar(?:na)?"
+                 r"|hemmelighed(?:en|er|erne)?|hemmelighet(?:en|er|ene)?|hemmelegheit(?:a|er|ene)?|l[øo]yndom(?:en|ar|ane)?|hemlighet(?:en|er|erna)?"
+                 r"|pin[_ -]?kode(?:n|r|rne)?|pin[_ -]?kod(?:en|er|erna)?|pin[_ -]?koodi|pin[_ -]?n(?:ú|u\u0301?)mer(?:i[ðd])?|pin[_ -]?kota(?:n)?"
+                 r"|adgangsfrase(?:n)?|passfrase(?:n)?|l(?:ö|o\u0308?)senfras(?:en)?|tunnuslause|tunnussana|salasana(?:n|t)?|salaisuus|avain"
+                 r"|lykilor[ðd](?:i[ðd]|in)?|a[ðd]gangsor[ðd](?:i[ðd])?|loynior[ðd](?:i[ðd])?|lykill(?:inn)?|lykil(?:in)?"
+                 r"|leyndarm(?:á|a\u0301?)l(?:i[ðd])?|loyndarm(?:á|a\u0301?)l(?:i[ðd])?|adgangstoken(?:et)?|tilgangstoken(?:et)?|(?:å|a\u030a?)tkomsttoken(?:et)?|p(?:ä|a\u0308?)(?:ä|a\u0308?)sytunnus|tokenet|tokeni")
 _KV_NAMES = (r"(?:api[_ -]?key|apikey|secret|token|password|passwd|pwd|pass|client[_ -]?secret|private[_ -]?key"
              r"|secret[ ]key|access[_ -]?key|auth[_-]?token|session[_-]?key|bearer|csrf[_-]?token|credentials?|passphrase"
              r"|(?:master|encryption|decryption|signing|hmac|jwt|license)[_-]?key"  # AG62: RAILS_MASTER_KEY=V leaked
@@ -85,6 +96,7 @@ _KV_NAMES = (r"(?:api[_ -]?key|apikey|secret|token|password|passwd|pwd|pass|clie
              r"|пароль|токен|секрет|passwort|kennwort|mot[ _]de[ _]passe|contraseña|contrasena|senha|şifre"  # AG55: Russian, German, French, Spanish, Portuguese, Turkish
              r"|hasło|haslo|jelszó|jelszo|nenosiri|mật[ _]khẩu|mat[ _]khau|kata[ _]sandi|κωδικός[ _]πρόσβασης|συνθηματικό"  # AG68: Polish, Hungarian, Swahili, Vietnamese, Indonesian, Greek
              r"|رمز[ _]عبور|گذرواژه|کلمه[ _]عبور"
+             + _NORDIC_NAMES +
              r"|clave[ _]API|clave[ _]de[ _]API|API[ _-]?ключ|ключ[ _]API|API[ _]anahtar[ıi]|API[ ]키|API[ _]कुंजी|الرمز[ _]السري"  # MN74: two-word key names (`API key: V`, `secret key: V`, `clave API=V`, `API-ключ=V`) leaked
              + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
@@ -99,7 +111,7 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 # scan to word starts, so a 1 MB blob costs one attempt per word, not per character.
 _KV_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_\-\u0590-\u05ff\u0600-\u06ff])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
-    r"(?![A-Za-z0-9])"
+    r"(?![A-Za-z0-9\u00c0-\u024f])"
     r"(['\"]?\]?\s*[=:：＝]\s*(?:r(?=['\"]))?(?:(?:&[\w-]{1,64}|!![a-z]{1,16})[ \t]+)?)"  # AG62: the environ-subscript assignment `environ['DB_PASS...'] = 'V'` and `params[:password] = V` leaked; AG68: a YAML anchor or core tag before the value (`password: &pw V`, `password: !!str V`)
     r"(\"\"\"[^\n]{4,}?\"\"\"|'''[^\n]{4,}?'''"  # AG68: a TOML multi-line basic or literal string on one line leaked whole
     r"|\"(?:[^\"\\\n]|\\[^\n]){4,}\"|\"[^\"\n]{4,}\""  # AG68: an escaped quote inside a JSON string value (`\"`) ended the match early and leaked the value
@@ -148,7 +160,12 @@ _ENVREF_RE = re.compile(r"^\$[A-Z_][A-Z0-9_]*$|^!!?[A-Za-z][A-Za-z/_.-]*$")
 _STATUS_RE = re.compile(r"(?i)[\[(<]?(?:required|optional|expired|missing|invalid|hidden|redacted|undefined|string|str|secretstr|unset|empty|none|null|incorrect|wrong|rejected|refreshing|n/a"
                         r"|pending|revoked|rotated|changed|updated|renewed|unchanged|deprecated|disabled|regenerated|pendiente|revocada|revocado|geändert|widerrufen|révoqué|révoquée|отозван|изменён|изменен"  # AG85: the English siblings of MN58's Turkish `değiştirildi`/`yenilendi` (`API key: revoked`, `token: pending` were masked)
                         r"|abgelaufen|ungültig|fehlt|erforderlich|falsch|leer|expiré|expirée|invalide|manquant|requis|incorrect|vide|expirada|expirado|caducada|caducado|inválida|inválido|obrigatória|requerida|incorreta|incorrecta|vazia|vacía"
-                        r"|истёк|истек|истекла|неверный|неверно|недействителен|отсутствует|обязателен|пустой|süresi[ \t]doldu|geçersiz|boş|değiştirildi|güncellendi|sıfırlandı|ayarlandı|yenilendi)[\])>]?[;,.]*")  # the status words of the other Latin and Cyrillic languages too (MN58)
+                        r"|истёк|истек|истекла|неверный|неверно|недействителен|отсутствует|обязателен|пустой|süresi[ \t]doldu|geçersiz|boş|değiştirildi|güncellendi|sıfırlandı|ayarlandı|yenilendi"
+                        r"|påkrævet|påkrævede|udløbet|ugyldig|ugyldigt|mangler|forkert|tomt|ændret|nulstillet|tilbagekaldt|skjult|valgfri|valgfrit|deaktiveret|fornyet"  # AG91: Danish
+                        r"|påkrevd|påkravd|utløpt|utgått|manglar|feil|endret|endra|tilbakestilt|tilbakekalt|valfri|deaktivert"  # Norwegian bokmal and nynorsk
+                        r"|obligatorisk|obligatoriskt|krävs|utgånget|utgången|ogiltigt|ogiltig|saknas|felaktigt|felaktig|ändrat|ändrad|återställt|återkallad|återkallat|dolt|dold|valfritt"  # Swedish
+                        r"|vaadittu|pakollinen|vanhentunut|virheellinen|puuttuu|väärä|tyhjä|muutettu|nollattu|peruttu|piilotettu|valinnainen"  # Finnish
+                        r"|krafist|útrunnið|ógilt|ógildur|vantar|rangt|tómt|breytt|endurstillt|falið|valfrjálst|kravt|útgingið|ógyldugt|skeivt|broytt)[\])>]?[;,.]*")  # Icelandic, Faroese  # the status words of the other Latin and Cyrillic languages too (MN58)
 _WORDISH_RE = re.compile(r"[^\d\s!-/:-@\[-`{-~]+[,.;:!?]?")
 _DOC_WORDS = frozenset({"password", "pass", "passwd", "pwd", "secret", "token", "user", "username", "yourpassword", "your_password", "changeme", "arg", "args", "file", "env", "fd", "stdin", "anonymous", "guest", "x-oauth-basic"})
 
@@ -601,6 +618,11 @@ _PW_WORDS = (
     "رمز عبور", "گذرواژه", "پاس ورڈ", "پاسورڈ", "पासवर्ड", "পাসওয়ার্ড", "கடவுச்சொல்", "మనపదం", "పాస్‌వర్డ్", "පාස්වර්ඩ්", "මුරපදය",
     "പാസ്‌വേഡ്", "ಪಾಸ್‌ವರ್ಡ್", "รหัสผ่าน", "ລະຫັດຜ່ານ", "ពាក្យសម្ងាត់", "စကားဝှက်", "གསང་ཚིག", "პაროლი", "գաղտնաբառ",
     "密码", "密碼", "口令", "パスワード", "暗証番号", "비밀번호", "암호",
+    # AG91: Danish, Norwegian, Swedish, Finnish, Icelandic, Faroese (a substring test: `kodeordet`, `nøglerne`, `API-nyckeln` count)
+    "kodeord", "løsen", "nøgle", "nøkkel", "nøkle", "nykel", "nyckel", "nyckl", "hemmelighed", "hemmelighet", "hemmelegheit", "løyndom",
+    "hemlighet", "pinkode", "pin-kode", "pinkod", "pin-kod", "pin-koodi", "pin-númer", "pin-kota", "adgangsfrase", "passfrase", "lösenfras",
+    "tunnuslause", "tunnussana", "avain", "avaime", "salaisuus", "lykilorð", "aðgangsorð", "loyniorð", "lykil", "leyndarmál", "loyndarmál",
+    "adgangstoken", "tilgangstoken", "åtkomsttoken", "pääsytunnus", "tokenet", "tokenen", "tokeni",
 )
 _PW_TOKEN_RE = re.compile(r"(?<![!-~])[!-~]{8,128}")
 _PW_SYMBOLS = set("!@#$%^&*+~?")
@@ -631,7 +653,11 @@ _VALUE_CUE_RE = re.compile(
     r"(?:\b(?:is|was|are|ist|lautet|est|es|era|é|è|är|er|je|jest|to|on|là|adalah|ialah|είναι|ειναι)\b"
     r"|(?:היא|הוא|هي|هو|คือ|是|为|為)"
     r"|[:=：＝—–])[ \t]*['\"`(\[「『“]?$", re.IGNORECASE)
-_WEAK_CUES = {"on": ("salasana",), "to": ("hasło", "haslo", "hasla"), "je": ("heslo",), "er": ("adgangskode", "passord", "kodeord"),
+_NORDIC_ER = ("adgangskode", "passord", "kodeord", "løsen", "nøgle", "nøkkel", "nøkle", "nykel", "hemmelighed", "hemmelighet",
+              "hemmelegheit", "løyndom", "pinkode", "pin-kode", "adgangsfrase", "passfrase", "lykilorð", "aðgangsorð", "loyniorð", "lykil",
+              "leyndarmál", "loyndarmál", "adgangstoken", "tilgangstoken", "tokenet", "tokenen", "pin-númer", "pin-kota")  # AG91: `er` is the copula of every one
+_WEAK_CUES = {"on": ("salasana", "avain", "avaime", "salaisuus", "pin-koodi", "tunnuslause", "tunnussana", "tokeni", "pääsytunnus"),
+              "to": ("hasło", "haslo", "hasla"), "je": ("heslo",), "er": _NORDIC_ER,
               "es": ("contraseña", "contrasena", "clave"), "est": ("mot de passe",), "ist": ("passwort", "kennwort")}  # cue -> the password words of its language
 _PARTICLE_CUE_RE = re.compile(r"(?:は|が|는|은|이|가)[ \t]*['\"`(\[「『“]?$")  # topic particles: a cue only with the verb-final ending too
 # verb-final languages put the cue AFTER the value: `पासवर्ड V है`, `رمز عبور V است`, `パスワードはVです`, `V 입니다`, `V -dir` (MN68)
@@ -642,7 +668,7 @@ _LINE_ENDS_WITH_CUE_RE = re.compile(r"(?:[:=：]|\b(?:is|below|unten|abajo|ci-de
 _LIST_MARK_RE = re.compile(r"^(?:[-*+•>]|\d{1,3}[.)])[ \t]+")  # `- V`, `> V`, `1. V` under `password is:` (AG79)
 # a qualifier longer than 20 characters still binds the cue when it is a prepositional phrase or a comma clause:
 # `The password for the staging database is V`, `the wifi password, which I set yesterday, is V` (AG79)
-_QUALIFIER_RE = re.compile(r"^(?:[,(]|(?:for|of|on|at|in|to|from|used|that|which|für|des|der|del|de|du|pour|para|per|dla|do|na|van|voor)\b)", re.IGNORECASE)
+_QUALIFIER_RE = re.compile(r"^(?:[,(]|(?:for|of|on|at|in|to|from|used|that|which|für|des|der|del|de|du|pour|para|per|dla|do|na|van|voor|til|till|for|för|fyrir|af|av|på|hos|að|á|mitt|mit|min|mín|dit|ditt|vores|vårt|okkar)\b)", re.IGNORECASE)
 
 
 def _secret_shaped(tok: str, value_slot: bool = False) -> bool:
@@ -680,6 +706,9 @@ def _keyword_line_redact(text: str) -> str:
             return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
         before = m.string[max(0, m.start() - 80):m.start()].rstrip(" \t")
         after = m.string[m.end():m.end() + 16]
+        if not before.isascii():
+            import unicodedata as _ud1
+            before = _ud1.normalize("NFC", before)  # AG91: the cues are matched on composed letters
         slot = carried
         if not slot:
             bprobe = _strip_marks(before).casefold()
@@ -688,7 +717,8 @@ def _keyword_line_redact(text: str) -> str:
                 pos, w = max(hits)
                 gap = bprobe[pos + len(w):].strip(" \t'\"`(「『“")
                 rest = m.string[m.end():].split("\n", 1)[0].strip(" \t.,;:!?。、」』”)")
-                close = len(gap) <= 20 or (len(gap) <= 60 and bool(_QUALIFIER_RE.match(gap)) and not re.search(r"[.;!?。]", gap))  # the word, a qualifier (`de root`, `for the staging database`), the cue
+                gap_q = re.sub(r"^\w{1,4}[ \t]+", "", gap)  # AG91b: past a definite or plural ending (`Adgangskoden til den nye database på serveren er V`)
+                close = len(gap) <= 20 or (len(gap) <= 60 and bool(_QUALIFIER_RE.match(gap) or _QUALIFIER_RE.match(gap_q)) and not re.search(r"[.;!?。]", gap))  # the word, a qualifier (`de root`, `for the staging database`), the cue
                 _cue = _VALUE_CUE_RE.search(before)
                 if _cue and close:
                     _cw = _cue.group(0).strip(" \t'\"`([「『“:=：＝—–").casefold()

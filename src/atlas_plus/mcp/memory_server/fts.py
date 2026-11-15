@@ -350,14 +350,65 @@ def _quoted_term(t: str, cjk: bool = False) -> str:
     return parts[0] if len(parts) == 1 else "(" + " AND ".join(parts) + ")"
 
 
+_LATIN_FOLD: dict = {}
+
+
+def _latin_fold_table() -> dict:
+    """AG91: search's tokenizer strips the diacritics of Latin letters (remove_diacritics 2), so `Göteborg` and `Goteborg`,
+    `päivää` and `paivaa` are one word to search; the duplicate scans kept them apart (a Swedish or Finnish fact retyped
+    without its letters was never a repeat, while Danish `ø`, folded by `_recompose`, was). One table, built once."""
+    if not _LATIN_FOLD:
+        for c in list(range(0x00C0, 0x0250)) + list(range(0x1E00, 0x1F00)):
+            ch = chr(c)
+            base = "".join(x for x in unicodedata.normalize("NFD", ch) if not unicodedata.combining(x))
+            if base != ch and base:
+                _LATIN_FOLD[c] = base
+    return _LATIN_FOLD
+
+
 def _dup_fold(text: str) -> str:
     """Search's word folds for the duplicate scans (AG89): an Arabic/Hebrew prefix dropped the way an unquoted query
     drops it (`השרת` is `שרת`, `الخادم` is `خادم`) and every emoji cluster in its untoned canonical form between spaces
     (`👍🏽` is `👍`, `❤️` is `❤`). Run it after `_recompose` and `_fold_marks`; ASCII text comes back unchanged."""
     if text.isascii():
         return text
+    text = unicodedata.normalize("NFC", text).translate(_latin_fold_table())  # AG91: diacritics as search folds them
     text = _EMOJI_RE.sub(lambda m: " " + _emoji_canon(m.group(0)).split(_CJK_SEP)[0] + " ", text)
     return _affix_split(text, keep_prefix=False).replace(_CJK_SEP, " ")
+
+
+# AG91: Danes, Norwegians, Swedes and Germans type å/ø/ö/ä as aa/oe/oe/ae when the keyboard lacks them, and the official
+# spelling is often the digraph (`Aalborg`, `Aarhus`). An unquoted query word that HOLDS one of the letters also matches its
+# digraph spelling: `Ålborg` finds `Aalborg`, `København` finds `Koebenhavn`. Only that direction: folding a typed `aa`/`oe`
+# onto the letter merged 1,736 of the 7,430 Finnish `aa` words with another word (`saada`/`sada`, 5.1% of running text) and
+# `oe` merged `poet`/`pot`, `does`/`dos` (measured on wordfreq's top-50,000 lists, docs/SEARCH.md).
+_NORDIC_LETTER_RE = re.compile("[\\w*]*[\u00e5\u00c5\u00f8\u00d8\u00f6\u00d6\u00e4\u00c4][\\w*]*")
+_NORDIC_DIGRAPHS = str.maketrans({"\u00e5": "aa", "\u00c5": "Aa", "\u00f8": "oe", "\u00d8": "Oe", "\u00f6": "oe", "\u00d6": "Oe",
+                                  "\u00e4": "ae", "\u00c4": "Ae"})
+_NORDIC_OPEN, _NORDIC_MID, _NORDIC_CLOSE = "\ue014", "\ue015", "\ue016"   # private: turned into the MN80 alternatives after the folds
+_NORDIC_STRIP = {ord(c): " " for c in (_NORDIC_OPEN, _NORDIC_MID, _NORDIC_CLOSE)}
+_NORDIC_TO_ALT = str.maketrans({_NORDIC_OPEN: _ALT_OPEN, _NORDIC_MID: _ALT_MID, _NORDIC_CLOSE: _ALT_CLOSE})
+
+
+def _nordic_mark(q: str) -> str:
+    """Mark every unquoted word with a Nordic letter as (word, digraph spelling); NFKC-composed input expected."""
+    q = q.translate(_NORDIC_STRIP)
+    if q.isascii() or not _NORDIC_LETTER_RE.search(q):
+        return q
+
+    def mark(m: "re.Match") -> str:
+        w = m.group(0)
+        star = "*" if w.endswith("*") else ""
+        core = w.rstrip("*")
+        if "*" in core or not core:
+            return w
+        return _NORDIC_OPEN + core + _NORDIC_MID + core.translate(_NORDIC_DIGRAPHS) + _NORDIC_CLOSE + star
+    parts = q.split('"')
+    return '"'.join(part if i % 2 else _NORDIC_LETTER_RE.sub(mark, part) for i, part in enumerate(parts))
+
+
+def _nordic_finish(q: str) -> str:
+    return q.translate(_NORDIC_TO_ALT) if _NORDIC_OPEN in q else q
 
 
 def _query_words(q: str) -> str:
@@ -624,7 +675,7 @@ def _bigram_fallback(raw: str) -> str:
     characters or more becomes its overlapping bigrams OR-ed together (ranked by how many the
     note shares), Latin terms stay as they are. A natural Japanese sentence found nothing
     because each run had to match whole (MN23). Empty string when it does not apply."""
-    q = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", raw))).replace(_SENTINEL, " "))  # the index holds recomposed sara am: decomposed bigrams never matched (MN62)
+    q = _nordic_finish(_query_words(_fold_marks(_recompose(_nordic_mark(unicodedata.normalize("NFKC", raw)))).replace(_SENTINEL, " ")))  # the index holds recomposed sara am: decomposed bigrams never matched (MN62)
     if not _CJK_RUN_RE.search(q):
         return ""
     long_runs = [m.group(0) for m in _CJK_RUN_RE.finditer(q) if len(m.group(0)) >= 3]
@@ -651,7 +702,7 @@ def _bigram_fallback(raw: str) -> str:
 def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
-    q = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", query))).replace(_SENTINEL, " "))
+    q = _nordic_finish(_query_words(_fold_marks(_recompose(_nordic_mark(unicodedata.normalize("NFKC", query)))).replace(_SENTINEL, " ")))
     q = re.sub(r"(?<=\S):(?=\S)", " ", q)  # `alpha:beta` is two words, not an FTS5 column filter (AG46: a silent miss)
     if _CJK_RE.search(q):
         q = " ".join(_CJK_RUN_OR_CHAR_RE.sub(lambda m: ' "' + _CJK_SEP.join(m.group(0)) + '" ', q).split())
@@ -1477,8 +1528,8 @@ def search(query: str, scope: str = "", limit: int = 10,
             # punctuated token ("config.toml AppData") used to drop straight to a literal
             # phrase, which only matches the words adjacent in that order and so returned
             # nothing although every word was on disk (deep install lanes 2026-11-09).
-            folded = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", _raw))).replace('"', " "))
-            tokens = [t for t in folded.split() if t]  # folded like the main query (AG83: `Straße.` and `الخادم,` kept the raw form here)
+            folded = _nordic_finish(_query_words(_fold_marks(_recompose(_nordic_mark(unicodedata.normalize("NFKC", _raw).replace('"', " "))))))
+            tokens = [t for t in folded.split() if any(c.isalnum() for c in t)]  # AG91: a bare `(` became the empty phrase `"("`, and AND-ed to an alternatives group it matched nothing; folded like the main query (AG83: `Straße.` and `الخادم,` kept the raw form here)
             if len(tokens) > 1 or _ALT_OPEN in folded:
                 terms = [_quoted_term(t, cjk=True) for t in tokens]
                 tokenized = (" AND " if _ALT_OPEN in folded else " ").join(terms)

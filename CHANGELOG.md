@@ -19,6 +19,19 @@ public tree.
 
 ## [Unreleased]
 
+### Sweep 24, agentic wave (AG91: the Nordic languages)
+
+- Redaction: Danish, Norwegian (bokmal and nynorsk), Swedish, Finnish, Icelandic and Faroese key names (`kodeord`,
+  `nøgle`/`nøglen`/`nøglerne`, `API-nøgle`, `hemmelighed`, `lykilorð`, `loyniorð`, `nyckel`, `avain`, PIN and passphrase
+  words) in their definite and plural forms, the same words on the keyword-line pass with `er`/`on` as copulas, the
+  `til`/`till`/`för` qualifiers after a definite ending (`Adgangskoden til den nye database på serveren er V`), NFD text
+  (`Lösenordet är V`) and the Nordic status words (`påkrævet`, `saknas`, `puuttuu`) as labels: 153 of 202 probe lines
+  leaked, now 0; 89 ordinary sentences unchanged before and after.
+- Search: a query word with `å`/`ø`/`ö`/`ä` also finds its `aa`/`oe`/`ae` spelling (`Ålborg` finds `Aalborg`) on the
+  CLI, MCP and dashboard; the reverse is not folded (measured: it merges 5% of running Finnish text). The syntax
+  fallback no longer AND-s an empty phrase (`Ålborg (` found nothing). No index rebuild (INDEX_FORMAT stays 9).
+- Duplicates: the file and fact scans fold Latin diacritics as search does (`Göteborg`/`Goteborg`, `päivää`/`paivaa`).
+
 ### Sweep 16, agentic wave (2026-11-13 evening)
 
 - Redaction: camelCase and long-prefixed key names (`dbPassword`, `MY_APP_PROD_EU_WEST_DB_PASSWORD`), `SECRET_KEY_BASE`, `*_HASH`, `*_v2`, `bearer`, `csrftoken`, `credentials`, Korean and Chinese key names, quoted values with spaces, CLI flags (`--token`), `Authorization: Basic`, passwords holding `@` in URLs; full-width folding touches only the masked value; a placeholder like `********` is left alone.
