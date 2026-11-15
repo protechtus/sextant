@@ -177,6 +177,7 @@ def create_app() -> FastAPI:
             "name": principal.name, "kind": principal.kind,
             "scope": principal.scope, "prefixes": list(principal.prefixes),
         }
+        result["generation"] = store.hub_generation()  # devices notice a hub restored from an older backup (MN71)
         store.audit("manifest", device=device.name, files=len(result["files"]))
         return result
 
@@ -289,7 +290,9 @@ def create_app() -> FastAPI:
             )
             results.append(outcome)
         _invalidate_manifest_cache()  # the corpus just changed
-        return {"results": results}
+        if any(r.get("result") == "applied" for r in results):
+            store.bump_hub_generation()
+        return {"results": results, "generation": store.hub_generation()}  # the device records the exact number
 
     @app.post("/sync/v1/checkin")
     async def checkin(

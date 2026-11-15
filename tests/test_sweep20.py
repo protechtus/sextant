@@ -247,6 +247,7 @@ def test_reset_all_refuses_before_wiping_when_state_would_refuse(tmp_path, monke
     state = tmp_path / "state"
     state.mkdir()
     (state / u.STATE_MARKER).write_text("", encoding="utf-8")                    # marker, no Sextant state at all
+    (state / "somebody-else.txt").write_text("x", encoding="utf-8")           # ...and a file that is not Sextant's (marker-only is "nothing to clear" since MN72)
     monkeypatch.setattr(u.atlas_paths, "state_dir", lambda: state)
     monkeypatch.setattr(u, "validate_destructive_target", lambda *a, **k: "")
     assert u.derived_state_refusal().startswith("REFUSED")

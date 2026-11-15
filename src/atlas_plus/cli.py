@@ -373,6 +373,8 @@ def _fact_is_blank(fact: str) -> bool:
 
 def _stdin_looks_mangled(text: str) -> bool:
     if re.search(r"[A-Za-z]\?[A-Za-z]", text) or re.search(r"(?:^|\s)\?[A-Za-z]", text) or (text.strip() and set(text.strip()) <= {"?"}):
+        return True
+    if re.search(r"(?<=[A-Za-z ])\?{2,}(?=[A-Za-z ])", text):  # `Gr??e`, `lives in ?? now`: two accents or a CJK word lost in an ASCII pipe (MN72)
         return True  # a `?` between letters: `caf? na?ve` is an accent lost in an ASCII pipe (MN60: two accents slipped through)
     if "\ufffd" in text:
         return True

@@ -147,3 +147,77 @@ def test_import_scope_accepts_remember_grammar():
     from atlas_plus import import_cmd
     assert import_cmd._safe_scope("reference:vault2").replace("\\", "/").endswith("reference/vault2")
 
+
+# ---------------------------------------------------------------- MN71 (two devices for a week)
+def _hub_and_spoke(tmp_path, monkeypatch):
+    hub, spoke = tmp_path / "hub", tmp_path / "spoke"
+    (hub / "reference").mkdir(parents=True)
+    (spoke / "reference").mkdir(parents=True)
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(hub))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ATLAS_SYNC_MANIFEST_TTL", "0")
+    from fastapi.testclient import TestClient
+    from atlas_plus.sync import api, devices
+    from atlas_plus.sync.client import SyncClient
+    _, tok = devices.pair("laptop")
+    return hub, spoke, SyncClient(token=tok, http_client=TestClient(api.create_app(), raise_server_exceptions=False))
+
+
+def test_a_restored_hub_does_not_roll_a_device_back(tmp_path, monkeypatch):
+    import shutil
+    from atlas_plus.sync import store
+    hub, spoke, c = _hub_and_spoke(tmp_path, monkeypatch)
+    (spoke / "reference" / "a.md").write_text("v1", encoding="utf-8")
+    c.sync_once(spoke)
+    backup = tmp_path / "backup"
+    shutil.copytree(hub, backup / "hub")
+    shutil.copytree(store.sync_dir(), backup / "sync")                 # the state the docs say to restore
+    (spoke / "reference" / "a.md").write_text("v2 newer", encoding="utf-8")
+    assert c.sync_once(spoke).pushed == ["reference/a.md"]
+    shutil.rmtree(hub)
+    shutil.copytree(backup / "hub", hub)                                 # restore yesterday's hub, pairings included
+    for name in ("generation", "devices.json"):  # the hub's own state; in this test the device shares the folder, so its base stays
+        shutil.copy2(backup / "sync" / name, store.sync_dir() / name)
+    r = c.sync_once(spoke)
+    assert (spoke / "reference" / "a.md").read_text(encoding="utf-8") == "v2 newer"   # never pulled over
+    assert not r.pulled and any("restored from a backup" in e for e in r.errors)
+
+
+def test_more_than_500_changes_push_in_batches(tmp_path, monkeypatch):
+    hub, spoke, c = _hub_and_spoke(tmp_path, monkeypatch)
+    for i in range(620):
+        (spoke / "reference" / f"n{i}.md").write_text(f"note {i}", encoding="utf-8")
+    r = c.sync_once(spoke)
+    assert len(r.pushed) == 620 and not r.errors
+    assert len(list((hub / "reference").glob("n*.md"))) == 620
+
+
+# ---------------------------------------------------------------- MN72 (newcomer and upgrade)
+def test_mn72_upper_md_is_indexed(tmp_path, monkeypatch):
+    from atlas_plus.mcp.memory_server import fts
+    mem = tmp_path / "mem"
+    (mem / "reference").mkdir(parents=True)
+    (mem / "reference" / "UPPER.MD").write_text("the axolotl lives here", encoding="utf-8")
+    monkeypatch.setattr(fts, "MEMORY_ROOT", mem)
+    monkeypatch.setattr(fts, "FTS_DB", tmp_path / "state" / "fts.sqlite")
+    fts.rebuild(force=True)
+    assert any(r["path"].endswith("UPPER.MD") for r in fts.search("axolotl"))
+
+
+def test_mn72_reset_state_right_after_init_is_nothing_to_clear(tmp_path, monkeypatch):
+    from atlas_plus import uninstall_cmd as u
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / u.STATE_MARKER).write_text("", encoding="utf-8")
+    monkeypatch.setattr(u.atlas_paths, "state_dir", lambda: state)
+    monkeypatch.setattr(u, "validate_destructive_target", lambda *a, **k: "")
+    assert u.derived_state_refusal() is None
+    assert "nothing to clear" in u.clear_derived_state(yes=True)
+
+
+def test_mn72_double_question_marks_in_a_pipe_are_refused():
+    from atlas_plus.cli import _stdin_looks_mangled
+    assert _stdin_looks_mangled("Gr??e")
+    assert _stdin_looks_mangled("the staging server lives in ?? now")
+    assert not _stdin_looks_mangled("is it done? yes")
+

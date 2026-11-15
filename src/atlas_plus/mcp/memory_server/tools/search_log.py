@@ -89,7 +89,7 @@ def log_search(
             # Redact BEFORE the cut: a token straddling character 300 left its first half in the
             # log (MN8, sweep 10). The window is four times the kept length (search already caps
             # queries at 2,000 characters), so the regexes never run over a 50 MB string.
-            "query": redact(query[:QUERY_KEEP * 4])[:QUERY_KEEP],
+            "query": redact(query[:QUERY_KEEP * 64])[:QUERY_KEEP],  # redaction can shorten the head: a cut at 4x left a secret's first characters in the window (MN68)
             "query_chars": len(query),
             "scope": scope or "",
             "top_score": round(top_score, 4),

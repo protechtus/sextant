@@ -2972,3 +2972,17 @@ def test_ag75_board_is_capped_and_says_how_many_more():
     assert r.status_code == 200 and "10 more ticket(s) not shown" in r.text
     assert r.text.count("BLK-") < 1100                                          # 500 rows, not 510
 
+
+def test_mn70_markup_in_task_and_ticket_fields_is_text():
+    from atlas_plus.tickets import store as _tstore
+    d = Path(_tstore.TICKETS_ROOT) / "xssmn70"
+    d.mkdir(parents=True, exist_ok=True)
+    bad = "<img src=x onerror=alert(1)>"
+    (d / "XSS-001.md").write_text(
+        f"---\nid: XSS-001\ntitle: t\nproject: xssmn70\nstatus: '{bad}'\nassignee: human\npriority: normal\n"
+        "effort: M\nupdated: 2026-11-01\n---\nb\n", encoding="utf-8")
+    r = client.get("/api/tickets/board?project=xssmn70&status_filter=all", headers=AUTH)
+    assert r.status_code == 200 and "<img" not in r.text and "&lt;img" in r.text
+    r2 = client.get("/api/tickets/xssmn70/XSS-001/detail", headers=AUTH)
+    assert "<img" not in r2.text
+

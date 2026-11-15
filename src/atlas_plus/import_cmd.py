@@ -1117,6 +1117,12 @@ def _detect_source(src: Path) -> str | None:
 
 
 def main() -> None:
+    import sys as _sys
+    for _st in (_sys.stdout, _sys.stderr):  # a Japanese or emoji file name crashed the report in a cp1252 console or pipe (MN72)
+        try:
+            _st.reconfigure(errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
     parser = argparse.ArgumentParser(
         prog=_prog(),
         description="Import existing knowledge (report first; --yes to execute).",

@@ -427,7 +427,7 @@ def _walk_memory():
             keep.append(name)
         dirnames[:] = keep
         for name in sorted(filenames):
-            if not name.endswith(".md") or name == "_README.md":
+            if not name.lower().endswith(".md") or name == "_README.md":  # `UPPER.MD` was imported but never indexed (MN72)
                 continue   # _README.md: sextant-init scaffolding notes, not memories (persona pass 2026-11-10)
             if not _utf8_name(name):
                 continue   # a legacy-encoded name crashed every search at the sqlite bind (MN17)
@@ -471,7 +471,7 @@ def _walk_memory_stats():
                     continue
                 if entry.is_symlink() or getattr(st0, "st_reparse_tag", 0) & 0x20000000:
                     continue   # links are never followed (parity with _walk_memory)
-                if not is_dir and not name.endswith(".md"):
+                if not is_dir and not name.lower().endswith(".md"):
                     continue
                 if not _utf8_name(name):
                     continue   # parity with _walk_memory (MN17)

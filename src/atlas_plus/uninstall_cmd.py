@@ -561,6 +561,8 @@ def derived_state_refusal() -> str | None:
     if refusal:
         return refusal
     if not (state / STATE_MARKER).exists() or not any((state / n).exists() for n in STATE_SIGNATURE):
+        if (state / STATE_MARKER).exists() and all(p.name == STATE_MARKER for p in state.iterdir()):
+            return None  # only the marker sextant-init wrote: nothing to clear, not a refusal (MN72: a dead end right after init)
         return ("REFUSED: this directory carries the marker but none of Sextant's own state "
                 f"({', '.join(STATE_SIGNATURE[:4])}, ...); nothing cleared")
     return None
@@ -574,6 +576,8 @@ def clear_derived_state(yes: bool) -> str:
     refusal = validate_destructive_target("state", state)
     if refusal:
         return refusal
+    if (state / STATE_MARKER).exists() and all(p.name == STATE_MARKER for p in state.iterdir()):
+        return "cleared derived: nothing to clear (only the marker sextant-init wrote)"  # only the marker (MN72)
     if not (state / STATE_MARKER).exists() or not any((state / n).exists() for n in STATE_SIGNATURE):
         # The marker alone proves only that sextant-init once ran with this env. Clearing
         # fixed names out of a directory that shows no other sign of being Sextant state could

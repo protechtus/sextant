@@ -75,9 +75,9 @@ def _load_transcript_text(since: str = "today", source: str = "claude-code", con
                     parts.append(f"[tool:{block.get('name','?')}]")
             content = " ".join(parts)
         if content and str(content).strip():
-            text = str(content).strip()
+            text = str(content).strip()[:2000]  # a bounded slice: whole-turn redaction cost minutes per Stop on a 200 MB session (MN69)
             if _redact_turn is not None:
-                text = _redact_turn(text) or ""  # redact BEFORE the cut: a key straddling it leaked its prefix (AG40)
+                text = _redact_turn(text) or ""  # redact BEFORE the 400 cut: a key straddling it leaked its prefix (AG40)
             lines.append(f"{role}: {text[:400]}")
 
     return "\n".join(lines)

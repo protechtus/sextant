@@ -1039,7 +1039,7 @@ async def tasks_partial(request: Request, limit: int = 20, status: Optional[str]
         instr_short = t.instruction[:55] + ("..." if len(t.instruction) > 55 else "")
         # Full instruction in title= so it appears as a tooltip on hover.
         instr_full = _html_mod.escape(t.instruction)
-        agent_tag = f'<span class="text-slate-600 text-xs w-16 truncate">{t.agent or ""}</span>' if t.agent else ""
+        agent_tag = f'<span class="text-slate-600 text-xs w-16 truncate">{_html_mod.escape(str(t.agent or ""))}</span>' if t.agent else ""  # a task's agent and id come from the Brain API: markup in them ran (MN70)
         # Visually distinguish escalated tasks (session_id starts with "escalated-")
         is_escalated = (t.session_id or "").startswith("escalated-")
         row_extra = ' style="border-left: 2px solid #d97706;"' if is_escalated else ""
@@ -1047,9 +1047,9 @@ async def tasks_partial(request: Request, limit: int = 20, status: Optional[str]
         rows.append(
             f'<div class="flex gap-2 py-1 border-b border-slate-700 row-hover items-center"{row_extra}'
             f' onclick="showTaskDetail({_js_arg(t.task_id)})">'
-            f'<span class="text-slate-500 w-32 truncate text-xs">{t.task_id}</span>'
-            f'<span class="{c} w-16 text-xs shrink-0">{t.status}</span>'
-            f'<span class="text-slate-300 flex-1 text-xs truncate" title="{instr_full}">{instr_short}</span>'
+            f'<span class="text-slate-500 w-32 truncate text-xs">{_html_mod.escape(str(t.task_id))}</span>'
+            f'<span class="{c} w-16 text-xs shrink-0">{_html_mod.escape(str(t.status))}</span>'
+            f'<span class="text-slate-300 flex-1 text-xs truncate" title="{instr_full}">{_html_mod.escape(instr_short)}</span>'
             f'{esc_badge}'
             f'{agent_tag}'
             f'<span class="text-slate-500 w-36 text-xs shrink-0">{ts_str}</span>'
@@ -1249,13 +1249,13 @@ async def task_detail(task_id: str, request: Request):
     return HTMLResponse(
         f'<div class="text-xs space-y-1">'
         f'<div class="flex gap-2"><span class="text-slate-500 w-20">task</span>'
-        f'<span class="text-slate-300 font-mono">{task.task_id}</span></div>'
+        f'<span class="text-slate-300 font-mono">{_html_mod.escape(str(task.task_id))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-20">status</span>'
-        f'<span class="{sc} font-bold">{task.status}</span></div>'
+        f'<span class="{sc} font-bold">{_html_mod.escape(str(task.status))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-20">agent</span>'
-        f'<span class="text-slate-400">{task.agent or "auto"}</span></div>'
+        f'<span class="text-slate-400">{_html_mod.escape(str(task.agent or "auto"))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-20">session</span>'
-        f'<span class="text-slate-400 truncate">{task.session_id}</span></div>'
+        f'<span class="text-slate-400 truncate">{_html_mod.escape(str(task.session_id or ""))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-20">attempts</span>'
         f'<span class="text-slate-400">{task.attempts}/{task.max_attempts}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-20">started</span>'
@@ -3731,12 +3731,12 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
         rows.append(
             f'<div class="flex items-center gap-2 py-1 border-b border-slate-700 row-hover group"'
             f' onclick="showTicketDetail({_js_arg(_tref(t))})">'
-            f'<span class="text-slate-500 text-xs w-24 truncate font-mono tk-id">{t.id}</span>'
-            f'<span class="{sc} text-xs w-20 tk-status">{t.status}</span>'
-            f'<span class="{pc} text-xs w-4 shrink-0">{getattr(t, "priority", "N")[0].upper()}</span>'
+            f'<span class="text-slate-500 text-xs w-24 truncate font-mono tk-id">{_html_mod.escape(str(t.id))}</span>'  # ticket frontmatter arrives by sync, intake or hand: markup in it ran (MN70)
+            f'<span class="{sc} text-xs w-20 tk-status">{_html_mod.escape(str(t.status))}</span>'
+            f'<span class="{pc} text-xs w-4 shrink-0">{_html_mod.escape((str(getattr(t, "priority", "N")) or "N")[0].upper())}</span>'
             f'<span class="text-slate-300 text-xs flex-1 truncate">{_html_mod.escape(t.title)}</span>'
-            f'<span class="text-slate-500 text-xs w-24 truncate tk-proj">{t.project}</span>'
-            f'<span class="text-slate-600 text-xs w-6 shrink-0">{assignee_label}</span>'
+            f'<span class="text-slate-500 text-xs w-24 truncate tk-proj">{_html_mod.escape(str(t.project))}</span>'
+            f'<span class="text-slate-600 text-xs w-6 shrink-0">{_html_mod.escape(str(assignee_label))}</span>'
             f'{task_badge}'
             f'{verify_badge}'
             f'</div>'
@@ -4165,15 +4165,15 @@ async def ticket_detail(ticket_id: str, request: Request):
     return HTMLResponse(
         f'<div class="text-xs space-y-1">'
         f'<div class="flex gap-2"><span class="text-slate-500 w-16">id</span>'
-        f'<span class="text-slate-300 font-mono">{ticket.id}</span></div>'
+        f'<span class="text-slate-300 font-mono">{_html_mod.escape(str(ticket.id))}</span></div>'  # ticket detail: the same frontmatter fields (MN70)
         f'<div class="flex gap-2"><span class="text-slate-500 w-16">status</span>'
-        f'<span class="{sc} font-bold">{ticket.status}</span></div>'
+        f'<span class="{sc} font-bold">{_html_mod.escape(str(ticket.status))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-16">project</span>'
-        f'<span class="text-slate-400">{ticket.project}</span></div>'
+        f'<span class="text-slate-400">{_html_mod.escape(str(ticket.project))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-16">assignee</span>'
-        f'<span class="text-slate-400">{getattr(ticket, "assignee", "human")}</span></div>'
+        f'<span class="text-slate-400">{_html_mod.escape(str(getattr(ticket, "assignee", "human")))}</span></div>'
         f'<div class="flex gap-2"><span class="text-slate-500 w-16">priority</span>'
-        f'<span class="text-slate-400">{getattr(ticket, "priority", "normal")}</span></div>'
+        f'<span class="text-slate-400">{_html_mod.escape(str(getattr(ticket, "priority", "normal")))}</span></div>'
         f'{reopen_html}'
         f'<div class="mt-2 font-bold text-slate-200">{_html_mod.escape(ticket.title)}</div>'
         f'<pre class="mt-1 text-slate-400 bg-slate-900 p-2 rounded overflow-auto max-h-48 '

@@ -202,9 +202,15 @@ _CJK_RE = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac0
 def _hint_tokens(s: str) -> set[str]:
     """Duplicate-hint tokens: Latin words (4+, no stopwords) and CJK bigrams, so a repeated
     Japanese fact gets the same hint an English one does (MN23)."""
+    try:  # every script, folded like search (the snippet it is compared with is folded and bracketed): MN68
+        import unicodedata as _ud
+        from ..fts import _fold_marks as _fm, _recompose as _rc
+        s = _fm(_rc(_ud.normalize("NFKC", s))).casefold().replace("[", " ").replace("]", " ")
+    except Exception:  # noqa: BLE001
+        s = s.casefold()
     out = {
-        w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*", s)
-        if len(w) >= 4 and w.lower() not in _STOPWORDS
+        w for w in re.findall(r"[^\W\d_][\w-]*", s)
+        if len(w) >= 3 and w not in _STOPWORDS and not _CJK_RE.match(w)
     }
     for run in re.findall(_CJK_RE.pattern + "+", s):
         out.update(run[i:i + 2] for i in range(len(run) - 1))

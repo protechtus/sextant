@@ -32,6 +32,26 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def hub_generation(root: Path | None = None) -> int:
+    """How many pushes this hub has applied. A hub restored from an older backup reports a lower number than its devices last
+    saw, which is how a device tells a rollback from a genuine edit (MN71: a restore with pairings rolled every device back)."""
+    p = (root or sync_dir()) / "generation"
+    try:
+        return int(p.read_text(encoding="ascii").strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def bump_hub_generation(root: Path | None = None) -> int:
+    p = (root or sync_dir()) / "generation"
+    g = hub_generation(root) + 1
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"generation.{os.getpid()}.part")
+    tmp.write_text(str(g), encoding="ascii")
+    os.replace(tmp, p)
+    return g
+
+
 # -- Base manifests (three-way anchor per remote) ---------------------------
 
 def base_manifest_path(principal_id: str, root: Path | None = None) -> Path:

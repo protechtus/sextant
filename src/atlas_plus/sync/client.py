@@ -175,11 +175,22 @@ class SyncClient:
         restored from an older backup, the old base made the hub's older notes look like
         edits and pulled them over newer local ones). No base means every difference is a
         conflict: nothing is overwritten. A base with no stamp (older build) is adopted."""
+        keyed = store.load_base_manifest(self._base_key(base_id))
+        if keyed is not None:
+            return keyed
         base = store.load_base_manifest(base_id)
         stamp = (base or {}).get("credential")
         if base is not None and stamp and self._credential and stamp != self._credential:
             return None
         return base
+
+    def _base_key(self, base_id: str) -> str:
+        """One base per pairing: a device that also syncs with a second hub (federation, `--hub
+        --token`) overwrote the single `base-hub.json`, and every one-sided edit on either hub
+        became a conflict at the next sync with the other (MN67). The legacy file is still read."""
+        if base_id == "hub" and self._credential:
+            return f"hub-{self._credential}"
+        return base_id
 
     def close(self) -> None:
         self._client.close()
@@ -265,6 +276,14 @@ class SyncClient:
         return response.content, response.headers.get("X-Sextant-Sha256", "")
 
     def push(self, changes: list[dict]) -> dict:
+        if len(changes) > 500:  # the hub takes at most 500 per request: 3,000 new notes failed every sync (MN71)
+            out: list = []
+            gen = None
+            for i in range(0, len(changes), 500):
+                part = self.push(changes[i:i + 500])
+                out.extend(part.get("results", []))
+                gen = part.get("generation", gen)
+            return {"results": out, "generation": gen}
         response = self._post("/sync/v1/push", {"changes": changes})
         if response.status_code == 401:
             raise SyncAuthError("the hub rejected this device's token (revoked, or a new pairing): sync stopped")  # one sentence, not one per file (AG73)
@@ -313,6 +332,11 @@ class SyncClient:
         remote_files = {k: v for k, v in remote["files"].items()
                         if _visible(k, local_policy, hub_policy)}
         base = self._own_base(base_id)
+        self._rolled_back = False
+        _rg = remote.get("generation") if isinstance(remote, dict) else None
+        if base is not None and isinstance(_rg, int) and _rg < int(base.get("hub_generation") or 0):
+            base = None  # the hub is older than this device last saw (restored from a backup): every difference is a conflict (MN71)
+            self._rolled_back = True
         base_files = {k: v for k, v in ((base or {}).get("files", {}) or {}).items()
                       if _visible(k, local_policy, hub_policy)}
         plan = manifest.diff3(local["files"], remote_files, base_files)
@@ -349,6 +373,7 @@ class SyncClient:
         prefixes = normalize_share(share)
         local_policy = _share_principal(prefixes)
         plan, local, _remote = self.plan(root, base_id, prefixes)
+        _hub_gen = _remote.get("generation") if isinstance(_remote, dict) else None
         hub_policy = _hub_policy(_remote)
         remote_files_all = _remote.get("files", {})
         report = SyncReport(
@@ -361,7 +386,10 @@ class SyncClient:
             report.conflicts = list(plan.conflicts)
             return report
 
-        old_base = self._own_base(base_id) or {}
+        old_base = {} if getattr(self, "_rolled_back", False) else (self._own_base(base_id) or {})
+        if getattr(self, "_rolled_back", False):
+            report.errors.append("the hub reports an older state than this device last synced (it was restored from a backup?): "
+                                 "nothing was pulled over your copies; every difference is parked as a conflict to review")
         old_base_files: dict = old_base.get("files", {}) or {}
         proposed: dict = dict(old_base.get("proposed", {}) or {})
         report.proposed = list(plan.proposed)
@@ -441,7 +469,10 @@ class SyncClient:
                 )
             if changes:
                 try:
-                    results = self.push(changes).get("results", [])
+                    _push_answer = self.push(changes)
+                    results = _push_answer.get("results", [])
+                    if isinstance(_push_answer.get("generation"), int):
+                        _hub_gen = _push_answer["generation"]  # the hub's own count after our push
                 except SyncAuthError as exc:
                     report.errors.append(str(exc))
                     unresolved.update(ch["path"] for ch in changes)
@@ -548,9 +579,13 @@ class SyncClient:
             files.pop(rel, None)
         refreshed["files"] = files
         refreshed["manifest_hash"] = manifest.files_hash(files)
+        if isinstance(_hub_gen, int):
+            refreshed["hub_generation"] = _hub_gen
         if self._credential:
             refreshed["credential"] = self._credential
-        store.save_base_manifest(base_id, refreshed)
+        store.save_base_manifest(self._base_key(base_id), refreshed)
+        if self._base_key(base_id) != base_id:
+            store.save_base_manifest(base_id, refreshed)  # the legacy file: `status` and an older build read it
         if auth_stopped:
             return report  # the check-in would be one more 401 (AG73)
         try:

@@ -714,7 +714,7 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
     _copies = [f.rel for f in files if re.search(r" \(\d+\)\.md$|conflicted copy|-conflict-\d|\.sync-conflict-", f.rel, re.I)]
     try:
         _tmps = sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
-                       if p.is_file() and p.name.endswith((".w-tmp", ".imp-tmp", ".v-tmp")) and "versions" not in p.relative_to(root).parts[:1])
+                       if p.is_file() and p.name.casefold().endswith((".w-tmp", ".imp-tmp", ".v-tmp", ".tmp")) and "versions" not in p.relative_to(root).parts[:1])
     except OSError:
         _tmps = []
     if _tmps:  # crash leftovers: each holds a full copy of its note and nothing removed them (AG74)
@@ -1642,7 +1642,7 @@ def render_text(data: dict) -> str:
             lines.append(f"  \033[33mempty\033[0m  root: {mc.get('root')}")
         if mc.get("hint"):
             lines.append(f"  \033[33m{mc['hint']}\033[0m")
-        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "unmerged_hint", "duplicate_keys_hint", "import_copies_hint", "locks_hint"):  # unmerged was JSON-only (AG49)
+        for extra_key in ("not_utf8_hint", "bad_names_hint", "conflict_markers_hint", "unmerged_hint", "duplicate_keys_hint", "import_copies_hint", "locks_hint", "crash_leftovers_hint", "conflict_copies_hint"):  # unmerged was JSON-only (AG49); the AG74 and AG78 hints were too (MN67)
             if mc.get(extra_key):
                 lines.append(f"  \033[33m{mc[extra_key]}\033[0m")
         emb = mc.get("embed_index") or {}

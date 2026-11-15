@@ -96,7 +96,7 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 # with `&` leaked its tail; a query-string tail is over-masked instead). The lookbehind limits the
 # scan to word starts, so a 1 MB blob costs one attempt per word, not per character.
 _KV_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_-])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
+    r"(?i)(?<![A-Za-z0-9_\-\u0590-\u05ff\u0600-\u06ff])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
     r"(?![A-Za-z0-9])"
     r"(['\"]?\]?\s*[=:：＝]\s*(?:r(?=['\"]))?(?:(?:&[\w-]{1,64}|!![a-z]{1,16})[ \t]+)?)"  # AG62: the environ-subscript assignment `environ['DB_PASS...'] = 'V'` and `params[:password] = V` leaked; AG68: a YAML anchor or core tag before the value (`password: &pw V`, `password: !!str V`)
     r"(\"\"\"[^\n]{4,}?\"\"\"|'''[^\n]{4,}?'''"  # AG68: a TOML multi-line basic or literal string on one line leaked whole
@@ -624,7 +624,18 @@ _PW_WORDS_ASCII = tuple(w for w in _PW_WORDS_STRIPPED if w.isascii())  # the ASC
 _PRODUCT_RE = re.compile(r"^[A-Za-z]{2,}[0-9]{1,4}(?:-\w+)?$")  # Windows11, iPhone15, Office365, Ubuntu24: names, not values (MN62: 35 of 69 ordinary sentences)
 
 
-_VALUE_CUE_RE = re.compile(r"(?:\b(?:is|was|ist|lautet|est|es|era|é|är|er)\b|[:=])[ \t]*['\"`(\[]?$", re.IGNORECASE)
+_VALUE_CUE_RE = re.compile(
+    r"(?:\b(?:is|was|are|ist|lautet|est|es|era|é|è|är|er|je|jest|to|on|là|adalah|ialah|είναι|ειναι)\b"
+    r"|(?:היא|הוא|هي|هو|คือ|是|为|為)"
+    r"|[:=：＝—–])[ \t]*['\"`(\[「『“]?$", re.IGNORECASE)
+_WEAK_CUES = {"on": ("salasana",), "to": ("hasło", "haslo", "hasla"), "je": ("heslo",), "er": ("adgangskode", "passord", "kodeord"),
+              "es": ("contraseña", "contrasena", "clave"), "est": ("mot de passe",), "ist": ("passwort", "kennwort")}  # cue -> the password words of its language
+_PARTICLE_CUE_RE = re.compile(r"(?:は|が|는|은|이|가)[ \t]*['\"`(\[「『“]?$")  # topic particles: a cue only with the verb-final ending too
+# verb-final languages put the cue AFTER the value: `पासवर्ड V है`, `رمز عبور V است`, `パスワードはVです`, `V 입니다`, `V -dir` (MN68)
+_VALUE_CUE_AFTER_RE = re.compile(r"^['\"`)\]」』”]?[ \t]*(?:है|हैं|است|です|だ|입니다|이다|이에요|예요|-?dir\b|-?dır\b|-?dur\b|olarak\b|idi\b|oldu\b)")
+_ROLE_PREFIX_RE = re.compile(r"^\s*(?:\[(?:USER|ASSISTANT|SYSTEM|TOOL)\]|(?:USER|ASSISTANT|SYSTEM|TOOL|Human|AI):)\s*", re.IGNORECASE)
+_TRAILING_COMMENT_RE = re.compile(r"\s+(?:#|//|--)\s.*$")
+_LINE_ENDS_WITH_CUE_RE = re.compile(r"(?:[:=：]|\b(?:is|below|unten|abajo|ci-dessous|qui sotto|poniżej|níže|alla|ниже|aşağıda|bên dưới|di bawah)\b)\s*$", re.IGNORECASE)
 
 
 def _secret_shaped(tok: str, value_slot: bool = False) -> bool:
@@ -635,9 +646,14 @@ def _secret_shaped(tok: str, value_slot: bool = False) -> bool:
         return False  # an identifier (`getPassword2`, `SecretAccessKey`), not a value
     if not any(c.isdigit() for c in tok) or not any(c.isalpha() for c in tok):
         return False
-    if _PRODUCT_RE.match(tok) and not value_slot:
-        return False  # `on Windows11` is a name; `password is Summer2024` is the value (AG73)
-    return (any(c.isupper() for c in tok) and any(c.islower() for c in tok)) or any(c in _PW_SYMBOLS for c in tok)
+    if value_slot:
+        return True  # right after `is`/`:`/`è`/`は`/`是` (or before `है`/`です`): letters and digits are the value, any case (MN68: `blue7horse42`, `Natsu2024`)
+    if any(c in _PW_SYMBOLS for c in tok):
+        return True
+    # outside a value slot only a long mixed-class run is a value: `Python3.11`, `OAuth2.0`, `Argon2id`, `GPT-4o-mini`, `Ubuntu24.04`
+    # on a line that merely mentions a password word are names (MN61, MN68: 64 of 110 ordinary sentences were mangled)
+    return (len(tok) >= 12 and any(c.isupper() for c in tok) and any(c.islower() for c in tok)
+            and "." not in tok and "-" not in tok and ":" not in tok and not _PRODUCT_RE.match(tok))  # `PostgreSQL16:lle` is a name with a case ending
 
 
 def _keyword_line_redact(text: str) -> str:
@@ -648,34 +664,62 @@ def _keyword_line_redact(text: str) -> str:
 
     def _mask(m, carried=False):
         tok = m.group(0)
-        core = tok.rstrip(".,;:!?)]}\"'")
-        lead = len(core) - len(core.lstrip("(\"'[{"))
+        core = tok.rstrip(".,;:!?)]}\"'」』”")
+        lead = len(core) - len(core.lstrip("(\"'[{「『“"))
         core2 = core[lead:]
-        if len(core2) >= 8 and _PRODUCT_RE.match(core2):  # the cue look-back is bounded and only for Word+digits: the whole prefix per token was quadratic
-            slot = carried or bool(_VALUE_CUE_RE.search(m.string[max(0, m.start() - 24):m.start()].rstrip(" \t")))
-        else:
-            slot = carried
-        if len(core2) >= 8 and _secret_shaped(core2, value_slot=slot):
+        if len(core2) < 8 or not _secret_shaped(core2, value_slot=True):
+            return tok  # cheap first: only a letters-and-digits token can be a value (the slot test per token was super-linear)
+        if not carried and _secret_shaped(core2, value_slot=False):
+            return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
+        before = m.string[max(0, m.start() - 40):m.start()].rstrip(" \t")
+        after = m.string[m.end():m.end() + 16]
+        slot = carried
+        if not slot:
+            bprobe = _strip_marks(before).casefold()
+            hits = [(bprobe.rfind(w), w) for w in _PW_WORDS_STRIPPED if w in bprobe]
+            if hits:  # a cue counts only beside a password word: `Password hashing moved to Argon2id` is no value (MN68)
+                pos, w = max(hits)
+                gap = bprobe[pos + len(w):].strip(" \t'\"`(「『“")
+                rest = m.string[m.end():].split("\n", 1)[0].strip(" \t.,;:!?。、」』”)")
+                close = len(gap) <= 20  # the word, a short qualifier (`de root`, `πρόσβασης`), the cue
+                _cue = _VALUE_CUE_RE.search(before)
+                if _cue and close:
+                    _cw = _cue.group(0).strip(" \t'\"`([「『“:=：＝—–").casefold()
+                    _own = _WEAK_CUES.get(_cw)
+                    if _own is not None and not any(w.startswith(k) for k in _own):
+                        close = False  # `reset the password on Windows11`: English `on`/`to` are prepositions; only Finnish `on`, Polish `to`, Czech `je` are copulas
+                slot = ((close and bool(_VALUE_CUE_RE.search(before)))
+                        or (close and bool(_VALUE_CUE_AFTER_RE.match(after)))
+                        or (not gap and not _PRODUCT_RE.match(core2))  # `Şifrə Yay2024xxx`; `forgot my password iPhone15` is a name
+                        or (bprobe.strip().startswith(w) and len(bprobe.strip()) <= len(w) + 3)  # a line that opens with the word: `Şifrem V`
+                        or (close and bool(_PARTICLE_CUE_RE.search(before)) and (bool(_VALUE_CUE_AFTER_RE.match(after)) or not rest)))
+        if _secret_shaped(core2, value_slot=slot):
             return tok[:lead] + "[REDACTED]" + tok[lead + len(core2):]
         return tok
 
+    def _mask_carried(m):
+        return _mask(m, carried=True)
+
     out_lines = []
-    carry = False  # the previous line held a password word and no value: `password is below` / `Пароль сервера:` then V (MN62)
+    carry = False      # the previous line held a password word and no value: `password is below` / `Пароль сервера:` then V (MN62)
+    carry_slot = False  # ...and it ended with a cue, so the next value keeps no name exemption (MN68: `password is\nSummer2024`)
     for line in text.split("\n"):
         probe = _strip_marks(line).casefold()
         if any(w in probe for w in _PW_WORDS_STRIPPED):
             new = _PW_TOKEN_RE.sub(_mask, line)
             carry = new == line and "[REDACTED" not in line  # an already-masked value does not carry to the next line (AG73)
+            carry_slot = carry and bool(_LINE_ENDS_WITH_CUE_RE.search(_ROLE_PREFIX_RE.sub("", line)))
             out_lines.append(new)
             continue
-        if carry and (not line.strip() or line.strip().startswith(("```", "~~~"))):
+        body = _TRAILING_COMMENT_RE.sub("", _ROLE_PREFIX_RE.sub("", line)).strip()  # `[USER] V` / `USER: V` / `V  # staging` (MN68: across turns)
+        if carry and (not body or body.startswith(("```", "~~~"))):
             out_lines.append(line)  # `password is below:`, a blank line or a fence, then V: the value leaked (AG73)
             continue
-        if carry and line.strip() and len(line.split()) == 1:
-            out_lines.append(_PW_TOKEN_RE.sub(_mask, line))  # a carried line keeps the name exemption: `Change the password` then a heading `Installation2`
+        if carry and body and len(body.split()) == 1:
+            out_lines.append(_PW_TOKEN_RE.sub(_mask_carried if carry_slot else _mask, line))  # without a cue the name exemption stays: `Change the password` then a heading `Installation2`
         else:
             out_lines.append(line)
-        carry = False
+        carry = carry_slot = False
     return "\n".join(out_lines)
 
 
