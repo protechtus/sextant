@@ -36,7 +36,7 @@ def _symlink_or_skip(target: Path, link: Path) -> None:
 
 def _search(mem: Path, q: str) -> str:
     with patch.object(web_app, "MEMORY_ROOT", mem), \
-         patch("atlas_plus.mcp.memory_server.tools.search.memory_search", return_value=[]), \
+         patch("atlas_plus.mcp.memory_server.tools.search.memory_search", side_effect=RuntimeError("index unavailable")), \
          patch.object(web_app, "_check_auth", lambda request: None):
         r = _client().get("/api/memory/search", params={"q": q})
     assert r.status_code == 200

@@ -163,7 +163,16 @@ def _recompose(text: str) -> str:
         text = text.replace("\u0130", "i").replace("\u0131", "i")  # Turkish dotted I and dotless i: `Diyarbak\u0131r` met neither `diyarbakir` nor `D\u0130YARBAKIR` (AG72)
     if "\u0451" in text or "\u0401" in text or "\u00df" in text:
         text = text.replace("\u0451", "\u0435").replace("\u0401", "\u0415").replace("\u00df", "ss")  # ё is typed as е and ß as ss (MN58: `елка` missed `ёлка`, `Strasse` missed `Straße`)
+    if ("\u05f4" in text or '"' in text or "\u201c" in text or "\u201d" in text) and _HE_ACRONYM_RE.search(text):
+        text = _HE_ACRONYM_RE.sub("", text)  # AG89: a Hebrew acronym is one word (`צה״ל` = `צה"ל` = `צהל`), so a prefix splits off it
     return text
+
+
+# AG89: gershayim (or the ASCII quote, or a curly quote typed for it) between two Hebrew letters marks an acronym, not
+# a phrase quote: `בצה״ל` was the tokens `בצה` + `ל`, so `צה״ל` never found it, and the ASCII form became the FTS5
+# phrase `"ל` that bracketed every ל-prefixed word. Index, query and every fallback drop the mark (points may sit before
+# it); the snippet is cut from the note's own text, so it still shows the gershayim.
+_HE_ACRONYM_RE = re.compile('(?<=[\u05d0-\u05ea\u0591-\u05c7])["\u05f4\u201c\u201d](?=[\u05d0-\u05ea])')
 
 
 def _fold_marks(text: str) -> str:
@@ -275,6 +284,16 @@ def _affix_split(text: str, keep_prefix: bool = True) -> str:
         return text
     text = _AR_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix), text)
     return _HE_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix), text)
+
+
+def _dup_fold(text: str) -> str:
+    """Search's word folds for the duplicate scans (AG89): an Arabic/Hebrew prefix dropped the way an unquoted query
+    drops it (`השרת` is `שרת`, `الخادم` is `خادم`) and every emoji cluster in its untoned canonical form between spaces
+    (`👍🏽` is `👍`, `❤️` is `❤`). Run it after `_recompose` and `_fold_marks`; ASCII text comes back unchanged."""
+    if text.isascii():
+        return text
+    text = _EMOJI_RE.sub(lambda m: " " + _emoji_canon(m.group(0)).split(_CJK_SEP)[0] + " ", text)
+    return _affix_split(text, keep_prefix=False).replace(_CJK_SEP, " ")
 
 
 def _query_words(q: str) -> str:
@@ -810,7 +829,7 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
-INDEX_FORMAT = "8"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78)
+INDEX_FORMAT = "9"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89)
 
 
 def _needs_rebuild() -> bool:

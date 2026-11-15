@@ -226,7 +226,8 @@ def test_guessed_dashboard_command_gives_a_hint(monkeypatch):
     monkeypatch.setattr(_webapp, "WEB_PORT", _free)  # never the default 8766: a live dashboard there made the test start a real one (AG82)
     monkeypatch.setattr(_webapp, "_port_free", lambda *a, **k: True)  # the banner prints only for a free port (AG71)
     r = CliRunner().invoke(cli.app, ["dashboard"])
-    assert "sextant-web" in r.output and "ATLAS_WEB_API_KEY" in r.output
+    # the start banner prints only once every refusal has passed (AG90): a refusal names the variable alone
+    assert "ATLAS_WEB_API_KEY" in r.output and "Starting the dashboard" not in r.output
 
 
 @pytest.mark.parametrize("raw", ["abc", "70000", "0"])

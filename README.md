@@ -114,7 +114,12 @@ exit status 101` or similar, plus a half-made `.venv` to delete before
 retrying), and `pip install` on an older Python stops with
 `requires a different Python: 3.10.x not in '>=3.11'` and installs nothing.
 Installing with `--no-build-isolation` needs setuptools 77 or newer in that
-environment first (`pip install -U setuptools`).
+environment first (`pip install -U setuptools`). A NON-editable install from a
+clone (`pip install .`, `uv pip install ./sextant`) builds inside the clone and
+leaves `build/` and `src/sextant_ai.egg-info/` there (both gitignored); delete
+`build/` before reinstalling after a `git pull`, because setuptools reuses it and
+a module removed upstream would still be installed. The editable install below
+(`-e`) leaves only the egg-info.
 
 ```powershell
 git clone https://github.com/protechtus/sextant.git; cd sextant

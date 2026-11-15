@@ -121,9 +121,11 @@ def _tokenize(text: str) -> set[str]:
         if end != -1:
             text = text[end + 3:]
     text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
+    emoji: set[str] = set()
     if not text.isascii():
         import unicodedata as _ud
-        text = _fold_marks(_recompose(_ud.normalize("NFC", text)))  # one form for a letter with its marks (MN46); Arabic and Hebrew points folded like search does (MN49); joiners and sara am like search (MN55); ASCII skips it (AG60)
+        text = _dup_fold(_fold_marks(_recompose(_ud.normalize("NFC", text))))  # AG89: prefixes and emoji as search folds them; one form for a letter with its marks (MN46); Arabic and Hebrew points folded like search does (MN49); joiners and sara am like search (MN55); ASCII skips it (AG60)
+        emoji = set(_EMOJI_RE.findall(text))   # an emoji is a word to search (AG83) and was invisible here (AG89)
     words = _WORD_RE.findall(text.lower())  # letters of every script with their combining marks attached (AG60: deleting the marks merged Hindi words)
     # CJK, Thai, Lao, Khmer and Burmese body text has no spaces: without bigrams every Japanese note looked identical (MN23)
     for run in re.findall(_CJK_RE.pattern + "+", text):
@@ -136,7 +138,7 @@ def _tokenize(text: str) -> set[str]:
         "has", "have", "had", "do", "does", "did", "will", "would",
         "can", "could", "should", "may", "might", "must", "shall",
     }
-    return {w for w in words if (len(w) > 2 or _CJK_RE.search(w)) and w not in stops}  # CJK bigrams are two characters (MN23)
+    return {w for w in words if (len(w) > 2 or _CJK_RE.search(w)) and w not in stops} | emoji  # CJK bigrams are two characters (MN23)
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -183,11 +185,11 @@ class DuplicatePair:
 
 _FACT_SKIP_PREFIXES = ("#", "---", "<!--", "```", "|", ">")
 _PROVENANCE_RE = re.compile(r"\s*<!--[^>]*-->")
-_NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
+_NON_WORD_RE = re.compile(r"[^0-9a-z\u00c0-\uffff\U0001F000-\U0001FAFF]+")  # astral emoji are words too (AG89)
 
 
 # the same run classes search uses: CJK, Hangul and the space-less South-East Asian scripts (MN46)
-from atlas_plus.mcp.memory_server.fts import _CJK_RE, _WORD_RE, _fold_marks, _recompose  # noqa: E402
+from atlas_plus.mcp.memory_server.fts import _CJK_RE, _EMOJI_RE, _WORD_RE, _dup_fold, _fold_marks, _recompose  # noqa: E402
 
 _BITSET_MAX_TOKENS = 131072  # shared tokens; with bit indexes and a bytearray build the bitsets stay cheap to here (MN49: 10 s vs 16 s at 100,000); above it the set intersection bounds memory
 
@@ -231,7 +233,7 @@ def _note_facts(text: str) -> list[str]:
 
 def _norm_fact(s: str) -> str:
     import unicodedata as _ud
-    s = _fold_marks(_recompose(_ud.normalize("NFKC", s))).casefold()  # like search: NFC vs NFD, harakat, half-width, tonos, İ (MN62: the file scanner was fixed, this sibling was not)
+    s = _dup_fold(_fold_marks(_recompose(_ud.normalize("NFKC", s)))).casefold()  # prefixes and emoji too (AG89); like search: NFC vs NFD, harakat, half-width, tonos, İ (MN62: the file scanner was fixed, this sibling was not)
     return " ".join(_NON_WORD_RE.sub(" ", s).split())
 
 
@@ -254,7 +256,8 @@ def find_fact_duplicates(
     ]
     exact: dict[str, list[tuple[str, str]]] = {}
     entries: list[tuple[str, str, frozenset]] = []
-    index: dict[str, list[int]] = {}
+    norms: list[str] = []
+    df: dict[str, int] = {}
     for f in sorted(files):
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -268,19 +271,36 @@ def find_fact_duplicates(
             exact.setdefault(norm, []).append((rel, fact))
             toks = _tokens(norm)
             if len(toks) >= 4:
-                idx = len(entries)
                 entries.append((rel, fact, toks))
+                norms.append(norm)
                 for t in toks:
-                    index.setdefault(t, []).append(idx)
+                    df[t] = df.get(t, 0) + 1
     out: list[dict] = []
     seen_pairs: set[tuple[int, int]] = set()
     for norm, hits in exact.items():
         if len(hits) > 1:
             for (r1, f1), (r2, _f2) in zip(hits, hits[1:]):
                 out.append({"kind": "exact", "file1": r1, "file2": r2, "similarity": 1.0, "fact": f1[:160]})
-    # Near repeats: candidates share at least 3 index tokens; exact pairs are already reported.
-    counts: dict[int, int]
+    # Near repeats: a pair qualifies when it shares at least 3 tokens AND its Jaccard reaches the
+    # threshold. Exact prefix filter (AG90; the old walk counted every posting of every common
+    # word, quadratic: 50 s on 2,500 facts): order each fact's tokens rarest-first; a pair
+    # sharing >= o tokens has its rarest shared token inside both facts' first |x| - o + 1 tokens,
+    # with o = max(3, ceil(t * |x|)) a lower bound on the overlap any qualifying pair needs. Only
+    # those prefix tokens are indexed, every candidate is verified on the full sets, so the result
+    # is the same pair set as the full walk.
+    import bisect as _bisect
+    import math as _math
     import time as _time
+    _t = float(near_threshold)
+    prefixes: list[tuple[str, ...]] = []
+    index: dict[str, list[int]] = {}
+    for idx, (_rel, _fact, toks) in enumerate(entries):
+        order = sorted(toks, key=lambda t: (df[t], t))
+        need = max(3, _math.ceil((_t - 1e-9) * len(order)))
+        pre = tuple(order[:max(0, len(order) - need + 1)])
+        prefixes.append(pre)
+        for t in pre:
+            index.setdefault(t, []).append(idx)  # ascending: built in entry order
     try:
         _budget = float(__import__("os").environ.get("ATLAS_DUPLICATES_BUDGET_SECONDS") or 60)
     except ValueError:
@@ -291,20 +311,21 @@ def find_fact_duplicates(
         if _deadline is not None and i % 64 == 0 and _time.monotonic() > _deadline:
             _LAST_PARTIAL[0], _LAST_PARTIAL[1] = i, len(entries)  # the facts scan had no budget: the weekly report never finished (MN67)
             break
-        counts = {}
-        for t in toks:
-            for j in index.get(t, ()):
-                if j > i:
-                    counts[j] = counts.get(j, 0) + 1
-        for j, shared in counts.items():
-            if shared < 3 or (i, j) in seen_pairs:
-                continue
+        cands: set[int] = set()
+        for t in prefixes[i]:
+            post = index[t]
+            cands.update(post[_bisect.bisect_right(post, i):])
+        n_i = len(toks)
+        for j in sorted(cands):
             other = entries[j]
-            if _norm_fact(fact) == _norm_fact(other[1]):
+            n_j = len(other[2])
+            if min(n_i, n_j) / max(n_i, n_j) < _t:
+                continue  # Jaccard <= min/max: cannot reach the threshold
+            shared = len(toks & other[2])
+            if shared < 3 or norms[i] == norms[j]:
                 continue
             sim = shared / len(toks | other[2])
             if sim >= near_threshold:
-                seen_pairs.add((i, j))
                 out.append({"kind": "near", "file1": rel, "file2": other[0], "similarity": round(sim, 2),
                             "fact": fact[:160], "other": other[1][:160]})
         if len(out) >= limit:

@@ -4279,6 +4279,12 @@ async def memory_search(request: Request, q: str = ""):
                 if _err:
                     return (f'<div class="text-red-400 text-xs">Search index unavailable: {_html_mod.escape(_err)}. '
                             f'Run <code>sextant fts-rebuild</code>; check that the state dir is writable.</div>')
+                # AG89: the index answered "nothing", so the dashboard says what `sextant search` and the MCP tool say;
+                # the substring grep below answered `لله`, `רגיש` and an emoji where both said "No hits" (MN74)
+                from atlas_plus.mcp.memory_server.fts import fts5_available as _fts5_ok
+                if _fts5_ok():
+                    return (f'<div class="text-slate-500 text-xs">No hits for &quot;{_html_mod.escape(q)}&quot;: search '
+                            f'matches whole words, the same as <code>sextant search</code> and the MCP tool.</div>')
             if fts_results:
                 top_score = float(fts_results[0].get("score", 0))
                 if top_score < 0.2:
@@ -4316,8 +4322,20 @@ async def memory_search(request: Request, q: str = ""):
         except Exception:
             pass  # fall through to file grep
 
-        # Fallback: file grep
-        q_lower = q.lower()
+        # Fallback: file grep, only when the keyword index cannot answer (no FTS5, or the search raised). A substring
+        # match, labelled as one, folded like search (NFKC, points, the letter folds, case: `strasse` meets `Straße`)
+        try:
+            from atlas_plus.mcp.memory_server.fts import _fold_marks as _fm, _recompose as _rc
+            import unicodedata as _ud
+            _accents = dict.fromkeys(range(0x300, 0x370))   # the accents unicode61 removes: `lodz` meets `Łódź`
+
+            def _gfold(s: str) -> str:
+                s = _fm(_rc(_ud.normalize("NFKC", s))).casefold()
+                return s if s.isascii() else _ud.normalize("NFC", _ud.normalize("NFD", s).translate(_accents))
+        except Exception:  # noqa: BLE001
+            def _gfold(s: str) -> str:
+                return s.casefold()
+        q_lower = _gfold(q)
         results: list[tuple[str, list[str]]] = []
         try:
             md_files = sorted(MEMORY_ROOT.rglob("*.md"))[:400]
@@ -4348,13 +4366,13 @@ async def memory_search(request: Request, q: str = ""):
                 continue   # the grep listed one hit per version copy (AG17, sweep 11)
             try:
                 text = md_file.read_text(encoding="utf-8", errors="replace")
-                if q_lower not in text.lower():
+                if q_lower not in _gfold(text):
                     continue
                 matching = [
                     l.strip() for l in text.split("\n")
-                    if q_lower in l.lower() and l.strip() and not l.startswith("---")
+                    if q_lower in _gfold(l) and l.strip() and not l.startswith("---")
                 ][:3]
-                rel = str(md_file.relative_to(MEMORY_ROOT))
+                rel = md_file.relative_to(MEMORY_ROOT).as_posix()   # it printed backslash paths on Windows (AG89)
                 results.append((rel, matching))
             except Exception:
                 pass
@@ -4362,13 +4380,14 @@ async def memory_search(request: Request, q: str = ""):
         if not results:
             return f'<div class="text-slate-500 text-xs">No matches for &quot;{_html_mod.escape(q)}&quot;</div>'
 
-        rows = [f'<div class="text-slate-500 text-xs mb-2">{len(results)} file(s) matched (grep fallback)</div>',
+        rows = [f'<div class="text-slate-500 text-xs mb-2">{len(results)} file(s) matched (substring search: the keyword '
+                f'index is unavailable, so a word inside a longer word counts)</div>',
                 '<div class="space-y-2">']
         for rel, lines in results[:40]:
             rows.append(
                 f'<div class="border-b border-slate-700 pb-2">'
                 f'<div class="text-cyan-400 text-xs font-mono mb-1 cursor-pointer hover:text-cyan-300"'
-                f' onclick="switchTab(\'memory\');readMemoryFile({_js_arg(rel.replace(chr(92), "/"))})"'
+                f' onclick="switchTab(\'memory\');readMemoryFile({_js_arg(rel)})"'
                 f' title="Open in Memory viewer">{_html_mod.escape(rel)}</div>'
             )
             for line in lines:
@@ -7040,6 +7059,9 @@ def _port_free(host: str, port: int) -> bool:
         return False
 
 
+_START_BANNER = ""  # set by `sextant dashboard`; printed once the start checks pass (AG90)
+
+
 def main() -> None:
     """Entry point for `python -m atlas_plus.web.app`.
 
@@ -7104,6 +7126,8 @@ def main() -> None:
         print(f"Port {WEB_PORT} is already in use on {WEB_HOST}: another dashboard, or another program. Set ATLAS_WEB_PORT to a free port "
               f"(GETTING-STARTED, Troubleshooting: port already in use).", file=sys.stderr)  # the raw uvicorn bind error named nothing (MN54)
         raise SystemExit(3)
+    if _START_BANNER:
+        print(_START_BANNER, flush=True)
     log.info("%s web dashboard %s on %s:%d", _product(), _pkg_version, WEB_HOST, WEB_PORT)
     # access_log=False: uvicorn's access log records the path WITH its query
     # string, which put the ?key= bootstrap into service logs (audit

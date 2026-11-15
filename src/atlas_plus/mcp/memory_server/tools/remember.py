@@ -204,8 +204,8 @@ def _hint_tokens(s: str) -> set[str]:
     Japanese fact gets the same hint an English one does (MN23)."""
     try:  # every script, folded like search (the snippet it is compared with is folded and bracketed): MN68
         import unicodedata as _ud
-        from ..fts import _fold_marks as _fm, _recompose as _rc
-        s = _fm(_rc(_ud.normalize("NFKC", s))).casefold().replace("[", " ").replace("]", " ")
+        from ..fts import _dup_fold as _df, _fold_marks as _fm, _recompose as _rc
+        s = _df(_fm(_rc(_ud.normalize("NFKC", s)))).casefold().replace("[", " ").replace("]", " ")  # prefixes too (AG89)
     except Exception:  # noqa: BLE001
         s = s.casefold()
     out = {

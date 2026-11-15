@@ -182,8 +182,12 @@ def cmd_commands(
 def _delegate(main_func, name: str, args: list[str]) -> None:
     import sys
 
+    _saved = sys.argv
     sys.argv = [name] + list(args)
-    rc = main_func()
+    try:
+        rc = main_func()
+    finally:
+        sys.argv = _saved  # a delegated command left argv rewritten for the rest of an in-process caller (tests, the REPL)
     if isinstance(rc, int) and rc:
         raise typer.Exit(rc)  # `sextant doctor --strict` printed FAIL and exited 0 (MN53)
 
@@ -323,10 +327,10 @@ def cmd_dashboard(ctx: typer.Context) -> None:
     # Three strangers in a row typed `sextant web` and got a pointer (sweep 11): it starts now.
     from atlas_plus.web.app import main as web_main
     from atlas_plus.web import app as _webapp
-    _flags = any(a.split("=", 1)[0] in ("--port", "--host") for a in (ctx.args or []))
-    if not _flags and _webapp._port_free(_webapp.WEB_HOST, _webapp.WEB_PORT):  # the banner preceded a refusal (AG71)
-        console.print("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
-                      "bind, default 127.0.0.1:8766; the page loads htmx and Tailwind from the internet).")
+    # The banner prints inside web.main once every refusal (unknown flag, --port, missing or short
+    # key, busy port) has passed: it preceded each of them (AG71 fixed two, AG90 the rest).
+    _webapp._START_BANNER = ("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
+                             "bind, default 127.0.0.1:8766; the page loads htmx and Tailwind from the internet).")
 
     _delegate(web_main, "sextant web", ctx.args)
 

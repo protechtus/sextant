@@ -1037,6 +1037,31 @@ def check_sla_breaches() -> dict:
         return {"count": 0, "error": str(exc)}
 
 
+_QUALITY_SKIP_DIRS = frozenset({"archive", "_sync", "versions", "_atlas", "anti"})
+
+
+def _quality_counted(rec: "MemoryFile") -> bool:
+    """The files the memory-quality figures count (and `suggest-tags` would tag): not under an
+    archive/_sync/versions/_atlas/anti folder, and not a `_`-prefixed scaffold such as
+    `_README.md`. The untagged-by-scope breakdown uses the same gate, so on a fresh install
+    "Untagged: 1" is no longer followed by three scopes (MN78 F4, AG90)."""
+    return not any(p in _QUALITY_SKIP_DIRS for p in rec.parts) and not rec.name.startswith("_")
+
+
+def _fm_tagged(raw: Optional[str]) -> bool:
+    """True when the note's frontmatter carries a non-empty `tags:` (or `tag:`)."""
+    if raw is None or not raw.startswith("---"):
+        return False
+    end = raw.find("\n---", 3)
+    if end == -1:
+        return False
+    try:
+        fm = _yaml_load(raw[3:end]) or {}
+    except Exception:
+        return False
+    return bool(isinstance(fm, dict) and (fm.get("tags") or fm.get("tag")))
+
+
 def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
     """Scan .memory/ for quality signals in one pass.
 
@@ -1067,10 +1092,7 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
 
     records = scan if scan is not None else scan_memory_files(MEMORY_ROOT)
     for rec in records:
-        rel_parts = rec.parts
-        if any(p in skip_dirs for p in rel_parts):
-            continue
-        if rec.name.startswith("_"):
+        if not _quality_counted(rec):
             continue
         total += 1
         raw = rec.text
@@ -1098,8 +1120,7 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
                 pass
 
         # Tags
-        tags = fm.get("tags") or fm.get("tag")
-        if tags:
+        if _fm_tagged(raw):
             tagged += 1
 
         # Confidence
@@ -1162,20 +1183,10 @@ def check_untagged_by_scope(scan: Optional[list["MemoryFile"]] = None) -> dict[s
         if len(f.parts) < 2:
             continue  # top-level files are not scoped
         scope = f.parts[0]
-        if scope.startswith(".") or scope == "anti" or f.text is None:
+        if scope.startswith(".") or not _quality_counted(f):
             continue
-        raw = f.text
-        try:
-            if not raw.startswith("---"):
-                scope_counts[scope] = scope_counts.get(scope, 0) + 1
-                continue
-            end = raw.find("\n---", 3)
-            fm = _yaml_load(raw[3:end]) if end != -1 else {}
-            tags = (fm or {}).get("tags")
-            if not tags:
-                scope_counts[scope] = scope_counts.get(scope, 0) + 1
-        except Exception:
-            continue
+        if not _fm_tagged(f.text):  # an unreadable note counts as untagged, as in the total
+            scope_counts[scope] = scope_counts.get(scope, 0) + 1
     return scope_counts
 
 
