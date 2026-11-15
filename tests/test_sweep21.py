@@ -248,3 +248,15 @@ def test_fact_duplicate_scan_honours_the_budget(tmp_path, monkeypatch):
     d.find_fact_duplicates(memory_root=tmp_path)
     assert d._LAST_PARTIAL[1] > 0 and d._LAST_PARTIAL[0] < d._LAST_PARTIAL[1]
 
+
+def test_hook_workspace_parses_posix_and_windows_shapes():
+    from atlas_plus.setup_cmd import _hook_workspace as h, _merge
+    run = "python -m atlas_plus.hooks.run --env "
+    assert h({"command": run + "ATLAS_WORKSPACE_ROOT=/tmp/x/ws stop"}) == "/tmp/x/ws"
+    assert h({"command": run + "ATLAS_WORKSPACE_ROOT=/tmp/x/ws --env ATLAS_SESSION_AUTONOMOUS=on stop"}) == "/tmp/x/ws"
+    assert h({"command": run + "'ATLAS_WORKSPACE_ROOT=E:\\my ws' stop"}) == "e:\\my ws"
+    assert h({"command": run + '"ATLAS_WORKSPACE_ROOT=E:\\my ws" stop'}) == "e:\\my ws"
+    old = {"command": run + "ATLAS_WORKSPACE_ROOT=/tmp/x/ws --env ATLAS_SESSION_AUTONOMOUS=on stop"}
+    new = {"command": run + "ATLAS_WORKSPACE_ROOT=/tmp/x/ws stop"}
+    assert _merge([old], [new]) == [new]          # the same POSIX workspace is replaced, not duplicated (CI on Linux/macOS)
+

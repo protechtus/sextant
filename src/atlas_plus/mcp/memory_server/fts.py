@@ -11,6 +11,7 @@ Re-ranking blends three signals (all normalised 0-1):
 Scope authority multiplier: 1.2x for feedback/ and identity/ files.
 """
 
+import functools
 import json
 import logging
 import os
@@ -59,7 +60,15 @@ _INDIC_MARK_RANGES = (
     (0x0D81, 0x0D83), (0x0D57, 0x0D57), (0x09D7, 0x09D7), (0x0BD7, 0x0BD7), (0x0CD5, 0x0CD6),
     (0x0F18, 0x0F19), (0x0F35, 0x0F35), (0x0F37, 0x0F37), (0x0F39, 0x0F39), (0x0F3E, 0x0F3F), (0x0F90, 0x0FBC),
 )
-_TOKENCHARS = "".join(chr(c) for a, b in _INDIC_MARK_RANGES for c in range(a, b + 1))
+# AG83: emoji, pictographs, dingbats, arrows, regional indicators, keycap and tag characters were separators to
+# unicode61, so `🚀`, `👨‍👩‍👧` and `🇯🇵` found nothing at all. They are token characters now; the index and the query
+# put a separator around every emoji cluster (`_emoji_split`), so `rocket🚀fuel` stays three tokens and `a→b` two.
+_EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF), (0x2600, 0x27BF), (0x2300, 0x23FF), (0x2B00, 0x2BFF), (0x2190, 0x21FF), (0x25A0, 0x25FF),
+    (0x00A9, 0x00A9), (0x00AE, 0x00AE), (0x3030, 0x3030), (0x303D, 0x303D), (0x3297, 0x3297), (0x3299, 0x3299),
+    (0x20E3, 0x20E3), (0xE0020, 0xE007F),
+)
+_TOKENCHARS = "".join(chr(c) for a, b in _INDIC_MARK_RANGES + _EMOJI_RANGES for c in range(a, b + 1))
 _TOKENIZER = "porter unicode61 remove_diacritics 2 tokenchars ''" + _TOKENCHARS + "''"
 _TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1 tokenchars ''" + _TOKENCHARS + "''"   # SQLite before 3.27
 # Index text format tag, stored with the tokenizer name in atlas_meta: a change here rebuilds
@@ -153,9 +162,120 @@ def _fold_marks(text: str) -> str:
     return _MARKS_RE.sub("", text)
 
 
+_EMOJI_CLASS = "".join(chr(a) + "-" + chr(b) if a != b else chr(a) for a, b in _EMOJI_RANGES)
+# one cluster: a flag (two regional indicators), a keycap, or a pictograph with its presentation selector, skin tone,
+# tag sequence and ZWJ continuations; every lone emoji code point is a cluster of its own
+_EMOJI_RE = re.compile(
+    "[\U0001F1E6-\U0001F1FF]{2}"
+    "|[0-9#*][\ufe0e\ufe0f]?\u20e3"
+    "|[" + _EMOJI_CLASS + "][\ufe0e\ufe0f]?[\U000E0020-\U000E007F]*"
+    "(?:\u200d[" + _EMOJI_CLASS + "][\ufe0e\ufe0f]?[\U000E0020-\U000E007F]*)*")
+_EMOJI_DROP = str.maketrans("", "", "\ufe0e\ufe0f\u200d")
+_SKIN_RE = re.compile("(?<=.)(?=[\U0001F3FB-\U0001F3FF]$)")
+
+
+def _emoji_canon(cluster: str) -> str:
+    """No VS15/VS16 and no ZWJ (`❤️` meets `❤`; the family sequence and a tag-sequence flag are one token each); a
+    lone emoji's skin tone is a token of its own right after it, so `👍` finds `👍🏽` and `👍🏽` asks for both."""
+    c = cluster.translate(_EMOJI_DROP)
+    return _SKIN_RE.sub(_CJK_SEP, c) if "\u200d" not in cluster and len(c) == 2 else c
+
+
+def _emoji_split(text: str, sep: str = _CJK_SEP) -> str:
+    """Each emoji cluster becomes one token in its canonical form, with a separator on each side (AG83)."""
+    if text.isascii():
+        return text
+    return _EMOJI_RE.sub(lambda m: sep + _emoji_canon(m.group(0)) + sep, text)
+
+
+# AG83: Arabic and Hebrew glue the article, the conjunctions and the one-letter prepositions to the word, so `الخادم`
+# never met `خادم` and `השרת` never met `שרת`. The index keeps the prefix as its own token behind an invisible
+# separator (`ال\u2060خادم`: the snippet still reads `الخادم`) and an unquoted query word drops it, so both spellings
+# meet; a quoted phrase keeps it (exact form). A prefix is split only when the stem left behind is long enough:
+# `الله`, `بيت`, `בית`, `מלך` stay whole (measured on 50k-word frequency lists: see tests/test_ag83.py).
+_AR_LETTERS = "\u0621-\u063a\u0641-\u064a\u0671-\u06d3\u06fa-\u06fc"
+# only the words a rule can change: an Arabic-script word that starts with a prefix letter or ends in ها, a Hebrew word
+# that starts with one of its prefix letters (a callback per word was most of the cost: AG83 measured 2.5x rebuilds)
+_AR_WORD_RE = re.compile("(?<![" + _AR_LETTERS + "])(?:(?=[\u0648\u0641\u0628\u0643\u0644\u0627])|(?=[" + _AR_LETTERS
+                         + "]*\u0647\u0627))[" + _AR_LETTERS + "]{4,}(?![" + _AR_LETTERS + "])")
+_HE_WORD_RE = re.compile("(?<![\u05d0-\u05ea])[\u05d5\u05d4\u05d1\u05dc\u05de][\u05d0-\u05ea]{3,}(?![\u05d0-\u05ea])")
+_RTL_RE = re.compile("[\u05d0-\u05ea\u0621-\u06fc]")
+_AR_ARTICLES = ("\u0648\u0628\u0627\u0644", "\u0641\u0628\u0627\u0644", "\u0648\u0643\u0627\u0644",
+                "\u0648\u0644\u0644", "\u0641\u0644\u0644", "\u0648\u0627\u0644", "\u0641\u0627\u0644",
+                "\u0628\u0627\u0644", "\u0643\u0627\u0644", "\u0644\u0644", "\u0627\u0644")  # وبال فبال وكال ولل فلل وال فال بال كال لل ال
+_AR_MIN_STEM = 3        # after an article: `الله` (stem 2) stays whole
+_AR_BARE_MIN_STEM = 4   # after a bare و or ب: `وقت`, `بيت`, `ورقة` stay whole
+_HE_PREFIXES = "\u05d5\u05d4\u05d1\u05dc\u05de"  # ו ה ב ל מ
+_HE_MIN_STEM = 3
+_FA_PLURALS = ("\u0647\u0627\u06cc\u06cc", "\u0647\u0627\u06cc", "\u0647\u0627")  # هایی های ها
+_FA_MIN_STEM = 3        # `تنها` (alone) and `رها` stay whole
+
+
+def _ar_split(word: str) -> tuple:
+    pre, stem = "", word
+    for art in _AR_ARTICLES:
+        if word.startswith(art) and len(word) - len(art) >= _AR_MIN_STEM:
+            pre, stem = art, word[len(art):]
+            break
+    else:
+        if word[0] in "\u0648\u0628" and len(word) - 1 >= _AR_BARE_MIN_STEM:
+            pre, stem = word[0], word[1:]
+    suf = ""
+    for pl in _FA_PLURALS:   # Persian plural written without its ZWNJ: `کتابها` is `کتاب‌ها`
+        if stem.endswith(pl) and len(stem) - len(pl) >= _FA_MIN_STEM:
+            stem, suf = stem[:-len(pl)], pl
+            break
+    return pre, stem, suf
+
+
+def _he_split(word: str) -> tuple:
+    """At most two prefix letters, the second only after ו (`ובבית`, `והשרת`); מ only as מה (`מהבית`): a bare מ is
+    the participle prefix far more often than `from` (`מרגיש`, `מאמין`, `מסיבה` merged with other words: measured);
+    a stem never starts with ו (`הולך`, `בואו`, `מוכן` stay whole)."""
+    k = 0
+    if word[:2] == "ומ" or word[0] == "מ":
+        k0 = 1 if word[0] == "ו" else 0
+        if word[k0 + 1:k0 + 2] == "ה" and len(word) - k0 - 2 >= _HE_MIN_STEM and word[k0 + 2] != "ו":
+            return word[:k0 + 2], word[k0 + 2:], ""
+        if k0 == 0:
+            return "", word, ""
+    while k < 2 and word[k] in _HE_PREFIXES and word[k] != "מ":
+        if k == 1 and word[0] != "ו":
+            break
+        if len(word) - k - 1 < _HE_MIN_STEM or word[k + 1] == "ו":
+            break
+        k += 1
+    return word[:k], word[k:], ""
+
+
+@functools.lru_cache(maxsize=65536)
+def _affix_word(word: str, keep_prefix: bool) -> str:
+    pre, stem, suf = (_he_split if "\u05d0" <= word[0] <= "\u05ea" else _ar_split)(word)
+    out = (pre + _CJK_SEP if pre and keep_prefix else "") + stem
+    return out + (_CJK_SEP + suf if suf else "")
+
+
+def _affix_split(text: str, keep_prefix: bool = True) -> str:
+    """Index form (keep_prefix): `prefix SEP stem SEP suffix`; unquoted query form: `stem SEP suffix`."""
+    if text.isascii() or not _RTL_RE.search(text):
+        return text
+    text = _AR_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix), text)
+    return _HE_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix), text)
+
+
+def _query_words(q: str) -> str:
+    """The query side of the AG83 transforms: emoji clusters as separate terms, prefixes dropped outside quotes and
+    kept inside them (a quoted phrase is matched in the indexed form, prefix token included)."""
+    q = _emoji_split(q, " ")
+    if '"' not in q:
+        return _affix_split(q, keep_prefix=False)
+    parts = q.split('"')
+    return '"'.join(_affix_split(part, keep_prefix=bool(i % 2)) for i, part in enumerate(parts))
+
+
 def _norm_index_text(text: str) -> str:
     broken = _BREAK_RE.sub(lambda m: " " + _SENTINEL + " ", text)
-    return _cjk_split(_fold_marks(_recompose(unicodedata.normalize("NFKC", broken))))
+    return _cjk_split(_affix_split(_emoji_split(_fold_marks(_recompose(unicodedata.normalize("NFKC", broken))))))
 
 
 def _fm_values(obj) -> list[str]:
@@ -188,13 +308,173 @@ def _index_body(frontmatter_json: str, body: str) -> str:
     return text
 
 
-def _cheap_snippet(conn, rowid, query: str, width: int = 90) -> str:
-    """A snippet for a note too large for FTS5's snippet(): the first query term found, in brackets, with context."""
+_SNIP_OPEN, _SNIP_CLOSE, _SNIP_ELL = "\ue001", "\ue002", "\ue003"   # snippet() markers no note contains
+_FOLD_MEMO: dict = {}
+
+
+def _letter_fold(ch: str) -> str:
+    """One character as search sees it, letters, digits and symbols only: case, compatibility forms, diacritics,
+    the _recompose folds; punctuation, spaces, marks, joiners, the separator and the sentinel give ''."""
+    f = _FOLD_MEMO.get(ch)
+    if f is None:
+        d = unicodedata.normalize("NFKD", _recompose(ch)).casefold()
+        f = "".join(c for c in d if unicodedata.category(c)[0] in "LNS")
+        if len(_FOLD_MEMO) < 65536:
+            _FOLD_MEMO[ch] = f
+    return f
+
+
+def _fold_map(text: str) -> tuple:
+    """(folded letters, index in `text` of the character each folded letter came from)."""
+    parts: list = []
+    pos: list = []
+    memo = _FOLD_MEMO
+    for k, ch in enumerate(text):
+        f = memo.get(ch)
+        if f is None:
+            f = _letter_fold(ch)
+        if f:
+            parts.append(f)
+            if len(f) == 1:
+                pos.append(k)
+            else:
+                pos.extend([k] * len(f))
+    return "".join(parts), pos
+
+
+def _is_tail(ch: str) -> bool:
+    return unicodedata.category(ch)[0] == "M" or ch in "\u200d\ufe0e\ufe0f" or "\U000E0020" <= ch <= "\U000E007F" or "\U0001F3FB" <= ch <= "\U0001F3FF"
+
+
+def _word_edge(orig: str, i: int, step: int) -> int:
+    """Widen a bracket to the whole word in the note (`ال[خادم]` -> `[الخادم]`, `[کتاب]ها` -> `[کتابها]`); never into
+    CJK or Thai-like runs, whose words are single characters to the index."""
+    def ok(c: str) -> bool:
+        return (c.isalnum() or unicodedata.category(c)[0] == "M") and not _CJK_RE.match(c)
+    if step < 0:
+        while 0 < i < len(orig) and ok(orig[i - 1]) and ok(orig[i]):
+            i -= 1
+    else:
+        while 0 < i < len(orig) and ok(orig[i]) and ok(orig[i - 1]):
+            i += 1
+    return i
+
+
+def _render_in_original(orig: str, window: str, marks: list, lead: bool, trail: bool, hint: float = 0.0):
+    """Re-cut a snippet of the indexed (folded) text out of the note's own text: `Straße` and `İSTANBUL` instead of
+    `Strasse` and `iSTANBUL`, punctuation and joiners kept (AG83). `window` is the indexed-text window, `marks` the
+    (offset in window, is_open) bracket positions. None when the window cannot be located (the caller keeps the
+    folded snippet)."""
+    wl = _fold_map(window)[0]
+    if not wl or not orig:
+        return None
+    ol, opos = _fold_map(orig)
+    found, j = [], ol.find(wl)
+    while j >= 0 and len(found) < 64:
+        found.append(j)
+        j = ol.find(wl, j + 1)
+    if not found:
+        return None
+    m = min(found, key=lambda x: abs(x / max(len(ol), 1) - hint))
+
+    def _end(k: int) -> int:
+        e = opos[k] + 1
+        while e < len(orig) and _is_tail(orig[e]):
+            e += 1
+        return e
+
+    a, b = opos[m], _end(m + len(wl) - 1)
+    cuts = []
+    for off, is_open in marks:
+        c = len(_fold_map(window[:off])[0])   # folded letters of the window before this mark
+        if is_open:
+            if c < len(wl):
+                cuts.append((_word_edge(orig, opos[m + c], -1), "["))
+        elif c > 0:
+            cuts.append((_word_edge(orig, _end(m + c - 1), 1), "]"))
+    a = min([a] + [k for k, _ in cuts])
+    b = max([b] + [k for k, _ in cuts])
+    # one bracket per place, and `][` at one place (two adjacent tokens of one word or emoji) closes nothing
+    cuts = sorted(set(cuts), key=lambda x: (x[0], x[1] == "["))
+    at = {}
+    for k, t in cuts:
+        at.setdefault(k, set()).add(t)
+    cuts = [(k, t) for k, t in cuts if at[k] != {"[", "]"}]
+    depth, kept = 0, []
+    for k, t in cuts:
+        if (t == "[") == (depth == 0):
+            kept.append((k, t))
+            depth = 1 - depth
+    if depth:
+        kept.append((b, "]"))
+    out, last = [], a
+    for k, t in kept:
+        out.append(orig[last:k])
+        out.append(t)
+        last = k
+    out.append(orig[last:b])
+    return ("..." if lead else "") + "".join(out) + ("..." if trail else "")
+
+
+def _original_text(rel: str, indexed: str) -> str:
+    """The text a note's index row was built from, read back from the corpus: the body, then its frontmatter values
+    (the order `_index_body` uses). '' when the file cannot be read."""
+    from atlas_plus._fsutil import is_link
+    try:
+        path = MEMORY_ROOT / rel
+        if is_link(path):   # a note swapped for a link after indexing: never show another file's text (AG16)
+            return ""
+        raw = path.read_text(encoding="utf-8-sig", errors="replace")
+    except (OSError, ValueError):
+        return ""
+    frontmatter_json, body, _ = _parse_md(raw)
+    try:
+        values = _fm_values(json.loads(frontmatter_json))
+    except (ValueError, TypeError):
+        values = []
+    return body + ("\n" + "\n".join(values)[:_MAX_FM_INDEX_CHARS] if values else "")
+
+
+def _snippet_from_fts(raw: str, indexed: str, orig: str) -> str:
+    """Turn snippet()'s marked text into the bracketed snippet, in the note's own letters when it can be placed."""
+    lead, trail = raw.startswith(_SNIP_ELL), raw.endswith(_SNIP_ELL)
+    core = raw[len(_SNIP_ELL) if lead else 0: len(raw) - (len(_SNIP_ELL) if trail else 0)]
+    window, marks = [], []
+    for ch in core:
+        if ch == _SNIP_OPEN or ch == _SNIP_CLOSE:
+            marks.append((len(window), ch == _SNIP_OPEN))
+        else:
+            window.append(ch)
+    window_s = "".join(window)
+    if orig:
+        at = indexed.find(window_s)
+        hint = at / max(len(indexed), 1) if at >= 0 else 0.0
+        out = _render_in_original(orig, window_s, marks, lead, trail, hint)
+        if out is not None:
+            return out
+    return raw.replace(_SNIP_OPEN, "[").replace(_SNIP_CLOSE, "]").replace(_SNIP_ELL, "...")
+
+
+def _cheap_snippet(conn, rowid, query: str, width: int = 90, orig: str = "") -> str:
+    """A snippet for a note too large for FTS5's snippet(): the first query term found, in brackets, with context.
+    With `orig` (the note's own text) the term is found and shown there (AG83), else in the indexed text."""
+    terms = [t for t in re.findall(r"[^\s\"()*:^+]+", query) if t.upper() not in ("AND", "OR", "NOT", "NEAR")]
+    if orig:
+        low, pos = _fold_map(orig)
+        for t in terms:
+            needle = _fold_map(t)[0]
+            j = low.find(needle) if needle else -1
+            if j >= 0:
+                i, e = _word_edge(orig, pos[j], -1), pos[j + len(needle) - 1] + 1
+                while e < len(orig) and _is_tail(orig[e]):
+                    e += 1
+                e = _word_edge(orig, e, 1)
+                a, b = max(0, i - width), min(len(orig), e + width)
+                return ("..." if a else "") + orig[a:i] + "[" + orig[i:e] + "]" + orig[e:b] + ("..." if b < len(orig) else "")
     try:
         body = conn.execute("SELECT body FROM memory_fts WHERE rowid = ?", (rowid,)).fetchone()[0] or ""
     except Exception:  # noqa: BLE001
         return ""
-    terms = [t for t in re.findall(r"[^\s\"()*:^+]+", query) if t.upper() not in ("AND", "OR", "NOT", "NEAR")]
     # `low` is the folded text and `pos` the body index of each folded character: casefold lengthens
     # some letters (U+01F0 -> 2) and the index keeps U+2060 between CJK characters, so an index found in
     # `low` was not an index into `body` (AG73: 400 such letters gave `...[]`; a CJK term never bracketed)
@@ -217,12 +497,20 @@ def _cheap_snippet(conn, rowid, query: str, width: int = 90) -> str:
     return body[: 2 * width] + ("..." if len(body) > 2 * width else "")
 
 
+def _row_body(conn, rowid) -> str:
+    try:
+        row = conn.execute("SELECT body FROM memory_fts WHERE rowid = ?", (rowid,)).fetchone()
+    except sqlite3.Error:
+        return ""
+    return (row[0] or "") if row else ""
+
+
 def _bigram_fallback(raw: str) -> str:
     """A looser query for a CJK sentence that matched nothing as phrases: every CJK run of three
     characters or more becomes its overlapping bigrams OR-ed together (ranked by how many the
     note shares), Latin terms stay as they are. A natural Japanese sentence found nothing
     because each run had to match whole (MN23). Empty string when it does not apply."""
-    q = _recompose(unicodedata.normalize("NFKC", raw)).replace(_SENTINEL, " ")  # the index holds recomposed sara am: decomposed bigrams never matched (MN62)
+    q = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", raw))).replace(_SENTINEL, " "))  # the index holds recomposed sara am: decomposed bigrams never matched (MN62)
     if not _CJK_RUN_RE.search(q):
         return ""
     long_runs = [m.group(0) for m in _CJK_RUN_RE.finditer(q) if len(m.group(0)) >= 3]
@@ -249,7 +537,7 @@ def _bigram_fallback(raw: str) -> str:
 def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
-    q = _fold_marks(_recompose(unicodedata.normalize("NFKC", query))).replace(_SENTINEL, " ")
+    q = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", query))).replace(_SENTINEL, " "))
     q = re.sub(r"(?<=\S):(?=\S)", " ", q)  # `alpha:beta` is two words, not an FTS5 column filter (AG46: a silent miss)
     if not _CJK_RE.search(q):
         return q
@@ -491,7 +779,7 @@ def _walk_memory_stats():
                     yield rel, st.st_mtime, st.st_size
 
 
-INDEX_FORMAT = "5"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62)
+INDEX_FORMAT = "6"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83)
 
 
 def _needs_rebuild() -> bool:
@@ -912,7 +1200,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             rows = conn.execute(
                 """
                 SELECT path,
-                       CASE WHEN length(body) <= 60000 THEN snippet(memory_fts, 2, '[', ']', '...', 20) END AS snippet,
+                       CASE WHEN length(body) <= 60000 THEN snippet(memory_fts, 2, '\ue001', '\ue002', '\ue003', 20) END AS snippet,
                        rank, rowid
                 FROM memory_fts
                 WHERE memory_fts MATCH ?
@@ -926,7 +1214,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             rows = conn.execute(
                 """
                 SELECT path,
-                       CASE WHEN length(body) <= 60000 THEN snippet(memory_fts, 2, '[', ']', '...', 20) END AS snippet,
+                       CASE WHEN length(body) <= 60000 THEN snippet(memory_fts, 2, '\ue001', '\ue002', '\ue003', 20) END AS snippet,
                        rank, rowid
                 FROM memory_fts
                 WHERE memory_fts MATCH ?
@@ -942,8 +1230,14 @@ def search(query: str, scope: str = "", limit: int = 10,
         seen: dict[str, dict] = {}
         for r in rows:
             p, snip, sc = r[0], r[1], r[2]
+            if p in seen and sc >= seen[p]["score"]:
+                continue
+            indexed = _row_body(conn, r[3])
+            orig = _original_text(p, indexed) if indexed else ""
             if snip is None:  # a huge note: snippet() walked every hit (MN66: minutes for a common word in a 4 MB note)
-                snip = _cheap_snippet(conn, r[3], query)
+                snip = _cheap_snippet(conn, r[3], query, orig=orig)
+            else:
+                snip = _snippet_from_fts(snip, indexed, orig)   # in the note's own letters (AG83)
             snip = (snip or "").replace(_CJK_SEP, "").replace(" " + _SENTINEL + " ", " ").replace(_SENTINEL, "")
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}
@@ -1021,8 +1315,8 @@ def search(query: str, scope: str = "", limit: int = 10,
             # punctuated token ("config.toml AppData") used to drop straight to a literal
             # phrase, which only matches the words adjacent in that order and so returned
             # nothing although every word was on disk (deep install lanes 2026-11-09).
-            folded = unicodedata.normalize("NFKC", _raw)
-            tokens = [t for t in folded.split() if t]
+            folded = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", _raw))).replace('"', " "))
+            tokens = [t for t in folded.split() if t]  # folded like the main query (AG83: `Straße.` and `الخادم,` kept the raw form here)
             if len(tokens) > 1:
                 tokenized = " ".join('"' + _cjk_split(t).replace('"', '""') + '"' for t in tokens)
                 log.info("FTS query was not valid FTS5 syntax; retrying with each token quoted")
@@ -1030,7 +1324,7 @@ def search(query: str, scope: str = "", limit: int = 10,
                 return search(tokenized, scope=scope, limit=limit, _fallback_stage=1, _raw=_raw)
             _fallback_stage = 1  # single token: go straight to the phrase form
         if syntax and _fallback_stage == 1:
-            phrase = '"' + _cjk_split(unicodedata.normalize("NFKC", _raw)).replace('"', '""') + '"'
+            phrase = '"' + _cjk_split(_affix_split(_emoji_split(_fold_marks(_recompose(unicodedata.normalize("NFKC", _raw)))))).replace('"', '""') + '"'
             log.info("FTS query still not valid FTS5 syntax; retrying as one literal phrase")
             conn.close()
             return search(phrase, scope=scope, limit=limit, _fallback_stage=2, _raw=_raw)

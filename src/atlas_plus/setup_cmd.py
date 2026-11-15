@@ -492,10 +492,22 @@ def _is_ours(item) -> bool:
 
 
 def _hook_workspace(item) -> str:
-    """The ATLAS_WORKSPACE_ROOT a Sextant hook entry was baked with, '' when none."""
+    """The ATLAS_WORKSPACE_ROOT a Sextant hook entry was baked with, '' when none. The value is quoted when it has a space
+    (`'ATLAS_WORKSPACE_ROOT=E:\\my ws'` on Windows; the quote sits BEFORE the name) and bare on POSIX, where it ends at
+    whitespace (CI: a re-run left two Stop entries on Linux and macOS because the bare value ran to the end of the line)."""
     import re as _re
-    m = _re.search(r"ATLAS_WORKSPACE_ROOT=([^'\"]+)", json.dumps(item, sort_keys=True).replace("\\\\", "\\"))
-    return m.group(1).strip().rstrip("\\/").casefold() if m else ""
+    s = json.dumps(item, sort_keys=True).replace("\\\\", "\\").replace('\\"', '"')
+    m = _re.search(r"(['\"]?)ATLAS_WORKSPACE_ROOT=(['\"]?)", s)
+    if not m:
+        return ""
+    q = m.group(1) or m.group(2)
+    rest = s[m.end():]
+    if q and q in rest:
+        val = rest[:rest.index(q)]
+    else:
+        mm = _re.match(r"[^\s'\"]+", rest)
+        val = mm.group(0) if mm else ""
+    return val.strip().rstrip("\\/").casefold()
 
 
 _HOOK_TARGETS = ("session-start", "stop")

@@ -3314,6 +3314,37 @@ async def tickets(request: Request, project: str = "", status: str = ""):
     return [t.as_dict() for t in list_tickets(project=project or None, status=status or None)]
 
 
+@app.get("/api/tickets/projects")
+async def ticket_projects(request: Request):
+    """GET /api/tickets/projects -- the project names the board's `project` filter accepts (AG80).
+
+    The board's cap sentence asks the reader to pick a project; these are the ticket
+    directories that hold at least one live ticket, named exactly as list_tickets takes them.
+    """
+    _check_auth(request)
+    from atlas_plus.tickets import store as _tstore
+    root = _tstore.TICKETS_ROOT
+    names: list[str] = []
+    try:
+        with os.scandir(root) as it:
+            entries = sorted(it, key=lambda e: e.name)
+    except OSError:
+        return []
+    for e in entries:
+        n = e.name
+        if n.startswith(("_", ".")) or not re.match(r'^[a-zA-Z0-9_.+-]+$', n):
+            continue
+        try:
+            if not e.is_dir(follow_symlinks=False):
+                continue
+            if next(_tstore._walk_live_ticket_files(Path(e.path), recursive=False), None) is None:
+                continue
+        except OSError:
+            continue
+        names.append(n)
+    return names
+
+
 @app.get("/api/projects")
 async def projects_list(request: Request):
     """GET /api/projects -- list project directory names under ATLAS_PROJECTS_ROOT."""
@@ -4859,6 +4890,11 @@ button{{font-family:inherit;cursor:pointer}}
 .capture-bar input{{flex:1;background:transparent;border:none;color:var(--text-m);font-size:.7rem;outline:none}}
 .capture-bar input::placeholder{{color:var(--text-d)}}
 .capture-bar input:focus{{color:var(--text)}}
+/* AG80: the capture input and the palette input had border:none + outline:none, so focus was invisible */
+.capture-bar input:focus-visible{{outline:2px solid #22d3ee;outline-offset:1px;border-radius:.25rem}}
+.palette-input:focus-visible{{outline:2px solid #22d3ee;outline-offset:-2px}}
+.tab:focus-visible{{outline:2px solid #22d3ee;outline-offset:1px}}
+header.page-head{{display:contents}}
 .stream-output{{background:var(--bg);border:1px solid var(--border);border-radius:.375rem;padding:.5rem;font-size:.65rem;color:var(--text-m);white-space:pre-wrap;word-break:break-word;max-height:12rem;overflow-y:auto;margin-top:.5rem}}
 .stream-done{{color:#4ade80}}.stream-failed{{color:#f87171}}.stream-blocked{{color:#fb923c}}
 .toast{{position:fixed;bottom:1.5rem;right:1.5rem;padding:.5rem 1rem;border-radius:.5rem;font-size:.75rem;z-index:300;transition:opacity .3s;pointer-events:none;max-width:20rem}}
@@ -4924,7 +4960,8 @@ The server itself is fine; its JSON endpoints (for example <code>/api/stats/summ
 window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htmx==="undefined")miss.push("htmx (unpkg.com)");if(typeof tailwind==="undefined")miss.push("Tailwind (cdn.tailwindcss.com)");if(miss.length){{var b=document.getElementById("cdn-missing");if(b){{var w=document.getElementById("cdn-missing-which");if(w)w.textContent="Not loaded: "+miss.join(", ")+".";b.style.display="block";}}}}}});
 </script>
 
-<!-- Top bar -->
+<!-- Top bar, capture bar and tab bar: one banner landmark (display:contents keeps the flex layout) -->
+<header class="page-head">
 <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-700 shrink-0">
   <div class="flex items-center gap-3">
     <h1 class="text-sm font-bold text-cyan-400 shrink-0 flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 L17.2 4.8 L20 6 L17.2 7.2 L16 10 L14.8 7.2 L12 6 L14.8 4.8 Z" fill="#C9A24B"/><path d="M16 12 L6 25 M16 12 L26 25 M16 12 L16 29.5" stroke="currentColor" stroke-width="2.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 25 A13 13 0 0 1 26 25" stroke="currentColor" stroke-width="3.2" fill="none" stroke-linecap="round"/></svg>Sextant</h1>
@@ -4942,7 +4979,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 <!-- Quick capture bar -->
 <div class="capture-bar">
-  <span class="text-slate-600 text-xs shrink-0">capture:</span>
+  <label for="capture-input" class="text-slate-600 text-xs shrink-0">capture:</label>
   <input id="capture-input" type="text" placeholder="Save a fact to memory... (Enter)" autocomplete="off"
     onkeydown="if(event.key==='Enter')quickCapture()">
   <select id="capture-scope" aria-label="capture scope" style="background:var(--bg-card,#0f172a);border:none;color:var(--text-m,#475569);font-size:.65rem;width:auto">
@@ -4954,26 +4991,27 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- Tabs -->
-<div id="tabbar" class="flex gap-1 px-3 pt-1.5 border-b border-slate-700 shrink-0 overflow-x-auto">
-  <div class="tab active" data-tab="dash" onclick="switchTab('dash')">Dashboard</div>
-  <div class="tab" data-tab="map" onclick="switchTab('map')">Map</div>
-  <div class="tab" data-tab="tickets" onclick="switchTab('tickets')">Tickets</div>
-  <div class="tab" data-tab="operator" onclick="switchTab('operator')">Operator</div>
-  <div class="tab" data-tab="inbox" onclick="switchTab('inbox')">Inbox</div>
-  <div class="tab" data-tab="tasks" onclick="switchTab('tasks')">Tasks<span id="tasks-badge" class="ml-1 text-yellow-400 text-xs"></span></div>
-  <div class="tab" data-tab="services" onclick="switchTab('services')">Services</div>
-  <div class="tab" data-tab="chat" onclick="switchTab('chat')">Brain Chat</div>
-  <div class="tab" data-tab="agents" onclick="switchTab('agents')">Agents</div>
-  <div class="tab" data-tab="memory" onclick="switchTab('memory')">Memory<span id="facts-badge" class="ml-1 text-amber-400 text-xs"></span></div>
-  <div class="tab" data-tab="sessions" onclick="switchTab('sessions')">Sessions</div>
-  <div class="tab" data-tab="watchtower" onclick="switchTab('watchtower')">Watchtower</div>
+<div id="tabbar" role="tablist" aria-label="Sections" class="flex gap-1 px-3 pt-1.5 border-b border-slate-700 shrink-0 overflow-x-auto">
+  <div class="tab active" data-tab="dash" onclick="switchTab('dash')" role="tab" id="tabbtn-dash" aria-controls="tab-dash" aria-selected="true" tabindex="0">Dashboard</div>
+  <div class="tab" data-tab="map" onclick="switchTab('map')" role="tab" id="tabbtn-map" aria-controls="tab-map" aria-selected="false" tabindex="-1">Map</div>
+  <div class="tab" data-tab="tickets" onclick="switchTab('tickets')" role="tab" id="tabbtn-tickets" aria-controls="tab-tickets" aria-selected="false" tabindex="-1">Tickets</div>
+  <div class="tab" data-tab="operator" onclick="switchTab('operator')" role="tab" id="tabbtn-operator" aria-controls="tab-operator" aria-selected="false" tabindex="-1">Operator</div>
+  <div class="tab" data-tab="inbox" onclick="switchTab('inbox')" role="tab" id="tabbtn-inbox" aria-controls="tab-inbox" aria-selected="false" tabindex="-1">Inbox</div>
+  <div class="tab" data-tab="tasks" onclick="switchTab('tasks')" role="tab" id="tabbtn-tasks" aria-controls="tab-tasks" aria-selected="false" tabindex="-1">Tasks<span id="tasks-badge" class="ml-1 text-yellow-400 text-xs"></span></div>
+  <div class="tab" data-tab="services" onclick="switchTab('services')" role="tab" id="tabbtn-services" aria-controls="tab-services" aria-selected="false" tabindex="-1">Services</div>
+  <div class="tab" data-tab="chat" onclick="switchTab('chat')" role="tab" id="tabbtn-chat" aria-controls="tab-chat" aria-selected="false" tabindex="-1">Brain Chat</div>
+  <div class="tab" data-tab="agents" onclick="switchTab('agents')" role="tab" id="tabbtn-agents" aria-controls="tab-agents" aria-selected="false" tabindex="-1">Agents</div>
+  <div class="tab" data-tab="memory" onclick="switchTab('memory')" role="tab" id="tabbtn-memory" aria-controls="tab-memory" aria-selected="false" tabindex="-1">Memory<span id="facts-badge" class="ml-1 text-amber-400 text-xs"></span></div>
+  <div class="tab" data-tab="sessions" onclick="switchTab('sessions')" role="tab" id="tabbtn-sessions" aria-controls="tab-sessions" aria-selected="false" tabindex="-1">Sessions</div>
+  <div class="tab" data-tab="watchtower" onclick="switchTab('watchtower')" role="tab" id="tabbtn-watchtower" aria-controls="tab-watchtower" aria-selected="false" tabindex="-1">Watchtower</div>
 </div>
+</header>
 
 <!-- Main content area -->
-<div class="flex-1 overflow-hidden p-3">
+<main id="main" class="flex-1 overflow-hidden p-3">
 
 <!-- DASHBOARD TAB -->
-<div id="tab-dash" class="tab-content active h-full gap-3" style="flex-direction:column">
+<div id="tab-dash" role="tabpanel" aria-labelledby="tabbtn-dash" class="tab-content active h-full gap-3" style="flex-direction:column">
   <!-- Stats bar -->
   <div class="card shrink-0 py-1.5"
     hx-get="/api/stats/summary" hx-trigger="load, every 15s" hx-swap="innerHTML">
@@ -4989,7 +5027,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
         placeholder="Instruction for Brain..."
         onkeydown="if(event.key==='Enter'&&event.ctrlKey)submitTask()"></textarea>
       <div class="flex gap-1.5 mt-2">
-        <select id="task-agent" class="flex-1 text-xs">
+        <select id="task-agent" aria-label="Agent for this task" class="flex-1 text-xs">
           <option value="">auto-route</option>
           <option value="fast">fast (qwen3:1.7b)</option>
           <option value="brain">brain (qwen3:8b)</option>
@@ -5092,7 +5130,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- TICKETS TAB -->
-<div id="tab-services" class="tab-content h-full flex-col gap-2">
+<div id="tab-services" role="tabpanel" aria-labelledby="tabbtn-services" class="tab-content h-full flex-col gap-2">
   <div class="flex items-center gap-2 shrink-0 flex-wrap">
     <button class="btn btn-cyan" onclick="reloadServices()">Refresh</button>
     <span class="text-xs text-slate-500">Restarting Web UI briefly disconnects this page.</span>
@@ -5108,9 +5146,9 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   </div>
 </div>
 
-<div id="tab-inbox" class="tab-content h-full flex-col gap-2">
+<div id="tab-inbox" role="tabpanel" aria-labelledby="tabbtn-inbox" class="tab-content h-full flex-col gap-2">
   <div class="flex items-center gap-2 shrink-0 flex-wrap">
-    <select id="inbox-filter" onchange="reloadInbox()" class="w-32">
+    <select id="inbox-filter" aria-label="Inbox status filter" onchange="reloadInbox()" class="w-32">
       <option value="">all</option>
       <option value="new">new</option>
       <option value="summarized">summarized</option>
@@ -5135,7 +5173,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   </div>
 </div>
 
-<div id="tab-operator" class="tab-content h-full flex-col gap-2">
+<div id="tab-operator" role="tabpanel" aria-labelledby="tabbtn-operator" class="tab-content h-full flex-col gap-2">
   <div class="flex items-center gap-2 shrink-0">
     <h2 class="text-xs font-bold text-slate-400">Operator queue -- steps only a human can take, instructions verified where marked READY</h2>
     <button class="btn btn-cyan text-xs" onclick="reloadOperator()">refresh</button>
@@ -5149,15 +5187,18 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   </div>
 </div>
 
-<div id="tab-tickets" class="tab-content h-full flex-col gap-2">
+<div id="tab-tickets" role="tabpanel" aria-labelledby="tabbtn-tickets" class="tab-content h-full flex-col gap-2">
   <div class="flex items-center gap-2 shrink-0 flex-wrap">
-    <select id="tkt-filter" onchange="reloadTickets()" class="w-32">
+    <select id="tkt-filter" aria-label="Ticket status filter" onchange="reloadTickets()" class="w-32">
       <option value="open">open</option>
       <option value="all">all</option>
       <option value="todo">todo</option>
       <option value="in-progress">in-progress</option>
       <option value="blocked">blocked</option>
       <option value="done">done</option>
+    </select>
+    <select id="tkt-project" aria-label="Ticket project" onchange="reloadTickets()" class="w-36">
+      <option value="">all projects</option>
     </select>
     <button class="btn btn-cyan" onclick="toggleTicketForm()">+ New</button>
     <span id="dispatch-badge"
@@ -5179,7 +5220,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
       </div>
       <div class="w-24">
         <div class="text-xs text-slate-500 mb-1">Priority</div>
-        <select id="tk-priority">
+        <select id="tk-priority" aria-label="Priority">
           <option value="normal">normal</option>
           <option value="high">high</option>
           <option value="critical">critical</option>
@@ -5188,7 +5229,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
       </div>
       <div class="w-28">
         <div class="text-xs text-slate-500 mb-1">Assignee</div>
-        <select id="tk-assignee">
+        <select id="tk-assignee" aria-label="Assignee">
           <option value="human">human</option>
           <option value="claude-code">claude-code</option>
         </select>
@@ -5196,7 +5237,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
     </div>
     <div class="mt-2">
       <div class="text-xs text-slate-500 mb-1">Body (optional)</div>
-      <div class="flex gap-2 flex-wrap"><input id="tk-requires" class="flex-1 text-xs" placeholder="requires (e.g. WEB-001)"><input id="tk-verified" class="flex-1 text-xs" placeholder="verified (YYYY-MM-DD)"><select id="tk-effort" class="text-xs"><option value="">effort</option><option>S</option><option>M</option><option>L</option><option>XL</option></select></div>
+      <div class="flex gap-2 flex-wrap"><input id="tk-requires" class="flex-1 text-xs" placeholder="requires (e.g. WEB-001)"><input id="tk-verified" class="flex-1 text-xs" placeholder="verified (YYYY-MM-DD)"><select id="tk-effort" aria-label="Effort" class="text-xs"><option value="">effort</option><option>S</option><option>M</option><option>L</option><option>XL</option></select></div>
       <textarea id="tk-body" rows="2" class="w-full resize-none" placeholder="Description, context, steps..."></textarea>
     </div>
     <div class="flex gap-2 mt-2">
@@ -5220,9 +5261,9 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- TASKS TAB -->
-<div id="tab-tasks" class="tab-content h-full flex-col gap-2">
+<div id="tab-tasks" role="tabpanel" aria-labelledby="tabbtn-tasks" class="tab-content h-full flex-col gap-2">
   <div class="flex items-center gap-2 shrink-0 flex-wrap">
-    <select id="task-filter" onchange="reloadTasks()" class="w-32">
+    <select id="task-filter" aria-label="Task status filter" onchange="reloadTasks()" class="w-32">
       <option value="">all status</option>
       <option value="pending">pending</option>
       <option value="running">running</option>
@@ -5230,14 +5271,14 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
       <option value="failed">failed</option>
       <option value="blocked">blocked</option>
     </select>
-    <select id="time-filter" onchange="reloadTasks()" class="w-24">
+    <select id="time-filter" aria-label="Time window" onchange="reloadTasks()" class="w-24">
       <option value="">all time</option>
       <option value="1">1h</option>
       <option value="6">6h</option>
       <option value="24">today</option>
       <option value="168">7d</option>
     </select>
-    <select id="agent-filter" onchange="reloadTasks()" class="w-36">
+    <select id="agent-filter" aria-label="Agent filter" onchange="reloadTasks()" class="w-36">
       <option value="">all agents</option>
       <option value="brain">brain</option>
       <option value="fast">fast</option>
@@ -5272,7 +5313,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- CHAT TAB -->
-<div id="tab-chat" class="tab-content h-full flex-col gap-2">
+<div id="tab-chat" role="tabpanel" aria-labelledby="tabbtn-chat" class="tab-content h-full flex-col gap-2">
   <div class="card shrink-0 text-xs text-slate-500">
     Brain Chat -- local Qwen3, no token limits.
     Session: <span id="chat-sid" class="text-slate-400"></span>
@@ -5291,7 +5332,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- AGENTS TAB -->
-<div id="tab-agents" class="tab-content block-tab h-full overflow-y-auto">
+<div id="tab-agents" role="tabpanel" aria-labelledby="tabbtn-agents" class="tab-content block-tab h-full overflow-y-auto">
   <div class="card"
     hx-get="/api/agents" hx-trigger="tab-show, every 30s" hx-swap="innerHTML">
     <div class="text-slate-500 text-xs">loading agents...</div>
@@ -5305,7 +5346,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- MEMORY TAB -->
-<div id="tab-memory" class="tab-content h-full gap-3">
+<div id="tab-memory" role="tabpanel" aria-labelledby="tabbtn-memory" class="tab-content h-full gap-3">
   <!-- Left panel: search + gaps -->
   <div class="flex flex-col gap-2 w-72 shrink-0 min-h-0">
     <div class="flex items-center gap-2 shrink-0">
@@ -5430,7 +5471,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
       <div class="flex items-center gap-2 shrink-0 mb-1">
         <input id="tg-q" type="text" class="flex-1" placeholder="Query temporal graph..."
           onkeydown="if(event.key==='Enter')queryTemporal()">
-        <select id="tg-mode" class="w-24">
+        <select id="tg-mode" aria-label="Temporal query mode" class="w-24">
           <option value="current">current</option>
           <option value="history">history</option>
         </select>
@@ -5441,7 +5482,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
           onkeydown="if(event.key==='Enter')fetchEntityHistory()">
         <button class="btn btn-slate text-xs" onclick="fetchEntityHistory()">History</button>
       </div>
-      <div id="tg-results" class="flex-1 overflow-y-auto text-xs">
+      <div id="tg-results" tabindex="0" aria-label="Temporal graph results" class="flex-1 overflow-y-auto text-xs">
         <div class="text-slate-600 text-xs">Enter an entity or topic to query the temporal knowledge graph.</div>
       </div>
     </div>
@@ -5449,7 +5490,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- SESSIONS TAB -->
-<div id="tab-sessions" class="tab-content h-full gap-3">
+<div id="tab-sessions" role="tabpanel" aria-labelledby="tabbtn-sessions" class="tab-content h-full gap-3">
   <div class="w-56 shrink-0 flex flex-col gap-2">
     <input id="session-search-input" type="text" placeholder="Search sessions..."
       class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
@@ -5486,7 +5527,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 </div>
 
 <!-- WATCHTOWER TAB (optional SIEM) -->
-<div id="tab-watchtower" class="tab-content block-tab h-full overflow-y-auto">
+<div id="tab-watchtower" role="tabpanel" aria-labelledby="tabbtn-watchtower" class="tab-content block-tab h-full overflow-y-auto">
   <div class="card">
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-xs font-bold text-slate-400">Watchtower &mdash; SIEM</h2>
@@ -5498,7 +5539,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   </div>
 </div>
 
-<div id="tab-map" class="tab-content h-full flex-col gap-2">
+<div id="tab-map" role="tabpanel" aria-labelledby="tabbtn-map" class="tab-content h-full flex-col gap-2">
   <div class="card flex items-center gap-3 py-2">
     <h2 class="text-xs font-bold text-slate-400">System Map</h2>
     <span class="text-slate-600 text-xs">services, stores, and who is talking &mdash; live</span>
@@ -5515,18 +5556,18 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
     </div>
     <div class="card w-80 flex flex-col min-h-0">
       <h3 class="text-xs font-bold text-slate-400 mb-1">Live activity</h3>
-      <div id="map-ticker" class="flex-1 overflow-y-auto text-xs font-mono"></div>
+      <div id="map-ticker" tabindex="0" aria-label="Activity ticker" class="flex-1 overflow-y-auto text-xs font-mono"></div>
     </div>
   </div>
 </div>
 
-</div><!-- end main content -->
+</main><!-- end main content -->
 
 <!-- Ctrl+K Command Palette -->
-<div id="palette" class="palette-overlay" style="display:none" onclick="if(event.target===this)closePalette()">
-  <div class="palette-box">
-    <input id="palette-input" class="palette-input" type="text" placeholder="Type a command..."
-      oninput="filterPalette(this.value)"
+<div id="palette" class="palette-overlay" style="display:none" tabindex="-1" onclick="if(event.target===this)closePalette(true)">
+  <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
+    <input id="palette-input" class="palette-input" type="text" placeholder="Type a command..." aria-label="Command"
+      autocomplete="off" oninput="filterPalette(this.value)"
       onkeydown="palettKey(event)">
     <div id="palette-list" style="border-top:1px solid #334155;max-height:320px;overflow-y:auto"></div>
   </div>
@@ -5535,14 +5576,14 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
 <!-- Quick Dispatch Modal -->
 <div id="dispatch-modal"
   style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);align-items:center;justify-content:center;z-index:100">
-  <div class="card w-96 mx-4">
+  <div class="card w-96 mx-4" role="dialog" aria-modal="true" aria-labelledby="dm-title">
     <div class="flex items-center justify-between mb-3">
-      <h2 class="text-sm font-bold text-slate-200">
+      <h2 id="dm-title" class="text-sm font-bold text-slate-200">
         Dispatch to <span id="dm-agent" class="text-cyan-400"></span>
       </h2>
-      <button onclick="closeDispatchModal()" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+      <button onclick="closeDispatchModal()" aria-label="Close" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
     </div>
-    <textarea id="dm-inst" rows="4" class="w-full resize-none"
+    <textarea id="dm-inst" rows="4" class="w-full resize-none" aria-label="Instruction for this agent"
       placeholder="Instruction for this agent..."
       onkeydown="if(event.key==='Enter'&&event.ctrlKey)confirmDispatch()"></textarea>
     <div class="text-slate-600 text-xs mt-1">Ctrl+Enter to dispatch</div>
@@ -5691,7 +5732,8 @@ function mapTabShown(){{
 // third tab on and left those two panels active when switching away).
 function switchTab(name){{
   if(!document.getElementById('tab-'+name))return;  // an optional tab that is not installed (watchtower) left every pane hidden: a blank page
-  document.querySelectorAll('.tab[data-tab]').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
+  document.querySelectorAll('.tab[data-tab]').forEach(t=>{{const on=t.dataset.tab===name;t.classList.toggle('active',on);t.setAttribute('aria-selected',on?'true':'false');t.setAttribute('tabindex',on?'0':'-1');}});  // a real tablist: one tab stop, the selected tab (AG80)
+  if(name==='tickets')loadTicketProjects();
   document.querySelectorAll('.tab-content').forEach(el=>{{
     el.classList.remove('active');
     el.style.setProperty('display','none','important');
@@ -5703,6 +5745,34 @@ function switchTab(name){{
   target.style.setProperty('display',dv,'important');
   target.querySelectorAll('[hx-trigger*="tab-show"]').forEach(el=>htmx.trigger(el,'tab-show'));
   if(name==='map'&&typeof mapTabShown==='function')mapTabShown();
+}}
+// Tab bar keys (AG80): Left/Right (wrapping), Home and End move to a tab and show it; Enter and Space show the focused tab.
+function _tabKey(ev){{
+  const t=ev.target.closest&&ev.target.closest('.tab[data-tab]');
+  if(!t)return;
+  const tabs=[...document.querySelectorAll('#tabbar .tab[data-tab]')];
+  const i=tabs.indexOf(t);let j=-1;
+  if(ev.key==='ArrowRight')j=(i+1)%tabs.length;
+  else if(ev.key==='ArrowLeft')j=(i-1+tabs.length)%tabs.length;
+  else if(ev.key==='Home')j=0;
+  else if(ev.key==='End')j=tabs.length-1;
+  else if(ev.key==='Enter'||ev.key===' '){{ev.preventDefault();switchTab(t.dataset.tab);return;}}
+  else return;
+  ev.preventDefault();
+  switchTab(tabs[j].dataset.tab);tabs[j].focus();
+}}
+document.getElementById('tabbar').addEventListener('keydown',_tabKey);
+// Ticket board project picker (AG80): the cap sentence said "pick a project" and the tab had no way to.
+async function loadTicketProjects(){{
+  const sel=document.getElementById('tkt-project');if(!sel)return;
+  try{{
+    const r=await fetch('/api/tickets/projects');if(!r.ok)return;
+    const names=await r.json();const cur=sel.value;
+    while(sel.options.length>1)sel.remove(1);
+    names.forEach(n=>{{const o=document.createElement('option');o.value=n;o.textContent=n;sel.appendChild(o);}});
+    sel.value=names.includes(cur)?cur:'';
+    if(cur&&!names.includes(cur))reloadTickets();  // the picked project is gone: show the whole board again
+  }}catch(_e){{}}
 }}
 
 // ---- SSE ----
@@ -5818,11 +5888,39 @@ function reloadTasks(){{
   el.setAttribute("hx-get",url);htmx.process(el);htmx.trigger(el,"tab-show");
 }}
 
+// Detail panes (AG80): opening a card or row moves focus into its pane; Escape inside the pane returns it.
+let _detailReturn=null;
+function _noteOpener(paneIds){{
+  const a=document.activeElement;
+  if(!a||a===document.body)return;
+  if(paneIds.some(id=>{{const p=document.getElementById(id);return p&&p.contains(a);}}))return;  // a re-render from inside the pane keeps the first opener
+  _detailReturn={{el:a,oc:a.getAttribute('onclick')}};
+}}
+function _focusPane(id){{
+  const p=document.getElementById(id);
+  if(!p||p.offsetParent===null)return;
+  if(!p.hasAttribute('tabindex'))p.setAttribute('tabindex','-1');
+  p.focus({{preventScroll:window.innerWidth>=768}});
+}}
+function _returnFromPane(){{
+  const a=document.activeElement;
+  const pane=a&&a.closest&&a.closest('#ticket-detail,#task-detail,#dash-detail,#inbox-detail');
+  if(!pane||!_detailReturn)return false;
+  let el=_detailReturn.el;
+  if((!el||!el.isConnected)&&_detailReturn.oc){{
+    el=[...document.querySelectorAll('[onclick]')].find(x=>x.getAttribute('onclick')===_detailReturn.oc&&x.offsetParent!==null)||null;  // the list re-rendered under the pane: the same row, new node
+  }}
+  if(!el||!el.isConnected)return false;
+  el.focus();return true;
+}}
+
 function showTaskDetail(taskId){{
+  _noteOpener(['task-detail','dash-detail']);
   fetch("/api/tasks/"+taskId+"/detail",{{headers:{{}}}})
     .then(r=>r.text()).then(html=>{{
       const d=document.getElementById("task-detail");if(d)d.innerHTML=html;
       const dd=document.getElementById("dash-detail");if(dd)dd.innerHTML=html;
+      _focusPane('task-detail');_focusPane('dash-detail');  // only the visible one takes focus
     }});
 }}
 
@@ -5863,7 +5961,8 @@ function toggleTicketForm(){{
 
 function reloadTickets(){{
   const s=document.getElementById("tkt-filter").value;
-  const url="/api/tickets/board?status_filter="+s;
+  const pj=(document.getElementById("tkt-project")||{{}}).value||"";
+  const url="/api/tickets/board?status_filter="+encodeURIComponent(s)+(pj?"&project="+encodeURIComponent(pj):"");
   const el=document.getElementById("tboard");
   el.setAttribute("hx-get",url);htmx.process(el);htmx.trigger(el,"tab-show");
 }}
@@ -5893,9 +5992,10 @@ async function operatorAct(id,outcome){{
 }}
 
 function showTicketDetail(ticketId){{
+  _noteOpener(['ticket-detail']);
   fetch("/api/tickets/"+ticketId+"/detail",{{headers:{{}}}})
     .then(async r=>{{if(!r.ok){{let m="HTTP "+r.status;try{{const j=await r.json();if(j&&j.detail)m=j.detail;}}catch(_e){{}}throw new Error(m);}}return r.text();}})  // the 409 names the choices (MN64)
-    .then(html=>{{const d=document.getElementById("ticket-detail");d.innerHTML=html;if(window.innerWidth<768)d.scrollIntoView({{behavior:'smooth',block:'start'}});}})  // on a phone the pane sits below the fold (AG51)
+    .then(html=>{{const d=document.getElementById("ticket-detail");d.innerHTML=html;if(window.innerWidth<768)d.scrollIntoView({{behavior:'smooth',block:'start'}});_focusPane('ticket-detail');}})  // on a phone the pane sits below the fold (AG51)
     .catch(e=>{{document.getElementById("ticket-detail").innerHTML='<div class="text-red-400 text-xs">Failed to load ticket: '+e.message+'</div>';showToast("Ticket detail failed: "+e.message,"failed");}});
 }}
 
@@ -5923,9 +6023,10 @@ function reloadInbox(){{
 }}
 
 function showInboxDetail(id){{
+  _noteOpener(['inbox-detail']);
   fetch("/api/inbox/"+id+"/detail",{{headers:{{}}}})
     .then(r=>{{if(!r.ok)throw new Error("HTTP "+r.status);return r.text();}})
-    .then(html=>document.getElementById("inbox-detail").innerHTML=html)
+    .then(html=>{{document.getElementById("inbox-detail").innerHTML=html;_focusPane('inbox-detail');}})
     .catch(e=>{{document.getElementById("inbox-detail").innerHTML='<div class="text-red-400 text-xs">Failed: '+e.message+'</div>';}});
 }}
 
@@ -6020,12 +6121,31 @@ function quickDispatch(agentName){{
   document.getElementById('dm-inst').value='';
   document.getElementById('dm-result').textContent='';
   document.getElementById('dm-result').className='mt-2 text-xs text-slate-400 min-h-4';
-  document.getElementById('dispatch-modal').style.display='flex';
-  setTimeout(()=>document.getElementById('dm-inst').focus(),50);
+  const _dmEl=document.getElementById('dispatch-modal');
+  if(_dmEl.style.display!=='flex'){{const a=document.activeElement;_dmReturn=(a&&a!==document.body)?a:null;}}
+  _dmEl.style.display='flex';
+  document.getElementById('dm-inst').focus();  // the palette's sibling dialog: focus at once, kept inside, given back on close (AG80)
 }}
+let _dmReturn=null;
 function closeDispatchModal(){{
-  document.getElementById('dispatch-modal').style.display='none';
+  const m=document.getElementById('dispatch-modal');
+  const wasOpen=m.style.display==='flex';
+  m.style.display='none';
+  if(wasOpen&&_dmReturn&&_dmReturn.isConnected)_dmReturn.focus();
+  if(wasOpen)_dmReturn=null;
 }}
+document.addEventListener('focusin',ev=>{{
+  const m=document.getElementById('dispatch-modal');
+  if(m&&m.style.display==='flex'&&!m.contains(ev.target))document.getElementById('dm-inst').focus();
+}});
+document.getElementById('dispatch-modal').addEventListener('keydown',ev=>{{
+  if(ev.key!=='Tab')return;
+  const f=[...ev.currentTarget.querySelectorAll('button,textarea,input,select,[tabindex]:not([tabindex="-1"])')].filter(x=>x.offsetParent!==null);
+  if(!f.length)return;
+  const first=f[0],last=f[f.length-1];
+  if(ev.shiftKey&&document.activeElement===first){{ev.preventDefault();last.focus();}}
+  else if(!ev.shiftKey&&document.activeElement===last){{ev.preventDefault();first.focus();}}
+}});
 async function confirmDispatch(){{
   const inst=document.getElementById('dm-inst').value.trim();
   if(!inst)return;
@@ -6180,7 +6300,12 @@ async function fetchEntityHistory(){{
 // ---- Global keyboard shortcuts ----
 let _gKey=false,_gTimer=null;
 document.addEventListener('keydown',e=>{{
-  if(e.key==='Escape'){{ closeDispatchModal(); closePalette(); }}
+  if(e.key==='Escape'){{
+    const palOpen=document.getElementById('palette').style.display!=='none';
+    const modalOpen=(document.getElementById('dispatch-modal')||{{style:{{}}}}).style.display==='flex';
+    closeDispatchModal(); closePalette(palOpen);
+    if(!palOpen&&!modalOpen&&_returnFromPane())e.preventDefault();
+  }}
   if((e.ctrlKey||e.metaKey)&&e.key==='k'){{ e.preventDefault(); openPalette(); return; }}
   const tag=document.activeElement&&document.activeElement.tagName;
   const inInput=(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT');
@@ -6552,17 +6677,34 @@ const _PALETTE_CMDS=[
   {{label:'Retry all failed',hint:'tasks',action:()=>{{closePalette();switchTab('tasks');retryAllFailed();}}}},
   {{label:'Stop server',hint:'system',action:()=>stopServer()}},
 ];
-let _palActive=0;
+let _palActive=0,_palReturn=null;
 
 function openPalette(){{
-  document.getElementById('palette').style.display='flex';
+  const pal=document.getElementById('palette');
+  if(pal.style.display!=='flex'){{const a=document.activeElement;_palReturn=(a&&a!==document.body)?a:null;}}
+  pal.style.display='flex';
   const inp=document.getElementById('palette-input');
   inp.value='';filterPalette('');
-  setTimeout(()=>inp.focus(),50);
+  inp.focus();  // synchronously: keys typed right after Ctrl+K went to the page behind (AG80)
 }}
-function closePalette(){{
-  document.getElementById('palette').style.display='none';
+function closePalette(restore){{
+  const pal=document.getElementById('palette');
+  const wasOpen=pal.style.display!=='none';
+  pal.style.display='none';
+  if(restore&&wasOpen&&_palReturn&&_palReturn.isConnected)_palReturn.focus();  // a dismissed palette gives focus back; a run command owns focus
+  if(wasOpen)_palReturn=null;
 }}
+// Every word of the query, in any order, anywhere in the label or hint; extra spaces ignored (AG80)
+function _palMatch(c,q){{
+  const words=String(q||'').toLowerCase().split(/\\s+/).filter(Boolean);
+  const hay=(c.label+' '+c.hint).toLowerCase();
+  return words.every(w=>hay.includes(w));
+}}
+// Focus stays inside the open palette (AG80): Tab and Shift+Tab move the highlighted command instead
+document.addEventListener('focusin',ev=>{{
+  const pal=document.getElementById('palette');
+  if(pal&&pal.style.display!=='none'&&!pal.contains(ev.target))document.getElementById('palette-input').focus();
+}});
 function renderPalette(cmds){{
   const list=document.getElementById('palette-list');
   list.innerHTML=cmds.map((c,i)=>
@@ -6572,7 +6714,7 @@ function renderPalette(cmds){{
 }}
 function filterPalette(q){{
   _palActive=0;
-  const filtered=q?_PALETTE_CMDS.filter(c=>c.label.toLowerCase().includes(q.toLowerCase())):_PALETTE_CMDS;
+  const filtered=_PALETTE_CMDS.filter(c=>_palMatch(c,q));
   renderPalette(filtered);
   document.getElementById('palette-list')._filtered=filtered;
 }}
@@ -6586,7 +6728,13 @@ function palettKey(e){{
   const list=document.getElementById('palette-list');
   const filtered=list._filtered||_PALETTE_CMDS;
   const items=list.querySelectorAll('.palette-item');
-  if(e.key==='ArrowDown'){{
+  if(e.key==='Tab'){{
+    e.preventDefault();
+    if(!filtered.length)return;
+    _palActive=e.shiftKey?(_palActive-1+filtered.length)%filtered.length:(_palActive+1)%filtered.length;
+    items.forEach((el,i)=>el.classList.toggle('active',i===_palActive));
+    if(items[_palActive])items[_palActive].scrollIntoView({{block:'nearest'}});
+  }}else if(e.key==='ArrowDown'){{
     _palActive=Math.min(_palActive+1,filtered.length-1);
     items.forEach((el,i)=>el.classList.toggle('active',i===_palActive));
     if(items[_palActive])items[_palActive].scrollIntoView({{block:'nearest'}});
@@ -6600,7 +6748,7 @@ function palettKey(e){{
     execPalette(_palActive);
     e.preventDefault();
   }}else if(e.key==='Escape'){{
-    closePalette();
+    closePalette(true);e.stopPropagation();
   }}
 }}
 </script>
