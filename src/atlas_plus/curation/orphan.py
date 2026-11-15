@@ -26,13 +26,16 @@ _DEFAULT_MIN_AGE_DAYS = 180
 _DEFAULT_MAX_HEALTH = 0.5
 
 
-def _build_inbound_refs(memory_root: Path) -> dict[str, int]:
+def _build_inbound_refs(memory_root: Path, on_text=None) -> dict[str, int]:
     """Return {file_stem -> inbound_ref_count} for all .md files in memory_root.
 
     An inbound ref is counted when any OTHER .memory/ file's body mentions the
     file's stem (case-insensitive whole-word match). This is a simple but
     effective heuristic -- true cross-file links ([[slug]]) and plain-text
     mentions both count.
+
+    ``on_text(path, text)``, when given, receives each note's text as it is read, so a caller that
+    needs the text too does not read every note a second time (AG92, sweep 24).
     """
     all_files = [
         f for f in memory_root.rglob("*.md")
@@ -89,8 +92,13 @@ def _build_inbound_refs(memory_root: Path) -> dict[str, int]:
             content = md_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if on_text is not None:
+            on_text(md_file, content)
         this_stem = md_file.stem
-        toks = [t.lower() for t in token_re.findall(content)]
+        # ASCII text lower-cases per character, so once for the whole note gives the same tokens;
+        # other text keeps the per-token form (`İ` lower-cases to i + a combining dot).
+        toks = (token_re.findall(content.lower()) if content.isascii()
+                else [t.lower() for t in token_re.findall(content)])
         tokens = set(toks)
         for tok in tokens & fast_token_set:
             for stem in fast_stems[tok]:
@@ -168,13 +176,20 @@ def find_orphan_candidates(
           issues        -- list of health issue strings
           orphan_score  -- composite: (1 - health_score) + age_factor + (1 if no_refs)
     """
-    from .health import compute_file_health
+    from .health import compute_file_health, health_from_text
 
     today = date.today()
     scan_root = memory_root / scope if scope else memory_root
 
-    # Build inbound reference map for the full memory root (not just scope)
-    inbound_map = _build_inbound_refs(memory_root)
+    # Build inbound reference map for the full memory root (not just scope); the same read scores
+    # each note's health, which used to read every note a second time (AG92: 8.4 s of doctor's 22 s
+    # at 20,000 notes). Only the small health dicts are kept, never the text.
+    healths: dict = {}
+
+    def _score(path: Path, text: str) -> None:
+        healths[path] = health_from_text(text, today)
+
+    inbound_map = _build_inbound_refs(memory_root, on_text=_score)
 
     results = []
 
@@ -189,7 +204,7 @@ def find_orphan_candidates(
 
         # One read and one YAML parse per file: compute_file_health already returns the
         # frontmatter (the second parse doubled doctor's orphan scan, AG11 sweep 10).
-        health = compute_file_health(md_file, today)
+        health = healths.pop(md_file, None) or compute_file_health(md_file, today)
         fm: dict = health.get("frontmatter") or {}
         h_score = health["score"]
         stem = md_file.stem

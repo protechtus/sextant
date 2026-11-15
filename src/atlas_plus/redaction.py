@@ -644,7 +644,19 @@ def _strip_marks(s: str) -> str:
     return _STRIP_CLASS[0].sub("", s)
 
 
-_PW_WORDS_STRIPPED = tuple(sorted({_strip_marks(w).casefold() for w in _PW_WORDS}, key=len, reverse=True))
+def _strip_marks_short(s: str) -> str:
+    """_strip_marks for a short string, without building the class: the same folds, then the same
+    characters (Mn, Me, Cf from U+0300 to U+2FFFF) removed one by one."""
+    if s.isascii():
+        return s
+    import unicodedata as _ud0
+    s = _ud0.normalize("NFKC", s).casefold().replace("\u0640", "")
+    if not _MARKISH_RE.search(s):
+        return s
+    return "".join(c for c in s if not (0x300 <= ord(c) < 0x30000 and _ud0.category(c) in ("Mn", "Me", "Cf")))
+
+
+_PW_WORDS_STRIPPED = tuple(sorted({_strip_marks_short(w).casefold() for w in _PW_WORDS}, key=len, reverse=True))  # no class build at import (AG92)
 _PW_WORDS_ASCII = tuple(w for w in _PW_WORDS_STRIPPED if w.isascii())  # the ASCII pre-check is derived: it missed adgangskode and losenord (MN62)
 _PRODUCT_RE = re.compile(r"^[A-Za-z]{2,}[0-9]{1,4}(?:-\w+)?$")  # Windows11, iPhone15, Office365, Ubuntu24: names, not values (MN62: 35 of 69 ordinary sentences)
 

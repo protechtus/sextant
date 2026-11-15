@@ -906,13 +906,21 @@ def _walk_memory_stats():
     # files), and relpath's normalization dominated the sweep -- 6,756 calls
     # / 141ms of the 244ms walk on a 2,220-file corpus (profiled 2026-10-09).
     # Non-.md files are now skipped before any path work at all.
-    stack: list[tuple[str, str]] = [(str(MEMORY_ROOT), "")]
+    # A path is excluded by a mirror prefix of its own length only: every shorter prefix was its
+    # ancestor's check, and the walk never enters an excluded directory. So the mirror rule runs at
+    # the depths a prefix has, and the top-level rule at the top level (AG92: per-entry cost at 20,000
+    # notes). Unknown prefixes (another scan module): check everywhere, as before.
+    from atlas_plus.curation import scan as _scan
+    _mirror_depths = {len(p) for p in getattr(_scan, "_MIRROR_PREFIXES", ())} or None
+    stack: list[tuple[str, str, int]] = [(str(MEMORY_ROOT), "", 1)]
     while stack:
-        d, prefix = stack.pop()
+        d, prefix, depth = stack.pop()
         try:
             entries = os.scandir(d)
         except OSError:
             continue
+        check_top = depth == 1
+        check_mirror = _mirror_depths is None or depth in _mirror_depths
         with entries:
             for entry in entries:
                 name = entry.name
@@ -925,22 +933,19 @@ def _walk_memory_stats():
                     continue   # links are never followed (parity with _walk_memory)
                 if not is_dir and not name.lower().endswith(".md"):
                     continue
-                if not _utf8_name(name):
+                if not name.isascii() and not _utf8_name(name):
                     continue   # parity with _walk_memory (MN17)
                 rel = prefix + name
-                parts = rel.split("/")
-                if parts[0] in EXCLUDED_DIRS or is_excluded_mirror(parts):
+                if check_top and name in EXCLUDED_DIRS:
+                    continue
+                if check_mirror and is_excluded_mirror(rel.split("/")):
                     continue
                 if not is_dir and name == "_README.md":
                     continue
                 if is_dir:
-                    stack.append((entry.path, rel + "/"))
+                    stack.append((entry.path, rel + "/", depth + 1))
                 else:
-                    try:
-                        st = entry.stat(follow_symlinks=False)
-                    except OSError:
-                        continue
-                    yield rel, st.st_mtime, st.st_size
+                    yield rel, st0.st_mtime, st0.st_size   # the listing's stat, read once
 
 
 INDEX_FORMAT = "9"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89)
@@ -1083,11 +1088,18 @@ def update_incremental() -> int:
     conn = _connect()
     try:
         empty = conn.execute("SELECT COUNT(*) FROM memory_files").fetchone()[0] == 0
+        _fmt = None
+        if not empty:
+            # the format tag on the same connection (_index_format_tag opened another one per search)
+            try:
+                _row = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+                _fmt = _row[0] if _row else ""
+            except Exception:  # noqa: BLE001 - unreadable: fail open to the incremental update (AG60)
+                _fmt = None
     finally:
         conn.close()
     if empty:
         return _noticed_rebuild("the index is new")
-    _fmt = _index_format_tag()
     if _fmt is not None and _fmt != INDEX_FORMAT:
         with _rebuild_lock:  # re-entrant: a concurrent search may have rebuilt while we waited (AG60: four searches made four full rebuilds)
             if _index_format_tag() != INDEX_FORMAT:
@@ -1096,11 +1108,11 @@ def update_incremental() -> int:
     with _rebuild_lock:
         conn = _connect()
         try:
-            db_state = {
-                row[0]: (row[1], row[2])
-                for row in conn.execute("SELECT path, mtime, size FROM memory_files")
-            }
-            rowids = {row[0]: row[1] for row in conn.execute("SELECT path, fts_rowid FROM memory_files")}
+            db_state = {}
+            rowids = {}
+            for row in conn.execute("SELECT path, mtime, size, fts_rowid FROM memory_files"):  # one scan, not two (AG92)
+                db_state[row[0]] = (row[1], row[2])
+                rowids[row[0]] = row[3]
             now = time.time()
             changed = 0
             seen: set[str] = set()

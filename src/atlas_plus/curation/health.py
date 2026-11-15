@@ -38,16 +38,23 @@ def compute_file_health(path: Path, today: Optional[date] = None) -> dict:
         }
     Returns {score: 0.0, ...} on unreadable or non-markdown files.
     """
-    import yaml as _yaml
-
-    today = today or date.today()
-    zero = {"score": 0.0, "factors": {"tags": 0.0, "confirmed": 0.0, "updated": 0.0, "confidence": 0.0},
-            "issues": ["unreadable"], "frontmatter": {}}
-
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return zero
+        return _zero_health()
+    return health_from_text(raw, today)
+
+
+def _zero_health() -> dict:
+    return {"score": 0.0, "factors": {"tags": 0.0, "confirmed": 0.0, "updated": 0.0, "confidence": 0.0},
+            "issues": ["unreadable"], "frontmatter": {}}
+
+
+def health_from_text(raw: str, today: Optional[date] = None) -> dict:
+    """compute_file_health for text already read (decoded as utf-8 with errors="replace"): a caller
+    that has the note's text does not read the file again (AG92, sweep 24)."""
+    today = today or date.today()
+    zero = _zero_health()
 
     if not raw.startswith("---"):
         return {**zero, "issues": ["no_frontmatter"]}

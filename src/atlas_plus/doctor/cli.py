@@ -715,8 +715,8 @@ def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
                                            "resolve the merge before writing to them: " + ", ".join(conflicted[:5]))
     _copies = [f.rel for f in files if re.search(r" \(\d+\)\.md$|conflicted copy|-conflict-\d|\.sync-conflict-", f.rel, re.I)]
     try:
-        _tmps = sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
-                       if p.is_file() and p.name.casefold().endswith((".w-tmp", ".imp-tmp", ".v-tmp", ".tmp")) and "versions" not in p.relative_to(root).parts[:1])
+        _tmps = sorted(p.relative_to(root).as_posix() for p in root.rglob("*")  # the name before the stat (AG92: 1.3 s at 20,000 notes)
+                       if p.name.casefold().endswith((".w-tmp", ".imp-tmp", ".v-tmp", ".tmp")) and p.is_file() and "versions" not in p.relative_to(root).parts[:1])
     except OSError:
         _tmps = []
     if _tmps:  # crash leftovers: each holds a full copy of its note and nothing removed them (AG74)

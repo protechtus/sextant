@@ -2800,6 +2800,39 @@ _PANEL_LOCKS: dict[str, object] = {}
 _PANEL_TTL = 300.0
 
 
+def _signature_walk(top: str, skip: set):
+    """(dirpath, DirEntry) for every `.md` non-directory under ``top``, in os.walk's top-down order with
+    os.walk's rules (a dir that cannot be listed yields nothing; links to directories are not entered)."""
+    stack = [top]
+    while stack:
+        top = stack.pop()
+        try:
+            it = os.scandir(top)
+        except OSError:
+            continue
+        dirs, files = [], []
+        with it:
+            try:
+                for entry in it:
+                    try:
+                        is_dir = entry.is_dir()
+                    except OSError:
+                        is_dir = False
+                    (dirs if is_dir else files).append(entry)
+            except OSError:  # a listing that fails part-way yields nothing for that dir, like os.walk
+                continue
+        for entry in files:
+            if entry.name.endswith(".md"):
+                yield top, entry
+        for entry in reversed(dirs):  # reversed onto the stack: popped in listing order
+            name = entry.name
+            if name in skip or name.startswith("."):
+                continue
+            new_path = os.path.join(top, name)
+            if not os.path.islink(new_path):
+                stack.append(new_path)
+
+
 def _corpus_signature() -> str:
     """Note count and newest mtime under the corpus (history copies and state excluded): one
     directory walk, so a panel that costs seconds is recomputed only when a note changed."""
@@ -2809,19 +2842,17 @@ def _corpus_signature() -> str:
     names_crc = 0
     skip = {"versions", "_atlas", ".git", "_sync", "__pycache__"}
     try:
-        for dirpath, dirnames, filenames in os.walk(MEMORY_ROOT):
-            dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
-            for name in filenames:
-                if not name.endswith(".md"):
-                    continue
-                count += 1
-                names_crc = _zlib.crc32((dirpath + "/" + name).encode("utf-8", "replace"), names_crc)
-                try:
-                    m = os.stat(os.path.join(dirpath, name)).st_mtime
-                except OSError:
-                    continue
-                if m > newest:
-                    newest = m
+        for dirpath, entry in _signature_walk(os.fspath(MEMORY_ROOT), skip):
+            count += 1
+            names_crc = _zlib.crc32((dirpath + "/" + entry.name).encode("utf-8", "replace"), names_crc)
+            try:
+                # the listing's own stat (follows a link like os.stat did): os.stat opened every note,
+                # 675 ms per panel poll at 20,000 notes on Windows, cache hit or not (AG92, sweep 24)
+                m = entry.stat().st_mtime
+            except OSError:
+                continue
+            if m > newest:
+                newest = m
     except OSError:
         pass
     return f"{MEMORY_ROOT}|{count}:{newest:.3f}:{names_crc & 0xFFFFFFFF:08x}"  # two empty corpora are not the same corpus; a rename changes the names (MN31)

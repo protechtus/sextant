@@ -150,7 +150,9 @@ def index_status() -> dict:
         indexed = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
     finally:
         conn.close()
-    total = sum(1 for _ in _walk_memory())
+    # the scandir walk the index itself uses (parity-tested with _walk_memory): an lstat and a stat
+    # per note cost doctor 2.3 s at 20,000 notes (AG92, sweep 24)
+    total = sum(1 for _ in _fts._walk_memory_stats())
     return {
         "indexed": indexed,
         "corpus_files": total,

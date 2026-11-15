@@ -16,7 +16,19 @@ import re
 import typer
 from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 
-from atlas_plus import __version__
+# The version is resolved only by the commands that print it: an eager `from atlas_plus import
+# __version__` ran the metadata lookup (~90 ms) in every `sextant <command>` (AG92, sweep 24).
+def _pkg_version() -> str:
+    import atlas_plus
+    return atlas_plus.__version__
+
+
+def __getattr__(name: str):
+    if name == "__version__":  # `atlas_plus.cli.__version__` still answers
+        return _pkg_version()
+    raise AttributeError(name)
+
+
 from atlas_plus._console import utf8_stdout_when_piped as _utf8_when_piped
 
 _utf8_when_piped()  # captured output keeps non-ASCII paths intact (AG1, pipeline sweep 2026-11-11)
@@ -84,7 +96,7 @@ def _overview() -> None:
     doctor = "sextant-doctor" if prefix == "sextant" else "atlas-doctor"
     memory_root = str(atlas_paths.memory_root())
     state_dir = str(atlas_paths.state_dir())
-    console.print(f"[bold]{name}[/bold] v{__version__} -- self-hosted memory + orchestration for your AI sessions")
+    console.print(f"[bold]{name}[/bold] v{_pkg_version()} -- self-hosted memory + orchestration for your AI sessions")
     console.print(f"  memory root : {memory_root}")
     # The installed-and-tested-but-zero-corpus landing state gave no next
     # step (impatient persona, quality loop run 20) -- flag it right where
@@ -129,7 +141,7 @@ def _main(
             suffix = f" (source {_b.SOURCE})"
         except Exception:  # noqa: BLE001
             pass
-        typer.echo(f"{'sextant' if prefix == 'sextant' else _dist_name()} {__version__}{suffix}")
+        typer.echo(f"{'sextant' if prefix == 'sextant' else _dist_name()} {_pkg_version()}{suffix}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         _overview()
