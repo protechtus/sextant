@@ -164,7 +164,7 @@ def reopen_ticket_if_low_quality(session_id: str, result_text: str) -> bool:
     Returns True if the ticket was reopened, False otherwise.
     """
     import os, re as _re
-    m = _re.match(r"^ticket-([A-Z]{1,8}-\d+)", session_id or "", _re.IGNORECASE)
+    m = _re.match(r"^ticket-((?:[A-Za-z0-9_.+-]+/)?[A-Za-z0-9]{1,16}-\d+)", session_id or "", _re.IGNORECASE)
     if not m:
         return False
 
@@ -174,7 +174,8 @@ def reopen_ticket_if_low_quality(session_id: str, result_text: str) -> bool:
     if score >= threshold:
         return False
 
-    ticket_id = m.group(1).upper()
+    from atlas_plus.brain.tasks import _session_ref
+    ticket_id = _session_ref(m.group(1))
     try:
         from atlas_plus.tickets.store import update_ticket_status
         update_ticket_status(ticket_id, "todo")
@@ -279,7 +280,7 @@ def create_verify_task(session_id: str, instruction: str, priority: int = 6, **t
                      below normal=5 so the verify doesn't jump the incoming queue).
     """
     import re as _re
-    if not _re.match(r"^ticket-[A-Z]{1,8}-\d+", session_id or "", _re.IGNORECASE):
+    if not _re.match(r"^ticket-(?:[A-Za-z0-9_.+-]+/)?[A-Za-z0-9]{1,16}-\d+", session_id or "", _re.IGNORECASE):
         return None
     verify_session_id = f"verify-{session_id.upper()}"
     verify_instruction = f"Verify: {instruction[:200]}"
@@ -309,10 +310,11 @@ def _reopen_ticket_from_verify_failure(session_id: str, result_text: str = "") -
     Returns True if the ticket was reopened, False otherwise.
     """
     import re as _re
-    m = _re.match(r"^verify-ticket-([A-Z]{1,8}-\d+)", session_id or "", _re.IGNORECASE)
+    m = _re.match(r"^verify-ticket-((?:[A-Za-z0-9_.+-]+/)?[A-Za-z0-9]{1,16}-\d+)", session_id or "", _re.IGNORECASE)
     if not m:
         return False
-    ticket_id = m.group(1).upper()
+    from atlas_plus.brain.tasks import _session_ref
+    ticket_id = _session_ref(m.group(1))
     try:
         from atlas_plus.tickets.store import update_ticket_status
         update_ticket_status(ticket_id, "todo")

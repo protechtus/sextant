@@ -206,13 +206,17 @@ def _snapshot(tickets_root: Path) -> list:
     top = str(tickets_root)
     rinfo = _dir_info(top)
     out: list = [("root", top, os.path.basename(top), rinfo)] if rinfo else []
-    stack = [(os.path.join(top, n), n, "project") for n in (rinfo.subdirs if rinfo else ()) if not n.startswith("_")]
+    # Underscore folders other than the root `_archive` (walked by _archive_dirs) count too: a ticket moved
+    # into `alpha/_archive/` or `_done/` had its id issued again (MN79)
+    stack = [(os.path.join(top, n), n, "archive" if n.startswith("_") else "project")
+             for n in (rinfo.subdirs if rinfo else ()) if n != "_archive"]
     while stack:
         p, base, k = stack.pop()
         info = _dir_info(p)
         if info is not None:
             out.append((k, p, base, info))
-            stack += [(os.path.join(p, s), s, "live") for s in info.subdirs if not s.startswith("_")]
+            stack += [(os.path.join(p, s), s, "archive" if (k == "archive" or s.startswith("_")) else "live")
+                      for s in info.subdirs]
     return out
 
 
@@ -637,7 +641,7 @@ def create_ticket(
     if len(body) > 10_000:
         raise ValueError("Ticket body must be 10,000 characters or fewer.")
     requires = requires.strip() if isinstance(requires, str) else requires
-    if requires and not re.fullmatch(r'[A-Z]{1,8}-\d+', requires):  # `$` let a trailing newline through (AG44)
+    if requires and not re.fullmatch(r'[A-Za-z0-9]{1,16}-\d+', requires):  # K8S-001 is an id the store mints (MN79)  # `$` let a trailing newline through (AG44)
         raise ValueError(f"Invalid requires value {requires!r}. Expected format: ATL-001")
     if verified and not re.match(r'^\d{4}-\d{2}-\d{2}$', verified):
         raise ValueError(f"Invalid verified value {verified!r}. Expected an ISO date: 2026-10-08")

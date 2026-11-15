@@ -352,9 +352,12 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print("Usage: atlas-session-start\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
         return
-    from atlas_plus.hooks.scope import in_scope as _in_scope, payload_cwd as _payload_cwd, quoted_hint as _quoted_hint, read_payload as _read_payload
-    _cwd = _payload_cwd(_read_payload())  # the session's directory as the payload names it, like the Stop hook (AG87)
-    if not _in_scope(_cwd or os.getcwd()):
+    from atlas_plus.hooks.scope import in_scope as _in_scope, payload_cwd as _payload_cwd, quoted_hint as _quoted_hint, read_payload as _read_payload, posix_path_for as _posix_path_for, session_in_scope as _session_in_scope
+    _payload = _read_payload()
+    _cwd = _payload_cwd(_payload)  # the session's directory as the payload names it, like the Stop hook (AG87)
+    _tp = _payload.get("transcript_path") if isinstance(_payload, dict) else None
+    _tp = _posix_path_for(_tp.replace("\x00", "")) if isinstance(_tp, str) and _tp.strip() else ""
+    if not _session_in_scope(_cwd, _tp):  # the same decision as the Stop hook (MN81)
         _hint = _quoted_hint()
         if _hint:
             print(f"Sextant: {_hint}", file=sys.stderr)

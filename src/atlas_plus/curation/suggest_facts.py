@@ -82,9 +82,33 @@ def _load_transcript_text(since: str = "today", source: str = "claude-code", con
         from atlas_plus.redaction import redact as _redact_turn
     except Exception:  # noqa: BLE001
         _redact_turn = None
+    # Only the last _WINDOW characters ever reach the model (_extract_candidates), but every turn was
+    # redacted: 103 s and 218 MB per Stop with something new on a 60 MB, 34,000-turn session (MN81).
+    # Render a growing suffix (with warm-up turns that feed the cross-turn carry and are then dropped)
+    # until it is comfortably longer than the window; a short session renders whole as before.
+    n = len(turns)
+    k = 256
+    while k < n:
+        _tail = _render_turns(turns[max(0, n - k - _WARMUP):], _redact_turn, skip=min(_WARMUP, n - k))
+        if len(_tail) >= _WINDOW + _MARGIN:
+            return _tail
+        k *= 4
+    return _render_turns(turns, _redact_turn)
 
+
+_WINDOW = 24000  # characters of the joined transcript _extract_candidates redacts and cuts from
+_MARGIN = 4000
+_WARMUP = 64
+
+
+def _render_turns(turns, _redact_turn, skip: int = 0) -> str:
+    """`ROLE: text` lines for the turns, redacted with the previous line carried; the lines of the first
+    ``skip`` turns feed the carry and are left out of the result."""
     lines: list[str] = []
-    for t in turns:
+    kept_from = 0
+    for _i, t in enumerate(turns):
+        if _i == skip:
+            kept_from = len(lines)
         role = t.role.upper()
         content = t.content
         if isinstance(content, list):
@@ -111,8 +135,9 @@ def _load_transcript_text(since: str = "today", source: str = "claude-code", con
                 else:
                     text = _redact_turn(text) or ""
             lines.append(f"{role}: {text[:400]}")
-
-    return "\n".join(lines)
+    if skip >= len(turns):
+        kept_from = len(lines)
+    return "\n".join(lines[kept_from:])
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +221,7 @@ def _extract_candidates(
     # Redact BEFORE the cut (AG68): a key before character -6000 and its value after it reached the model
     # bare, with nothing left to say it was a secret. The window is four times the kept length, so the key of a
     # value at the cut is inside it, and the regexes never run over a whole multi-megabyte transcript.
-    window = transcript_text[-24000:]
+    window = transcript_text[-_WINDOW:]
     try:
         from atlas_plus.redaction import redact as _redact
         window = _redact(window) or ""  # a pasted key must not reach the model or a fact (MN28)

@@ -46,7 +46,7 @@ registration reaches only the MCP server process, not the hooks.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `ATLAS_MEMORY_ROOT` | `~/.memory` | The corpus: your markdown memory. Back this up; everything else is rebuildable. |
-| `ATLAS_STATE_DIR` | `~/.atlas` | Derived state (indexes, task DB, logs). Safe to wipe; rebuilt from the corpus. |
+| `ATLAS_STATE_DIR` | `~/.atlas` | Per-machine state: indexes and logs (rebuilt from the corpus), but also a hub's device pairings and sync generation, the task DB and the review queue, which are NOT rebuilt. Back it up with the corpus; restore both together. |
 | `ATLAS_WORKSPACE_ROOT` | home dir | Base directory the two paths above (and `ATLAS_PROJECTS_ROOT`) default under; a specific variable set alongside it wins. |
 | `ATLAS_HOME_TZ` | machine local zone | IANA zone (`Europe/Berlin`) that leads the session-start clock line. |
 | `ATLAS_VERIFY_TIMEOUT` | `240` | Seconds `sextant verify` waits for each reply from the stdio server it starts (a non-number falls back to the default). |

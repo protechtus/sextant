@@ -102,6 +102,15 @@ def _slug(p: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", p)
 
 
+def session_in_scope(cwd: str = "", transcript_file: str = "", environ=None) -> bool:
+    """The decision both hooks make: the payload's cwd, else the transcript's project folder, else the
+    process working directory (MN81: Stop used the folder and SessionStart the process cwd, so a payload
+    without cwd was summarised by an install that had not primed it)."""
+    if not cwd and not transcript_file:
+        cwd = os.getcwd()
+    return in_scope(cwd, transcript_file, environ)
+
+
 def in_scope(cwd: str = "", transcript_file: str = "", environ=None) -> bool:
     """True when no scope is set, or the session belongs to one of the scope directories."""
     dirs = scope_dirs(environ)

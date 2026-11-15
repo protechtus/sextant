@@ -1055,7 +1055,7 @@ def _queue_verify_for_ticket(ticket_id_arg: str) -> None:
 
     # Normalize: if user typed just "007", try to add a prefix
     import re as _re
-    if not _re.match(r"^[A-Z]{1,8}-\d+$", ticket_id):
+    if not _re.match(r"^[A-Z0-9]{1,16}-\d+$", ticket_id):
         console.print(f"[red]Invalid ticket ID format: {ticket_id!r}. Expected e.g. ATL-007[/red]")
         return
 

@@ -271,19 +271,83 @@ def _he_split(word: str) -> tuple:
     return word[:k], word[k:], ""
 
 
+# MN80: an unquoted query word stands for every token a note's spelling of it can index to. Its stem alone missed the
+# notes where the query word IS the stem behind another prefix (`לילה` is `ל`+`ילה` to the split, but `בלילה` indexes
+# `ב`+`לילה`; `برنامج` is `ب`+`رنامج`, but `البرنامج` indexes `ال`+`برنامج`), and the stem's own split missed the
+# bare word (`בלילה` searched `לילה`, which `לילה` never indexes). The query side marks such a word as alternatives
+# (stem, whole word, the bare stem in its index form) between these markers; each query path renders them as an OR group.
+_ALT_OPEN, _ALT_MID, _ALT_CLOSE = "\ue011", "\ue012", "\ue013"   # no note or query keeps them (stripped from queries)
+_ALT_RE = re.compile("\ue011([^\ue013]*)\ue013(\\*?)")
+_ALT_STRIP = {ord(c): " " for c in (_ALT_OPEN, _ALT_MID, _ALT_CLOSE)}
+
+
+def _rtl_split(word: str) -> tuple:
+    return (_he_split if "\u05d0" <= word[0] <= "\u05ea" else _ar_split)(word)
+
+
 @functools.lru_cache(maxsize=65536)
-def _affix_word(word: str, keep_prefix: bool) -> str:
-    pre, stem, suf = (_he_split if "\u05d0" <= word[0] <= "\u05ea" else _ar_split)(word)
+def _affix_word(word: str, keep_prefix: bool, alts: bool = False) -> str:
+    pre, stem, suf = _rtl_split(word)
+    tail = _CJK_SEP + suf if suf else ""
+    if alts and pre and not keep_prefix:
+        forms = [stem, pre + stem]
+        # the bare stem as the index holds it, a two-token phrase (`בלילה` adds `ל SEP ילה`: the note's bare `לילה`);
+        # the stem's stem as a lone token matched `בילה` for `בלילה`, `קשה` for `בבקשה`, `בין` for `להבין` (MN80)
+        if (_HE_WORD_RE if "\u05d0" <= stem[0] <= "\u05ea" else _AR_WORD_RE).fullmatch(stem):
+            p2, s2, f2 = _rtl_split(stem)
+            if p2 and not f2:
+                forms.append(p2 + _CJK_SEP + s2)
+        return _ALT_OPEN + _ALT_MID.join(dict.fromkeys(f + tail for f in forms)) + _ALT_CLOSE
     out = (pre + _CJK_SEP if pre and keep_prefix else "") + stem
-    return out + (_CJK_SEP + suf if suf else "")
+    return out + tail
 
 
-def _affix_split(text: str, keep_prefix: bool = True) -> str:
-    """Index form (keep_prefix): `prefix SEP stem SEP suffix`; unquoted query form: `stem SEP suffix`."""
+def _affix_split(text: str, keep_prefix: bool = True, alts: bool = False) -> str:
+    """Index form (keep_prefix): `prefix SEP stem SEP suffix`; unquoted query form: `stem SEP suffix`, or with `alts`
+    the marked alternatives a query path renders as an OR group (MN80)."""
     if text.isascii() or not _RTL_RE.search(text):
         return text
-    text = _AR_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix), text)
-    return _HE_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix), text)
+    text = _AR_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix, alts), text)
+    return _HE_WORD_RE.sub(lambda m: _affix_word(m.group(0), keep_prefix, alts), text)
+
+
+def _alt_group(body: str, star: str = "") -> str:
+    """One marked word as an FTS5 OR group of quoted forms (MN80)."""
+    return "(" + " OR ".join('"' + f.replace('"', '""') + '"' + star for f in body.split(_ALT_MID) if f) + ")"
+
+
+def _alts_to_groups(q: str) -> str:
+    """The main query form: every marked word becomes its OR group, with an explicit AND to a neighbouring term
+    (FTS5 refuses an implicit AND next to a parenthesised group, MN36). An operator or a parenthesis next to it is
+    left alone, so `a OR לילה`, `NOT בדיקה` and the writer's own groups keep their meaning."""
+    ops = ("AND", "OR", "NOT")
+
+    def rep(m: "re.Match") -> str:
+        left, right = m.string[:m.start()].rstrip(), m.string[m.end():].lstrip()
+        lw, rw = (left.split() or [""])[-1], (right.split() or [""])[0]
+        pre = "" if not left or left.endswith("(") or lw in ops else "AND "
+        post = "" if not right or right.startswith((")", _ALT_OPEN)) or rw in ops else " AND"
+        return " " + pre + _alt_group(m.group(1), m.group(2)) + post + " "
+    return " ".join(_ALT_RE.sub(rep, q).split())
+
+
+def _quoted_term(t: str, cjk: bool = False) -> str:
+    """One whitespace token as a single quoted FTS5 operand (the syntax fallback and the bigram path); a marked word
+    inside it becomes its OR group, AND-ed with the token's other letters (MN80)."""
+    if _ALT_OPEN not in t:
+        return '"' + (_cjk_split(t) if cjk else t).replace('"', '""') + '"'
+    parts: list = []
+    pos = 0
+    for m in _ALT_RE.finditer(t):
+        rest = t[pos:m.start()]
+        if any(c.isalnum() for c in rest):
+            parts.append('"' + (_cjk_split(rest) if cjk else rest).replace('"', '""') + '"')
+        parts.append(_alt_group(m.group(1)))
+        pos = m.end()
+    rest = t[pos:]
+    if any(c.isalnum() for c in rest):
+        parts.append('"' + (_cjk_split(rest) if cjk else rest).replace('"', '""') + '"')
+    return parts[0] if len(parts) == 1 else "(" + " AND ".join(parts) + ")"
 
 
 def _dup_fold(text: str) -> str:
@@ -299,11 +363,11 @@ def _dup_fold(text: str) -> str:
 def _query_words(q: str) -> str:
     """The query side of the AG83 transforms: emoji clusters as separate terms, prefixes dropped outside quotes and
     kept inside them (a quoted phrase is matched in the indexed form, prefix token included)."""
-    q = _emoji_split(q, " ")
+    q = _emoji_split(q.translate(_ALT_STRIP), " ")
     if '"' not in q:
-        return _affix_split(q, keep_prefix=False)
+        return _affix_split(q, keep_prefix=False, alts=True)
     parts = q.split('"')
-    return '"'.join(_affix_split(part, keep_prefix=bool(i % 2)) for i, part in enumerate(parts))
+    return '"'.join(_affix_split(part, keep_prefix=bool(i % 2), alts=not i % 2) for i, part in enumerate(parts))
 
 
 def _norm_index_text(text: str) -> str:
@@ -576,11 +640,11 @@ def _bigram_fallback(raw: str) -> str:
     parts: list[str] = []
     pos = 0
     for m in _CJK_RUN_OR_CHAR_RE.finditer(q):
-        parts += ['"' + w.replace('"', '""') + '"' for w in q[pos:m.start()].split()]
+        parts += [_quoted_term(w) for w in q[pos:m.start()].split()]
         run = m.group(0)
         parts.append(_group(run) if len(run) >= 3 else '"' + _CJK_SEP.join(run) + '"')
         pos = m.end()
-    parts += ['"' + w.replace('"', '""') + '"' for w in q[pos:].split()]
+    parts += [_quoted_term(w) for w in q[pos:].split()]
     return " AND ".join(parts)
 
 
@@ -589,10 +653,9 @@ def _prepare_query(query: str) -> str:
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
     q = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", query))).replace(_SENTINEL, " "))
     q = re.sub(r"(?<=\S):(?=\S)", " ", q)  # `alpha:beta` is two words, not an FTS5 column filter (AG46: a silent miss)
-    if not _CJK_RE.search(q):
-        return q
-    q = _CJK_RUN_OR_CHAR_RE.sub(lambda m: ' "' + _CJK_SEP.join(m.group(0)) + '" ', q)
-    return " ".join(q.split())
+    if _CJK_RE.search(q):
+        q = " ".join(_CJK_RUN_OR_CHAR_RE.sub(lambda m: ' "' + _CJK_SEP.join(m.group(0)) + '" ', q).split())
+    return _alts_to_groups(q) if _ALT_OPEN in q else q
 _CREATE_FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
 USING fts5(path, frontmatter_json, body, tokenize='{tokenizer}');
@@ -1416,8 +1479,9 @@ def search(query: str, scope: str = "", limit: int = 10,
             # nothing although every word was on disk (deep install lanes 2026-11-09).
             folded = _query_words(_fold_marks(_recompose(unicodedata.normalize("NFKC", _raw))).replace('"', " "))
             tokens = [t for t in folded.split() if t]  # folded like the main query (AG83: `Straße.` and `الخادم,` kept the raw form here)
-            if len(tokens) > 1:
-                tokenized = " ".join('"' + _cjk_split(t).replace('"', '""') + '"' for t in tokens)
+            if len(tokens) > 1 or _ALT_OPEN in folded:
+                terms = [_quoted_term(t, cjk=True) for t in tokens]
+                tokenized = (" AND " if _ALT_OPEN in folded else " ").join(terms)
                 log.info("FTS query was not valid FTS5 syntax; retrying with each token quoted")
                 conn.close()
                 return search(tokenized, scope=scope, limit=limit, _fallback_stage=1, _raw=_raw)

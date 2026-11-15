@@ -77,7 +77,11 @@ def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = 
     buckets: list[dict[int, list[int]]] = [{} for _ in range(b)]
     keys: list = [None] * len(shared_toks)
     bands = range(b)
+    cut = False
     for i, toks in enumerate(shared_toks):
+        if deadline is not None and not i & 255 and i and _time.monotonic() > deadline:
+            cut = True  # the notes signed so far still give candidates; the scan reports itself partial (MN79)
+            break
         if not toks:
             continue
         rows = []
@@ -111,6 +115,8 @@ def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = 
                     continue  # an earlier band already yielded this pair
                 yield a, c
         buckets[band] = {}
+    if cut:
+        yield None
 
 
 def _tokenize(text: str) -> set[str]:

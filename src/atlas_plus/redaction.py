@@ -190,7 +190,7 @@ def _kv_skip(name: str, v: str, sep: str = "=", text: str | None = None, start: 
         nl = text.rfind("\n", 0, vstart)
         if vstart == nl + 1 or text[end:end + 1] == ":":
             return True  # AG62: `Enter password:` + newline + `Authentication successful`, `password:` + `  database: app`: the next line is not the value
-    if _STATUS_RE.fullmatch(v):
+    if _STATUS_RE.fullmatch(v) or (vq != v and _STATUS_RE.fullmatch(vq)):  # `"api_key": "revoked"` (MN79)
         return True  # AG62: `token: expired`, `password: required`, `token: string;`, `password: (hidden)`: a status or a type, not a value
     if _ENVREF_RE.match(vq):
         return True  # AG62: `api_key: $API_KEY`, a YAML tag `password: !vault |`

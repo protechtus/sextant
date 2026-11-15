@@ -3700,8 +3700,8 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
         ).fetchall()
         conn.close()
         import re as _re
-        _ticket_re = _re.compile(r"^ticket-([A-Z]{1,8}-\d+)", _re.IGNORECASE)
-        _verify_re = _re.compile(r"^verify-ticket-([A-Z]{1,8}-\d+)", _re.IGNORECASE)
+        _ticket_re = _re.compile(r"^ticket-([A-Za-z0-9]{1,16}-\d+)", _re.IGNORECASE)
+        _verify_re = _re.compile(r"^verify-ticket-([A-Za-z0-9]{1,16}-\d+)", _re.IGNORECASE)
         for r in db_rows:
             sid = r["session_id"] or ""
             m = _ticket_re.match(sid)
@@ -4059,7 +4059,11 @@ async def dispatch_ticket_to_brain(ticket_id: str, request: Request):
         "local": "brain",  # explicit local = Qwen3 brain
     }
     agent_hint = body.get("agent") or _ASSIGNEE_AGENT_MAP.get(getattr(ticket, "assignee", ""))
-    task_payload: dict = {"instruction": instruction, "session_id": f"ticket-{ticket.id}"}
+    # A bare id that names two tickets would make the Brain's close-out fail on the ambiguity and leave the
+    # dispatched ticket in progress for ever: such a ticket goes out as `ticket-<folder>/<ID>` (MN79)
+    _sess = ticket.id if _get(ticket.id) is not None else _ref
+    _la.clear()
+    task_payload: dict = {"instruction": instruction, "session_id": f"ticket-{_sess}"}
     if agent_hint:
         task_payload["agent"] = agent_hint
 

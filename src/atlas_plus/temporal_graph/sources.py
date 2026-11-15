@@ -1333,8 +1333,8 @@ class _MiningScanCache:
         if st.st_size == e["size"] and st.st_mtime_ns == e["mtime_ns"]:
             return "unchanged"
         off = e["offset"]
-        if not (0 < off <= st.st_size) or st.st_size < e["size"]:
-            return None
+        if not (0 < off <= st.st_size) or st.st_size <= e["size"]:
+            return None  # same size, new mtime: rewritten in place, read whole (MN81: it kept the old counts)
         try:
             with open(path, "rb") as f:
                 f.seek(max(0, off - self._TAIL))

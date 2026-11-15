@@ -1318,8 +1318,8 @@ def _ticket_sync(ctx: ExecutorContext) -> ExecutionResult:
     # (the old replace(":", ";") turned C:\Tools into ["C", "\Tools"]).
     repo_paths = [p.strip() for p in repos_raw.split(";") if p.strip()]
 
-    _ID_RE = re.compile(r"\b([A-Z]{2,8}-\d{1,4})\b")
-    _CLOSE_RE = re.compile(r"\b(?:closes?|fixes?)\s+([A-Z]{2,8}-\d{1,4})\b", re.IGNORECASE)
+    _ID_RE = re.compile(r"\b((?=[A-Z0-9]{0,7}[A-Z])[A-Z0-9]{2,8}-\d{1,4})\b")  # `closes K8S-001` too (MN79)
+    _CLOSE_RE = re.compile(r"\b(?:closes?|fixes?)\s+((?=[A-Z0-9]{0,7}[A-Z])[A-Z0-9]{2,8}-\d{1,4})\b", re.IGNORECASE)
     _SHIP_PREFIX = re.compile(r"^(?:feat|fix|docs|refactor|test|chore)(?:\([^)]+\))?:", re.IGNORECASE)
 
     closed: list[str] = []

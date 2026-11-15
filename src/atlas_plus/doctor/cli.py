@@ -1037,7 +1037,7 @@ def check_sla_breaches() -> dict:
         return {"count": 0, "error": str(exc)}
 
 
-_QUALITY_SKIP_DIRS = frozenset({"archive", "_sync", "versions", "_atlas", "anti"})
+_QUALITY_SKIP_DIRS = frozenset({"archive", "_archive", "_sync", "versions", "_atlas", "anti"})  # `_archive` (MN79)
 
 
 def _quality_counted(rec: "MemoryFile") -> bool:

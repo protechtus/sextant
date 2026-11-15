@@ -164,13 +164,50 @@ def _check_hub_url(base_url: str) -> None:
     operator got httpx's own sentence about protocols (AG88). One rule for plan, sync and checkin."""
     if not base_url:
         return
+    import re as _re
     from urllib.parse import urlsplit
+    raw = base_url
+    if raw != raw.strip() or raw[:1] in "\"'" or raw[-1:] in "\"'":
+        # MN82: a pasted space or quotes became `http://%20http://...` advice
+        raise SyncClientError(
+            f"the hub address {raw!r} has spaces or quotes around it: use {raw.strip().strip(chr(34) + chr(39)).strip()} "
+            "(set it with --hub or ATLAS_SYNC_HUB, without quotes inside the value)")
+    if _re.match(r"(?i)https?(?::/?(?!/)|//)", raw) and "://" not in raw:
+        # `http//host`, `https:/host`: a misspelt scheme, not a missing one (MN82)
+        rest = _re.sub(r"(?i)^https?:?/{0,2}", "", raw)
+        scheme_word = "https" if raw.lower().startswith("https") else "http"
+        raise SyncClientError(
+            f"the hub address {raw!r} has a misspelt scheme: use {scheme_word}://{rest} "
+            "(set it with --hub or ATLAS_SYNC_HUB)")
     scheme = urlsplit(base_url).scheme.lower() if "://" in base_url else ""
     if scheme not in ("http", "https"):
         shown = base_url.split("://", 1)[-1] if scheme else base_url
         raise SyncClientError(
             f"the hub address {base_url!r} needs http:// or https:// in front: use http://{shown} "
             "(or https://... when a TLS proxy fronts the hub); set it with --hub or ATLAS_SYNC_HUB")
+
+
+def _pending_parked(root: Path) -> set[str]:
+    """Corpus paths that still have a parked copy (its sidecar AND its bytes) under _atlas/sync-conflicts/."""
+    import json
+    out: set[str] = set()
+    qdir = root / "_atlas" / "sync-conflicts"
+    if not qdir.is_dir():
+        return out
+    for meta in qdir.rglob("*.meta.json"):
+        try:
+            rel = json.loads(meta.read_text(encoding="utf-8")).get("original_path")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(rel, str) and meta.with_name(meta.name[: -len(".meta.json")]).is_file():
+            out.add(rel)
+    return out
+
+
+def _keeps_every_line(theirs: bytes, mine: bytes) -> bool:
+    """True when every line of `theirs` is also a line of `mine` (line endings ignored)."""
+    have = {line.rstrip(b"\r") for line in mine.split(b"\n")}
+    return all(line.rstrip(b"\r") in have for line in theirs.split(b"\n"))
 
 
 def _too_large_limit(remote: dict) -> int | None:
@@ -464,6 +501,28 @@ class SyncClient:
         if plan.kept_local_edits:
             plan.conflicts = [rel for rel in plan.conflicts if rel not in plan.kept_local_edits]
             plan.remote_deleted = sorted(set(plan.remote_deleted) | set(plan.kept_local_edits))
+        # After a restore the conflict parked against the restored hub had no anchor and came back on every
+        # sync, so HOWTO-sync's "archive the parked folder and run sync: your files are pushed" never pushed
+        # (MN82). Once its parked copy is gone, and while the hub still holds the copy that was parked, the
+        # device's file goes up against that copy; a hub copy that changed since stays a conflict.
+        self._restored_anchor = {}
+        _after_restore = _seen.get("restored") if isinstance(_seen.get("restored"), dict) else {}
+        if _after_restore and not self._rolled_back and plan.conflicts:
+            pending = _pending_parked(root)
+            for rel in list(plan.conflicts):
+                sha = (remote_files.get(rel) or {}).get("sha256")
+                if not (sha and _after_restore.get(rel) == sha and rel in local["files"] and rel not in pending):
+                    continue
+                try:  # and only when the file kept every line the hub's copy has: a push never drops one
+                    hub_bytes, _ = self.fetch_file(rel)
+                    mine = (root / rel).read_bytes()
+                except (SyncClientError, httpx.HTTPError, OSError):
+                    continue
+                if hashlib.sha256(hub_bytes).hexdigest() == sha and _keeps_every_line(hub_bytes, mine):
+                    plan.conflicts.remove(rel)
+                    plan.to_push.append(rel)
+                    self._restored_anchor[rel] = sha
+            plan.to_push.sort()
         # A peer's accepted proposals (hub inbox) are neither re-sent nor pulled over while the
         # local copy is unchanged; the plan lists them separately (persona rerun 2026-11-10:
         # a peer re-planned the same push forever and could never be "in sync").
@@ -544,7 +603,8 @@ class SyncClient:
         unresolved: set[str] = set(plan.local_deleted)
         unresolved.update(plan.conflicts)  # every conflict keeps its old anchor even when the run stops early (AG73)
         unresolved.update(plan.kept_local_edits)  # old anchor kept: a restored hub copy is a conflict, never a pull over the edit
-        _seen_refused = (self._own_base(base_id) or {}).get("refused")
+        _seen_base = self._own_base(base_id) or {}
+        _seen_refused = _seen_base.get("refused")
         refused: dict = dict(_seen_refused) if isinstance(_seen_refused, dict) else {}
         for rel in plan.too_large:
             report.errors.append(self.too_large_reason(rel, local, _remote))
@@ -622,7 +682,7 @@ class SyncClient:
                     {
                         "path": rel,
                         "sha256": hashlib.sha256(raw).hexdigest(),
-                        "base_sha256": base_entry["sha256"] if base_entry else None,
+                        "base_sha256": base_entry["sha256"] if base_entry else getattr(self, "_restored_anchor", {}).get(rel),
                         "content_b64": base64.b64encode(raw).decode("ascii"),
                     }
                 )
@@ -758,6 +818,16 @@ class SyncClient:
             files.pop(rel, None)
         refreshed["refused"] = {rel: sha for rel, sha in refused.items()
                                 if (local_after.get(rel) or {}).get("sha256") == sha}  # an edit is tried again
+        # The restored hub's copy each conflict was parked against (MN82): kept while the conflict is open.
+        _prev = _seen_base.get("restored") if isinstance(_seen_base.get("restored"), dict) else {}
+        _was_restored = getattr(self, "_rolled_back", False)
+        restored = {} if _was_restored else dict(_prev)
+        if _was_restored:
+            for rel in report.parked:
+                sha = (remote_files_all.get(rel) or {}).get("sha256")
+                if sha:
+                    restored[rel] = sha
+        refreshed["restored"] = {rel: sha for rel, sha in restored.items() if rel in unresolved}
         refreshed["files"] = files
         refreshed["manifest_hash"] = manifest.files_hash(files)
         if isinstance(_hub_gen, int):

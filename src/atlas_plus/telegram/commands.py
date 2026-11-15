@@ -2157,7 +2157,9 @@ async def cmd_ticket_status(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         all_tasks = task_store.list_tasks(limit=50)
         # Also check active tasks
         all_tasks += task_store.list_tasks(status="running", limit=20)
-        linked = [t for t in all_tasks if t.session_id == session_id]
+        from atlas_plus.tickets.store import ticket_ref as _tref
+        _qual = f"ticket-{_tref(ticket)}"  # an id two folders hold is dispatched qualified (MN79)
+        linked = [t for t in all_tasks if t.session_id in (session_id, _qual)]
         # Also check verify tasks
         vsession_id = f"verify-ticket-{ticket.id}"
         verify_tasks = [t for t in task_store.list_tasks(limit=50) if t.session_id == vsession_id]
@@ -2193,7 +2195,7 @@ async def cmd_verify_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     ticket_id = args[0].upper()
     import re as _re
-    if not _re.match(r"^[A-Z]{1,8}-\d+$", ticket_id):
+    if not _re.match(r"^[A-Z0-9]{1,16}-\d+$", ticket_id):  # K8S-001 is an id the store mints (MN79)
         await update.message.reply_text(f"Invalid ticket ID format: `{ticket_id}`. Expected e.g. ATL-007.")
         return
 

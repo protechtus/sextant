@@ -511,9 +511,12 @@ def _hook_workspace(item) -> str:
         mm = _re.match(r"[^\s'\"]+", rest)
         val = mm.group(0) if mm else ""
     val = val.replace("\x00", "'").strip()
-    win = bool(_re.match(r"[A-Za-z]:[\\/]|[\\/]{2}[^\\/]", val))  # a drive path or a UNC share (\\srv\share, //srv/share)
+    if val.startswith(("\\\\?\\", "//?/")):
+        val = val[4:]  # the extended-length prefix names the same path (MN79)
+    win = bool(_re.match(r"[A-Za-z]:[\\/]|\\\\[^\\/]", val) or (os.name == "nt" and _re.match(r"//[^/]", val)))  # a drive path or a UNC share; `//srv/share` is a share only on Windows (on POSIX it is /srv/share: MN79)
     if win:
-        val = val.replace("/", "\\")  # E:/ws and E:\ws are one Windows workspace (MN73: the Git Bash spelling added a second Stop hook); //srv/share too (AG85)
+        import ntpath as _ntpath
+        val = _ntpath.normpath(val.replace("/", "\\"))  # `ws\.` and `tmp\..\ws` added a second Stop hook (MN79)  # E:/ws and E:\ws are one Windows workspace (MN73: the Git Bash spelling added a second Stop hook); //srv/share too (AG85)
     val = val.rstrip("\\/") or val[:1]  # `/` stays `/`: '' means an unscoped install, whose hooks every re-run removes (AG85)
     # Case folds only where the file system folds it: on Linux /home/u/WS and /home/u/ws are two workspaces, and
     # a setup run for one removed the other's hooks (AG85)

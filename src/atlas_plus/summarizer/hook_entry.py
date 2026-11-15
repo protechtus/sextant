@@ -342,8 +342,8 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             pass
         return 0
-    from atlas_plus.hooks.scope import in_scope as _in_scope, quoted_hint as _quoted_hint, scope_dirs as _scope_dirs
-    if _scope_dirs() and not _in_scope(_PAYLOAD.get("cwd") or "", _PAYLOAD.get("transcript_file") or ""):
+    from atlas_plus.hooks.scope import session_in_scope as _in_scope, quoted_hint as _quoted_hint, scope_dirs as _scope_dirs
+    if _scope_dirs() and not _in_scope(_PAYLOAD.get("cwd") or "", _PAYLOAD.get("transcript_file") or ""):  # one decision for both hooks (MN81)
         # two installs in one settings file both summarised every session (AG81): this one owns
         # only the sessions under ATLAS_HOOK_SCOPE. Not an error, so no activity record per reply.
         _hint = _quoted_hint()

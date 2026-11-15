@@ -1432,7 +1432,7 @@ def cmd_suggest_tags(
     import json as _json
     from atlas_plus.curation.tag_suggest import suggest_tags_for_file, inject_tags
 
-    skip_dirs = {"archive", "_sync", "versions", "_atlas", "anti"}
+    skip_dirs = {"archive", "_archive", "_sync", "versions", "_atlas", "anti"}  # --write tagged archived notes (MN79)
     scan_root = MEMORY_ROOT / scope if scope else MEMORY_ROOT
 
     results = []

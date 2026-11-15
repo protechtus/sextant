@@ -44,7 +44,15 @@ from typing import Optional
 from atlas_plus import paths as atlas_paths
 
 # Matches session_id values like "ticket-ATL-009" or "ticket-PRJ-001"
-_TICKET_SESSION_RE = _re.compile(r"^ticket-([A-Z]{1,8}-\d+)", _re.IGNORECASE)
+# A digit in the prefix (`K8S-001`, `ABC2-001`) never matched, so those tickets never closed; an id that two
+# folders hold is dispatched as `ticket-<folder>/<ID>` (MN79)
+_TICKET_SESSION_RE = _re.compile(r"^ticket-((?:[A-Za-z0-9_.+-]+/)?[A-Za-z0-9]{1,16}-\d+)", _re.IGNORECASE)
+
+
+def _session_ref(raw: str) -> str:
+    """`archive/alp-005` -> `archive/ALP-005`: only the id is upper-cased (the folder keeps its case)."""
+    folder, sep, tid = raw.rpartition("/")
+    return f"{folder}/{tid.upper()}" if sep else tid.upper()
 
 _STATE_DIR = atlas_paths.state_dir()
 _DB_PATH = _STATE_DIR / "state.sqlite"
@@ -727,7 +735,7 @@ def _try_close_ticket(task_id: str, task_outcome: str, db_path: Path) -> None:
         m = _TICKET_SESSION_RE.match(row["session_id"] or "")
         if not m:
             return
-        ticket_id = m.group(1).upper()
+        ticket_id = _session_ref(m.group(1))
         ticket_status = {"done": "done", "blocked": "blocked", "failed": "todo"}[task_outcome]
         from atlas_plus.tickets.store import update_ticket_status
         update_ticket_status(ticket_id, ticket_status)

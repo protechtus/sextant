@@ -240,7 +240,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if not report.conflicts and leftover.exists():
         n = sum(1 for p in leftover.rglob("*") if p.is_file() and not p.name.endswith(".meta.json"))
         if n:
-            print(f"  note: {n} parked cop{'y' if n == 1 else 'ies'} remain under {leftover} -- archive or delete "
+            print(f"  note: {n} parked cop{'y remains' if n == 1 else 'ies remain'} under {leftover} -- archive or delete "
                   "them once resolved so `status` and `doctor` stop counting them")
     import re as _re
     for item in report.errors:

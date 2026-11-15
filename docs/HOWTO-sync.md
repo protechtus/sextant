@@ -97,6 +97,8 @@ The `sync` output names the parked path.
 
 ### After the hub was restored from a backup
 
+Restore the hub's corpus AND its state dir together, from the same backup. A corpus restored on its own over a live state dir is NOT detected: devices see the older files as new hub edits and pull them over their newer copies (each device keeps a version copy under `versions/`, so nothing is gone, but nothing warns you either).
+
 A device that synced after the backup was taken notices the older hub at its next `sync`: it pulls nothing over your
 copies, parks every difference as a conflict, and says "the hub reports an older state than this device last synced (it
 was restored from a backup?)". After a restore the PARKED copy is the hub's OLDER one, so do not copy it over your file.
