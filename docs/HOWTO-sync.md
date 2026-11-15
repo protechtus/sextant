@@ -61,6 +61,16 @@ conflict on every scaffold file (they were written with CRLF line endings;
 the hub's are LF): take the hub's copies the same way, once. Sync compares
 bytes, and every build now writes LF on every OS.
 
+The address always starts with `http://` or `https://` (`--hub 127.0.0.1:8768`
+is refused with that sentence). The hub accepts at most 20 MB per file and 500
+files per request (the client splits a bigger push into requests of 500 and
+prints a progress line per request on stderr). A file over 20 MB is not sent:
+`plan` lists it as "too large for the hub, not sent" and every `sync` reports it
+under `errors` until you split it or move it out of the synced corpus; a hub
+older than this build refuses it once and the device does not send the same
+bytes again. `plan`, `checkin` and `sync --dry-run` warn when the hub reports an
+older state than this device last saw (see "After the hub was restored").
+
 The hub caches its manifest for ten seconds, so `sextant-sync plan` right
 after a write on the hub can say "in sync" until the next check.
 

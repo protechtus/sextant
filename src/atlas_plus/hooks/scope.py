@@ -9,6 +9,10 @@ only on a session whose working directory is one of them or sits under one. The 
 every character outside A-Z a-z 0-9 turned into '-') is matched against the same slug of each
 directory, which is a prefix match and therefore approximate. A session that can be placed nowhere
 is out of scope.
+
+Both hooks decide on the payload's ``cwd`` when Claude Code sends one, and on the process working
+directory only when it does not (AG87: SessionStart used the process cwd while Stop used the
+payload's, so one session could be primed by one install and summarised by another).
 """
 from __future__ import annotations
 
@@ -21,6 +25,68 @@ def scope_dirs(environ=None) -> list[str]:
     env = os.environ if environ is None else environ
     raw = (env.get("ATLAS_HOOK_SCOPE") or "").strip()
     return [d.strip() for d in raw.split(os.pathsep) if d.strip()]
+
+
+def posix_path_for(path: str) -> str:
+    """A Windows path from a Windows Claude Code, received by a WSL install, as its /mnt form (MN33)."""
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+    if os.name != "nt" and m:
+        return f"/mnt/{m.group(1).lower()}/" + m.group(2).replace("\\", "/")
+    return path
+
+
+def read_payload(timeout: float = 2.0) -> dict:
+    """The hook's JSON payload from stdin, or {} (a terminal, nothing piped, not JSON). Bounded: a
+    pipe that never closes costs ``timeout`` seconds, never a hung session start."""
+    import json
+    import sys
+    import threading
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    box: dict = {}
+
+    def _read() -> None:
+        try:
+            buf = getattr(sys.stdin, "buffer", None)
+            box["raw"] = buf.read(1_000_000) if buf is not None else sys.stdin.read(1_000_000)
+        except Exception:  # noqa: BLE001
+            pass
+
+    t = threading.Thread(target=_read, daemon=True)
+    t.start()
+    t.join(timeout)
+    raw = box.get("raw")
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-16", "replace") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig", "replace")
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw.lstrip("\ufeff"))
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def payload_cwd(payload: dict) -> str:
+    """The payload's ``cwd`` as a path this host can match, or ''."""
+    cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    if not isinstance(cwd, str) or not cwd.strip():
+        return ""
+    return posix_path_for(cwd.replace("\x00", ""))
+
+
+def quoted_hint(environ=None) -> str:
+    """One sentence when an ATLAS_HOOK_SCOPE entry carries its own quote characters, else ''.
+    `--env ATLAS_HOOK_SCOPE="C:\\x"` inside single quotes keeps the double quotes, and no session
+    ever matched (AG87)."""
+    bad = [d for d in scope_dirs(environ) if d[:1] in "\"'" or d[-1:] in "\"'"]
+    if not bad:
+        return ""
+    return (f"ATLAS_HOOK_SCOPE entry {bad[0]!r} carries quote characters, so no directory matches it; "
+            "remove the quotes from the value.")
 
 
 def _norm(p: str) -> str:

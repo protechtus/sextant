@@ -146,6 +146,7 @@ def _kv_quote(v: str) -> str:
 
 _ENVREF_RE = re.compile(r"^\$[A-Z_][A-Z0-9_]*$|^!!?[A-Za-z][A-Za-z/_.-]*$")
 _STATUS_RE = re.compile(r"(?i)[\[(<]?(?:required|optional|expired|missing|invalid|hidden|redacted|undefined|string|str|secretstr|unset|empty|none|null|incorrect|wrong|rejected|refreshing|n/a"
+                        r"|pending|revoked|rotated|changed|updated|renewed|unchanged|deprecated|disabled|regenerated|pendiente|revocada|revocado|geändert|widerrufen|révoqué|révoquée|отозван|изменён|изменен"  # AG85: the English siblings of MN58's Turkish `değiştirildi`/`yenilendi` (`API key: revoked`, `token: pending` were masked)
                         r"|abgelaufen|ungültig|fehlt|erforderlich|falsch|leer|expiré|expirée|invalide|manquant|requis|incorrect|vide|expirada|expirado|caducada|caducado|inválida|inválido|obrigatória|requerida|incorreta|incorrecta|vazia|vacía"
                         r"|истёк|истек|истекла|неверный|неверно|недействителен|отсутствует|обязателен|пустой|süresi[ \t]doldu|geçersiz|boş|değiştirildi|güncellendi|sıfırlandı|ayarlandı|yenilendi)[\])>]?[;,.]*")  # the status words of the other Latin and Cyrillic languages too (MN58)
 _WORDISH_RE = re.compile(r"[^\d\s!-/:-@\[-`{-~]+[,.;:!?]?")

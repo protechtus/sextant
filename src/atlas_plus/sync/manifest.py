@@ -228,6 +228,11 @@ class SyncPlan:
     # Edited here, deleted (archived) on the hub: listed in remote_deleted too, kept here, never
     # pushed back or pulled; plan and sync both say so (AG82: plan said CONFLICT, sync said deleted).
     kept_local_edits: list[str] = field(default_factory=list)
+    # Over the hub's per-file limit, or this exact copy already refused as too large: never sent (AG88).
+    too_large: list[str] = field(default_factory=list)
+    # The hub reports an older state than this device last saw (restored from a backup): plan,
+    # checkin and a dry run say so, not only a real sync (AG88).
+    hub_restored: bool = False
 
     @property
     def clean(self) -> bool:
@@ -241,6 +246,7 @@ class SyncPlan:
 
     def summary(self) -> str:
         extra = f", proposed {len(self.proposed)}" if self.proposed else ""
+        extra += f", too large {len(self.too_large)}" if self.too_large else ""
         return (
             f"pull {len(self.to_pull)}, push {len(self.to_push)}, "
             f"conflicts {len(self.conflicts)}, in sync {self.in_sync}{extra}"

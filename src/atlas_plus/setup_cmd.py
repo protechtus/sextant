@@ -511,9 +511,13 @@ def _hook_workspace(item) -> str:
         mm = _re.match(r"[^\s'\"]+", rest)
         val = mm.group(0) if mm else ""
     val = val.replace("\x00", "'").strip()
-    if _re.match(r"[A-Za-z]:[\\/]", val):
-        val = val.replace("/", "\\")  # E:/ws and E:\ws are one Windows workspace (MN73: the Git Bash spelling added a second Stop hook)
-    return val.rstrip("\\/").casefold()
+    win = bool(_re.match(r"[A-Za-z]:[\\/]|[\\/]{2}[^\\/]", val))  # a drive path or a UNC share (\\srv\share, //srv/share)
+    if win:
+        val = val.replace("/", "\\")  # E:/ws and E:\ws are one Windows workspace (MN73: the Git Bash spelling added a second Stop hook); //srv/share too (AG85)
+    val = val.rstrip("\\/") or val[:1]  # `/` stays `/`: '' means an unscoped install, whose hooks every re-run removes (AG85)
+    # Case folds only where the file system folds it: on Linux /home/u/WS and /home/u/ws are two workspaces, and
+    # a setup run for one removed the other's hooks (AG85)
+    return val.casefold() if (win or os.name == "nt") else val
 
 
 _HOOK_TARGETS = ("session-start", "stop")

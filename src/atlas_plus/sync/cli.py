@@ -103,11 +103,15 @@ def cmd_devices(args: argparse.Namespace) -> int:
         else:
             print(f"no paired devices or peers yet ({_prog('atlas-sync')} pair <name>)")
         return 0
+    from collections import Counter
+    names = Counter(d.name.casefold() for d in rows)
     for d in rows:
         seen = checkins.get(d.device_id, {}).get("received_utc", "never")
         flags = " REVOKED" if d.revoked else ""
         scope = d.scope + (f" [{','.join(d.prefixes)}]" if d.prefixes else "")
-        print(f"  {d.name:<20} {d.kind:<7} {scope:<24} last check-in: {seen}{flags}")
+        # `--all` after a revoke and re-pair showed two identical `laptop` rows (AG88): the id tells them apart
+        label = f"{d.name} ({d.device_id})" if names[d.name.casefold()] > 1 else d.name
+        print(f"  {label:<20} {d.kind:<7} {scope:<24} last check-in: {seen}{flags}")
     if hidden:
         print(f"  ({hidden} revoked, hidden: --all shows them)")
     return 0
@@ -166,9 +170,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "conflicts": plan.conflicts, "local_deleted": plan.local_deleted,
             "remote_deleted": plan.remote_deleted, "in_sync": plan.in_sync,
             "kept_local_edits": plan.kept_local_edits,
+            "too_large": plan.too_large, "hub_restored": plan.hub_restored,
         }, indent=2))
         return 0
     print(plan.summary())
+    if plan.hub_restored:
+        from atlas_plus.sync.client import RESTORED_HUB_AHEAD
+        print(f"  WARNING: {RESTORED_HUB_AHEAD} (docs/HOWTO-sync.md, After the hub was restored from a backup)")
     share = _share_args(args)
     if share and plan.in_sync == 0 and not (plan.to_pull or plan.to_push or plan.conflicts or plan.proposed):
         print("  note: nothing on either side matches this share (check it against the hub's --prefix; "
@@ -178,6 +186,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         ("CONFLICT", plan.conflicts),
         ("proposed, awaiting the hub's review", plan.proposed),
         ("edited here, deleted on the hub (your copy is kept, not pushed)", plan.kept_local_edits),
+        ("too large for the hub, not sent", plan.too_large),
         ("deleted remotely (no action)", [r for r in plan.remote_deleted if r not in plan.kept_local_edits]),
         ("deleted locally (no action)", plan.local_deleted),
     ):
@@ -199,6 +208,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
         print(f"sync refused: {exc}", file=sys.stderr)
         return 2
     print(report.summary())
+    if args.dry_run and report.hub_restored:
+        from atlas_plus.sync.client import RESTORED_HUB_AHEAD
+        print(f"  WARNING: {RESTORED_HUB_AHEAD}")
+    if args.dry_run:
+        for rel in report.too_large:
+            print(f"  too large for the hub, a sync would not send it: {rel}")
     share = _share_args(args)
     if share:
         from atlas_plus.sync import policy as _policy
@@ -254,6 +269,17 @@ def _progress_printer():
         if stage == "start":
             print(f"  syncing {total} files ({pulls} to pull, {pushes} to push) ...", file=sys.stderr, flush=True)
             return
+        if stage == "checkin":
+            print("  checking in with the hub (it re-reads its corpus; this can take a while on a big corpus) ...",
+                  file=sys.stderr, flush=True)
+            return
+        if stage == "end":  # "3002/3002 files" counted a file the hub had refused (AG88)
+            if done != total:
+                print(f"  {done}/{total} files transferred ({total - done} not: see below)", file=sys.stderr, flush=True)
+            elif state["last"] != done:
+                print(f"  {done}/{total} files", file=sys.stderr, flush=True)
+            state["last"] = done
+            return
         if done - state["last"] >= PROGRESS_EVERY or done == total:
             state["last"] = done
             print(f"  {done}/{total} files", file=sys.stderr, flush=True)
@@ -278,7 +304,8 @@ def cmd_checkin(args: argparse.Namespace) -> int:
             # not even a hash of the whole corpus, until a share is declared (claims pass
             # 2026-11-10). The machine name is not sent either.
             from atlas_plus.sync.client import _hub_policy
-            hub_policy = _hub_policy(client.remote_manifest())
+            _remote, restored = client.manifest_and_restore()
+            hub_policy = _hub_policy(_remote)
             if local_policy is None and (hub_policy is None or hub_policy.kind == "peer"):
                 print("checkin refused: the hub pairs this system as a federation PEER (or did not "
                       "say how); declare --share <prefix> first -- nothing was sent", file=sys.stderr)
@@ -288,7 +315,10 @@ def cmd_checkin(args: argparse.Namespace) -> int:
                 # "current" for a peer means the plan is clean apart from proposals.
                 plan, _l, _r = client.plan(root, share=share_list)
                 client.checkin({"manifest_hash": local["manifest_hash"]})
-                if plan.to_pull or plan.to_push or plan.conflicts:
+                if plan.hub_restored:
+                    from atlas_plus.sync.client import RESTORED_HUB_AHEAD
+                    print(f"not current: {RESTORED_HUB_AHEAD} (run: {_prog_name()} plan)")
+                elif plan.to_pull or plan.to_push or plan.conflicts or plan.too_large:
                     print(f"not current: {plan.summary()} (run: {_prog_name()} sync)")
                 else:
                     n = len(plan.proposed)
@@ -302,6 +332,10 @@ def cmd_checkin(args: argparse.Namespace) -> int:
             detail = "unauthorized: token rejected by hub"
         print(f"checkin refused: {detail}", file=sys.stderr)
         return 2
+    if restored:  # it said "different corpus state" about a hub restored from a backup (AG88)
+        from atlas_plus.sync.client import RESTORED_HUB_AHEAD
+        print(f"not current: {RESTORED_HUB_AHEAD} (run: {_prog_name()} plan)")
+        return 0
     same = result.get("server_manifest_hash") == local["manifest_hash"]
     print("in sync with hub" if same else f"hub has different corpus state (run: {_prog_name()} plan)")
     return 0

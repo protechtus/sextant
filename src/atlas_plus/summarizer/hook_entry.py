@@ -181,12 +181,8 @@ def _summarizer_unavailable_reason() -> str:
 def _posix_path_for(path: str) -> str:
     """A Windows path from a Windows Claude Code, received by a WSL install, as its /mnt form
     (MN33: `E:\\x\\sess.jsonl` was one relative file name on Linux and the root became the cwd)."""
-    import os as _os
-    import re as _re
-    m = _re.match(r"^([A-Za-z]):[\\/](.*)$", path)
-    if _os.name != "nt" and m:
-        return f"/mnt/{m.group(1).lower()}/" + m.group(2).replace("\\", "/")
-    return path
+    from atlas_plus.hooks.scope import posix_path_for
+    return posix_path_for(path)  # one mapping for both hooks (AG87)
 
 
 def _transcript_root_from_payload() -> str:
@@ -346,11 +342,12 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             pass
         return 0
-    from atlas_plus.hooks.scope import in_scope as _in_scope, scope_dirs as _scope_dirs
+    from atlas_plus.hooks.scope import in_scope as _in_scope, quoted_hint as _quoted_hint, scope_dirs as _scope_dirs
     if _scope_dirs() and not _in_scope(_PAYLOAD.get("cwd") or "", _PAYLOAD.get("transcript_file") or ""):
         # two installs in one settings file both summarised every session (AG81): this one owns
         # only the sessions under ATLAS_HOOK_SCOPE. Not an error, so no activity record per reply.
-        _sys.stderr.write(f"Sextant: session {_SESSION.get('id') or '?'} ran outside ATLAS_HOOK_SCOPE; this install's Stop hook left it alone.\n")
+        _hint = _quoted_hint()
+        _sys.stderr.write(f"Sextant: session {_SESSION.get('id') or '?'} ran outside ATLAS_HOOK_SCOPE; this install's Stop hook left it alone.{(' ' + _hint) if _hint else ''}\n")
         return 0
     _set_root = (_child_env.get("ATLAS_CLAUDE_CODE_ROOT") or "").strip()
     if _set_root and _PAYLOAD.get("transcript_file"):

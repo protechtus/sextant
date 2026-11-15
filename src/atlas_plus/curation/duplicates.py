@@ -57,17 +57,25 @@ def _lsh_shape(threshold: float) -> tuple[int, int]:
     return r, max(1, min(b, 400))
 
 
-def _lsh_pairs(shared_toks: list, threshold: float):
+def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = None):
     """Candidate pairs (i, j), i < j, from MinHash bands over each note's SHARED tokens (a token in one
     note only can never be in an intersection; leaving it out raises every estimate, so it costs no
     recall). One shake-128 digest per distinct token gives all r*b hash values; a note's signature is
-    the column-wise minimum, computed in C (map/min/zip)."""
+    the column-wise minimum, computed in C (map/min/zip). Past ``deadline`` (time.monotonic) it yields
+    None once and stops, so a scan whose candidates are mostly repeats still honours its budget."""
     import hashlib
+    import time as _time
+    from operator import eq
     from array import array
     r, b = _lsh_shape(threshold)
     k = r * b
     table: dict[str, array] = {}
-    buckets: dict[int, list[int]] = {}
+    # One bucket dict per band and each note's band keys: candidates are yielded lazily, band by band, and a
+    # pair already yielded by an earlier band is skipped by comparing the two notes' earlier keys. The old
+    # code put every pair of every bucket into one set and sorted it before yielding the first: 3,000
+    # template notes (one bucket per band) took 52 s past a 5 s budget and returned NO pairs (AG85).
+    buckets: list[dict[int, list[int]]] = [{} for _ in range(b)]
+    keys: list = [None] * len(shared_toks)
     bands = range(b)
     for i, toks in enumerate(shared_toks):
         if not toks:
@@ -80,16 +88,29 @@ def _lsh_pairs(shared_toks: list, threshold: float):
             rows.append(h)
         it = iter(map(min, zip(*rows)))
         # one key per band, built in C: (band, r minima); a hash collision only adds a candidate, never loses one
-        for key in map(hash, zip(bands, *([it] * r))):
-            buckets.setdefault(key, []).append(i)
+        ki = keys[i] = array("q", map(hash, zip(bands, *([it] * r))))
+        for band, key in enumerate(ki):
+            buckets[band].setdefault(key, []).append(i)
     from itertools import combinations
-    seen: set[int] = set()
-    n = len(shared_toks)
-    for members in buckets.values():
-        if len(members) > 1:  # members ascend, so a < b
-            seen.update(a * n + b for a, b in combinations(members, 2))
-    for c in sorted(seen):
-        yield divmod(c, n)
+    done_groups: set[tuple] = set()  # a bucket holding exactly the notes of an earlier band's bucket adds nothing
+    tick = 0
+    for band in bands:
+        for members in buckets[band].values():
+            if len(members) < 2:
+                continue
+            group = tuple(members)  # the tuple itself: a hash collision here would lose pairs
+            if group in done_groups:
+                continue
+            done_groups.add(group)
+            for a, c in combinations(members, 2):  # members ascend, so a < c
+                tick += 1
+                if deadline is not None and not tick & 4095 and _time.monotonic() > deadline:
+                    yield None
+                    return
+                if band and any(map(eq, keys[a][:band], keys[c][:band])):
+                    continue  # an earlier band already yielded this pair
+                yield a, c
+        buckets[band] = {}
 
 
 def _tokenize(text: str) -> set[str]:
@@ -390,6 +411,9 @@ def find_duplicates(
     # The exact walk's size, before it runs: the posting entries its prefixes would touch (AG84).
     ordered = [sorted(tokens[f], key=lambda t: (df[t], t)) for f in file_list]
     _limit = _exact_max_work()
+    _r, _b = _lsh_shape(threshold)
+    if 1 - (1 - min(max(threshold, 0.05), 0.99) ** _r) ** _b < _LSH_RECALL:
+        _limit = -1  # 400 bands cannot promise the 99% recall below a threshold of about 0.11 (-t 0.05: 63%): stay exact (AG85)
     if _limit >= 0:
         work = 0
         for i, si in enumerate(sizes):
@@ -403,12 +427,13 @@ def find_duplicates(
             _LAST_APPROX[0] = True
     if _LAST_APPROX[0]:
         shared = [[t for t in o if df[t] >= 2] for o in ordered]
-        last_i = -1
-        for c, (i, j) in enumerate(_lsh_pairs(shared, threshold)):
-            if _deadline is not None and c % 4096 == 0 and _time.monotonic() > _deadline:
-                _LAST_PARTIAL[0], _LAST_PARTIAL[1] = max(last_i, 0), len(file_list)
+        reached = bytearray(len(file_list))  # notes that met at least one candidate, for the partial count
+        for pair in _lsh_pairs(shared, threshold, _deadline):
+            if pair is None:  # the budget ran out inside the candidate walk
+                _LAST_PARTIAL[0], _LAST_PARTIAL[1] = sum(reached), len(file_list)
                 break
-            last_i = i
+            i, j = pair
+            reached[i] = reached[j] = 1
             si, sj = sizes[i], sizes[j]
             if min(si, sj) < thr * max(si, sj):
                 continue

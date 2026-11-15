@@ -49,6 +49,23 @@ _SCOPE_ALIASES = {
 # ---------------------------------------------------------------------------
 
 _LAST_TURNS: dict = {"n": None}  # turns loaded by the last _load_transcript_text call (AG81)
+_STOP_IF: dict = {"fn": None}  # set by the run: True for a turn count with nothing new, checked before redaction (AG87)
+
+
+def _count_turns_cheaply(conversation_id: str | None, source: str, cache_file) -> int | None:
+    """The session's turn count from the bytes written since the last count, when the Stop hook named
+    the transcript (ATLAS_TRANSCRIPT_FILE), else None. The same count the loader gives (AG87: the
+    facts stage loaded and redacted the whole transcript on every Stop only to find nothing new)."""
+    if not conversation_id or source != "claude-code" or cache_file is None:
+        return None
+    try:
+        from atlas_plus.summarizer.loader import count_session_turns, single_transcript
+        one = single_transcript()
+        if one is None:
+            return None
+        return count_session_turns(one, conversation_id, cache_file)
+    except (OSError, ValueError):
+        return None
 
 
 def _load_transcript_text(since: str = "today", source: str = "claude-code", conversation_id: str | None = None) -> str:
@@ -58,6 +75,9 @@ def _load_transcript_text(since: str = "today", source: str = "claude-code", con
         since = None  # the session is the unit: `--since 2h` dropped the start of a long session (AG40)
     turns = list(load_turns(source=source, since=since, conversation_id=conversation_id))
     _LAST_TURNS["n"] = len(turns)  # the gate counts turns like the summarizer, not text lines (AG81)
+    _stop = _STOP_IF.get("fn")
+    if _stop is not None and _stop(len(turns)):
+        return ""  # nothing new: the per-turn redaction below is the expensive part (AG87)
     try:
         from atlas_plus.redaction import redact as _redact_turn
     except Exception:  # noqa: BLE001
@@ -813,9 +833,26 @@ def _suggest_facts_run(
             _prior_lines = int(_tok[0]) if len(_tok) > 1 and _tok[1] == "turns" else None
         except (OSError, ValueError, IndexError):
             _prior_lines = 0
+    def _nothing_new(n: int) -> bool:
+        return _facts_gave_up(conversation_id, n) or (_prior_lines is not None and n - _prior_lines < _min_new_turns())
+
+    # Nothing new? Decided BEFORE the transcript is loaded and redacted (AG87: every Stop paid for the
+    # whole transcript, 72 s and 290 MB on a 97 MB session, to print "nothing new"). With the Stop
+    # hook's named transcript only the bytes written since the last Stop are read; otherwise the
+    # loader stops right after counting, before the per-turn redaction.
+    _offsets = _done.with_name(_done.stem + ".offsets.json") if _done is not None else None
+    _pre = _count_turns_cheaply(conversation_id, source, _offsets) if not dry_run else None
     print(f"Loading transcript since '{since}'...", flush=True)
     _LAST_TURNS["n"] = None
-    transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
+    if _pre is not None and _nothing_new(_pre):
+        transcript_text = ""
+        _LAST_TURNS["n"] = _pre
+    else:
+        _STOP_IF["fn"] = _nothing_new
+        try:
+            transcript_text = _load_transcript_text(since=since, source=source, conversation_id=conversation_id)
+        finally:
+            _STOP_IF["fn"] = None
     _n_lines = _LAST_TURNS["n"]  # turns, as the summarizer counts them (AG81: a 4-line reply was 4 "turns")
     if _n_lines is None:  # a replaced loader (tests): fall back to its line count
         _n_lines = transcript_text.count("\n") + (1 if transcript_text.strip() else 0)

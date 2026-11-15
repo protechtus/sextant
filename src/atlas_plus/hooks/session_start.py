@@ -76,10 +76,11 @@ def _read_file(path: Path, max_chars: int = 600) -> str:
         return ""
 
 
-def _detect_project() -> tuple[str, Path] | None:
-    """Walk up from cwd to find a git root under PROJECTS_ROOT; failing that, the first directory
-    below PROJECTS_ROOT (a writer's manuscript folder is not a git repository, MN14)."""
-    cwd = Path.cwd()
+def _detect_project(cwd: Path | None = None) -> tuple[str, Path] | None:
+    """Walk up from cwd (the payload's, else the process's) to find a git root under PROJECTS_ROOT;
+    failing that, the first directory below PROJECTS_ROOT (a writer's manuscript folder is not a git
+    repository, MN14)."""
+    cwd = Path(cwd) if cwd else Path.cwd()
     check = cwd
     while check != check.parent:
         if (check / ".git").exists() and _under_projects(check):
@@ -351,9 +352,13 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print("Usage: atlas-session-start\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
         return
-    from atlas_plus.hooks.scope import in_scope as _in_scope
-    if not _in_scope(os.getcwd()):
-        return  # another install's session (ATLAS_HOOK_SCOPE, AG81): Claude Code runs the hook in the session's directory
+    from atlas_plus.hooks.scope import in_scope as _in_scope, payload_cwd as _payload_cwd, quoted_hint as _quoted_hint, read_payload as _read_payload
+    _cwd = _payload_cwd(_read_payload())  # the session's directory as the payload names it, like the Stop hook (AG87)
+    if not _in_scope(_cwd or os.getcwd()):
+        _hint = _quoted_hint()
+        if _hint:
+            print(f"Sextant: {_hint}", file=sys.stderr)
+        return  # another install's session (ATLAS_HOOK_SCOPE, AG81)
     # Task-aware mode: if ATLAS_TASK_HINT is set, emit only relevant context
     task_hint = os.environ.get("ATLAS_TASK_HINT", "").strip()
     if task_hint:
@@ -425,7 +430,7 @@ def main() -> None:
         lines += ["## Operator queue", _op_line, ""]
 
     # --- Active project ---
-    project_info = _detect_project()
+    project_info = _detect_project(Path(_cwd) if _cwd and os.path.isdir(_cwd) else None)
     if project_info:
         name, project_dir = project_info
         lines += [f"## Active project: {_ol(name)}", f"Path: {_ol(str(project_dir))}", ""]

@@ -1030,11 +1030,21 @@ def _extract_tool_patterns(path: Path) -> dict:
     No conversation text or secret values are extracted.
     Returns tool_counts, files_touched, and total_tool_calls.
     """
-    tool_counts: dict[str, int] = {}
-    files_touched: set[str] = set()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    return _tool_patterns_in(text)
+
+
+def _tool_patterns_in(text: str, tool_counts: dict | None = None, files_touched: set | None = None) -> dict:
+    """_extract_tool_patterns over already-read text, adding to the counts given (AG87: the mining
+    stage re-reads only what was appended since the last Stop and adds it to what it had)."""
+    tool_counts = {} if tool_counts is None else tool_counts
+    files_touched = set() if files_touched is None else files_touched
 
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):  # splitlines() broke a turn at a raw U+2028/U+2029 and dropped it (MN75, sibling of AG84)
+        for line in text.split("\n"):  # splitlines() broke a turn at a raw U+2028/U+2029 and dropped it (MN75, sibling of AG84)
             line = line.strip()
             if not line:
                 continue
@@ -1143,21 +1153,36 @@ class TranscriptMiningSource:
         total_facts = 0
         all_warnings: list[str] = []
 
+        # Claude Code fires Stop after every reply and this stage hashed and re-parsed every
+        # transcript of the project on each one (AG87: 0.7 s and 220 MB for a 4-turn reply on a
+        # 97 MB session). A file whose size and mtime are unchanged since it was mined is skipped
+        # unread; one that only grew is read from where the last run stopped, its counts added to
+        # the ones kept. Anything else (shrunk, rewritten, no record) is read whole as before.
+        _scan = _MiningScanCache(manifest)
+
         for path in sorted(self._root.glob("*.jsonl")):
             if path.name.startswith("_"):
                 continue
 
             key = f"mining/{path.name}"
-            try:
-                fhash = _file_hash(path)
-            except OSError:
-                continue
-
-            if manifest and not manifest.is_changed(key, fhash):
+            res = _scan.check(key, path)
+            if res == "unchanged":
                 files_skipped += 1
                 continue
+            if res is not None:
+                fhash, patterns = res
+            else:
+                try:
+                    fhash = _file_hash(path)
+                except OSError:
+                    continue
 
-            patterns = _extract_tool_patterns(path)
+                if manifest and not manifest.is_changed(key, fhash):
+                    _scan.remember_whole(key, path, fhash)
+                    files_skipped += 1
+                    continue
+
+                patterns = _scan.whole(key, path, fhash)
             session_id = path.stem
             entity_id = f"transcript:{session_id}"
             now = _now_iso()
@@ -1251,6 +1276,7 @@ class TranscriptMiningSource:
 
         if manifest:
             manifest.save()
+            _scan.save()
 
         return {
             "files_indexed": files_indexed,
@@ -1258,6 +1284,123 @@ class TranscriptMiningSource:
             "facts": total_facts,
             "warnings": all_warnings,
         }
+
+
+class _MiningScanCache:
+    """Per transcript: size, mtime, the offset of the last complete line, a hash of the 4 KB before
+    it and the tool counts up to it (AG87). Kept beside the manifest and trusted only while the
+    manifest still holds the hash recorded with it, so a manifest reset re-reads everything."""
+
+    _TAIL = 4096
+
+    def __init__(self, manifest) -> None:
+        self._manifest = manifest
+        self._path = manifest.path.with_name("mining-scan.json") if manifest is not None else None
+        self._data: dict = {}
+        if self._path is not None:
+            try:
+                d = json.loads(self._path.read_text(encoding="utf-8"))
+                self._data = d if isinstance(d, dict) else {}
+            except (OSError, ValueError):
+                self._data = {}
+
+    @staticmethod
+    def _decode(b: bytes) -> str:
+        # what read_text() gives: universal newlines, so the counts match a whole read
+        return b.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+
+    def _entry(self, key: str):
+        e = self._data.get(key)
+        rec = self._manifest.files.get(key) if self._manifest is not None else None
+        if not isinstance(e, dict) or rec is None or rec.content_hash != e.get("hash"):
+            return None
+        if not all(isinstance(e.get(k), int) for k in ("size", "mtime_ns", "offset")):
+            return None
+        if not isinstance(e.get("tools"), dict) or not isinstance(e.get("files"), list):
+            return None
+        return e
+
+    def check(self, key: str, path: Path):
+        """'unchanged', (hash, patterns) for a file that only grew, or None (read it whole)."""
+        import hashlib
+        e = self._entry(key)
+        if e is None:
+            return None
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        if st.st_size == e["size"] and st.st_mtime_ns == e["mtime_ns"]:
+            return "unchanged"
+        off = e["offset"]
+        if not (0 < off <= st.st_size) or st.st_size < e["size"]:
+            return None
+        try:
+            with open(path, "rb") as f:
+                f.seek(max(0, off - self._TAIL))
+                if hashlib.sha256(f.read(off - max(0, off - self._TAIL))).hexdigest() != e.get("tail"):
+                    return None
+                data = f.read()
+                size = f.tell()
+        except OSError:
+            return None
+        cut = data.rfind(b"\n") + 1
+        tools = {str(k): int(v) for k, v in e["tools"].items() if isinstance(v, int)}
+        files = {str(x) for x in e["files"]}
+        _tool_patterns_in(self._decode(data[:cut]), tools, files)
+        end = off + cut
+        tail = (data[max(0, cut - self._TAIL):cut] if cut >= self._TAIL else None)
+        if tail is None:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(max(0, end - self._TAIL))
+                    tail = f.read(end - max(0, end - self._TAIL))
+            except OSError:
+                return None
+        fhash = f"grown:{end}:{hashlib.sha256(tail).hexdigest()[:16]}"
+        self._put(key, size, st.st_mtime_ns if size == st.st_size else 0, end, tail, fhash, tools, files)
+        # a line still being written counts now, as a whole read counts it, but is not kept
+        return fhash, _tool_patterns_in(self._decode(data[cut:]), dict(tools), set(files))
+
+    def whole(self, key: str, path: Path, fhash: str) -> dict:
+        """The whole-file parse, remembered so the next run can start where this one stopped."""
+        try:
+            st = path.stat()
+            data = path.read_bytes()
+        except OSError:
+            return _extract_tool_patterns(path)
+        cut = data.rfind(b"\n") + 1
+        tools: dict = {}
+        files: set = set()
+        _tool_patterns_in(self._decode(data[:cut]), tools, files)
+        if cut and len(data) == st.st_size:
+            self._put(key, st.st_size, st.st_mtime_ns, cut, data[max(0, cut - self._TAIL):cut], fhash, tools, files)
+        return _tool_patterns_in(self._decode(data[cut:]), dict(tools), set(files))
+
+    def remember_whole(self, key: str, path: Path, fhash: str) -> None:
+        """A file the manifest already holds unchanged (mined before this cache existed)."""
+        if self._path is not None and self._entry(key) is None:
+            self.whole(key, path, fhash)
+
+    def _put(self, key, size, mtime_ns, offset, tail, fhash, tools, files) -> None:
+        import hashlib
+        if self._path is None or not offset:
+            return
+        self._data[key] = {"size": size, "mtime_ns": mtime_ns, "offset": offset,
+                           "tail": hashlib.sha256(tail).hexdigest(), "hash": fhash,
+                           "tools": dict(tools), "files": sorted(files)}
+
+    def save(self) -> None:
+        if self._path is None:
+            return
+        try:
+            live = set(self._manifest.files) if self._manifest is not None else set()
+            data = {k: v for k, v in self._data.items() if k in live}
+            tmp = self._path.with_name(self._path.name + ".tmp")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            os.replace(tmp, self._path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------

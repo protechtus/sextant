@@ -181,6 +181,7 @@ def create_app() -> FastAPI:
             "name": principal.name, "kind": principal.kind,
             "scope": principal.scope, "prefixes": list(principal.prefixes),
         }
+        result["limits"] = {"max_file_bytes": MAX_FILE_BYTES, "max_push_changes": MAX_PUSH_CHANGES}  # a device skips a file the hub would refuse (AG88)
         result["generation"] = store.hub_generation()  # devices notice a hub restored from an older backup (MN71)
         result["generation_mark"] = store.generation_mark(result["generation"])  # ...even after it caught up again (AG79)
         if since is not None:
@@ -245,7 +246,10 @@ def create_app() -> FastAPI:
                 continue
             if len(raw) > MAX_FILE_BYTES:
                 outcome["result"] = "error"
-                outcome["detail"] = "file too large"
+                # the limit is named: "file too large" left the operator guessing, every sync (AG88)
+                outcome["detail"] = (f"file too large ({len(raw):,} bytes; this hub accepts at most "
+                                     + (f"{MAX_FILE_BYTES // 1048576} MB" if MAX_FILE_BYTES >= 1048576 else f"{MAX_FILE_BYTES:,} bytes") + " per file)")
+                store.audit("push_error", device=device.name, path=rel, reason="too_large")
                 results.append(outcome)
                 continue
             announced = change.get("sha256")

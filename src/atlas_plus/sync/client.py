@@ -140,6 +140,10 @@ class SyncReport:
     proposed: list[str] = field(default_factory=list)
     # Edited here, deleted on the hub (also in remote_deleted): kept here, not pushed (AG82).
     kept_local_edits: list[str] = field(default_factory=list)
+    # Not sent: over the hub's per-file limit, or this exact copy was already refused (AG88).
+    too_large: list[str] = field(default_factory=list)
+    # The hub reports an older state than this device last saw (restored from a backup).
+    hub_restored: bool = False
 
     def summary(self) -> str:
         return (
@@ -147,6 +151,36 @@ class SyncReport:
             f"conflicts {len(self.conflicts)}, denied {len(self.denied)}, "
             f"errors {len(self.errors)}"
         )
+
+
+RESTORED_HUB = ("the hub reports an older state than this device last synced (it was restored from a backup?): "
+                "nothing was pulled over your copies; every difference is parked as a conflict to review")
+RESTORED_HUB_AHEAD = ("the hub reports an older state than this device last synced (it was restored from a backup?): "
+                      "a sync pulls nothing over your copies and parks every difference as a conflict to review")
+
+
+def _check_hub_url(base_url: str) -> None:
+    """`--hub 127.0.0.1:8768` reached httpx as a URL with no scheme (or `localhost:` as the scheme) and the
+    operator got httpx's own sentence about protocols (AG88). One rule for plan, sync and checkin."""
+    if not base_url:
+        return
+    from urllib.parse import urlsplit
+    scheme = urlsplit(base_url).scheme.lower() if "://" in base_url else ""
+    if scheme not in ("http", "https"):
+        shown = base_url.split("://", 1)[-1] if scheme else base_url
+        raise SyncClientError(
+            f"the hub address {base_url!r} needs http:// or https:// in front: use http://{shown} "
+            "(or https://... when a TLS proxy fronts the hub); set it with --hub or ATLAS_SYNC_HUB")
+
+
+def _too_large_limit(remote: dict) -> int | None:
+    limits = remote.get("limits") if isinstance(remote, dict) else None
+    value = limits.get("max_file_bytes") if isinstance(limits, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def _mb(n: int) -> str:
+    return f"{n // (1024 * 1024)} MB" if n >= 1024 * 1024 else f"{n:,} bytes"
 
 
 class SyncClient:
@@ -169,6 +203,7 @@ class SyncClient:
             if token:
                 self._client.headers["Authorization"] = f"Bearer {token}"
         else:
+            _check_hub_url(base_url)
             if timeout is None:
                 import os as _os
                 try:
@@ -253,6 +288,11 @@ class SyncClient:
                 "`tls internal`, or a wrong SSL_CERT_FILE): point SSL_CERT_FILE at the CA certificate, or use the "
                 "hub's http:// address on a trusted network"  # it said "no hub answering" (MN41)
             )
+        if isinstance(exc, (httpx.UnsupportedProtocol, httpx.InvalidURL)):
+            try:
+                _check_hub_url(self._hub_label())
+            except SyncClientError as bad:
+                return bad
         if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
             return SyncClientError(
                 f"no hub answering at {self._hub_label()} -- is `sextant-sync serve` running there, "
@@ -313,13 +353,15 @@ class SyncClient:
             raise SyncClientError(f"{rel}: HTTP {response.status_code}: {_detail(response)}")
         return response.content, response.headers.get("X-Sextant-Sha256", "")
 
-    def push(self, changes: list[dict]) -> dict:
+    def push(self, changes: list[dict], on_batch=None) -> dict:
+        """``on_batch(results)`` runs after every request the hub answered: a 3,000-file push was
+        silent for 21 s (AG88)."""
         if len(changes) > 500:  # the hub takes at most 500 per request: 3,000 new notes failed every sync (MN71)
             out: list = []
             gen = mark = None
             for i in range(0, len(changes), 500):
                 try:
-                    part = self.push(changes[i:i + 500])
+                    part = self.push(changes[i:i + 500], on_batch)
                 except SyncAuthError:
                     if not out:
                         raise
@@ -348,6 +390,8 @@ class SyncClient:
             raise SyncClientError("push: hub answered with a non-JSON body")
         if not isinstance(data, dict) or not isinstance(data.get("results"), list):
             raise SyncClientError("push: malformed results from hub")
+        if on_batch is not None:
+            on_batch(data["results"])
         return data
 
     def checkin(self, payload: dict) -> dict:
@@ -356,6 +400,25 @@ class SyncClient:
         return response.json()
 
     # -- composite ------------------------------------------------------------
+
+    def manifest_and_restore(self, base_id: str = "hub") -> tuple[dict, bool]:
+        """The hub's manifest, and whether the hub is older than this device last saw. checkin
+        compared hashes only and said "different corpus state" about a restored hub (AG88)."""
+        seen = self._own_base(base_id) or {}
+        self._since_generation = seen.get("hub_generation") if isinstance(seen.get("hub_generation"), int) else None
+        remote = self.remote_manifest()
+        return remote, self._restored(seen or None, remote)
+
+    @staticmethod
+    def _restored(base: dict | None, remote: dict) -> bool:
+        _rg = remote.get("generation") if isinstance(remote, dict) else None
+        _seen_mark = (base or {}).get("hub_generation_mark")
+        _now_mark = remote.get("since_mark") if isinstance(remote, dict) else None
+        # the hub is older than this device last saw (restored from a backup) (MN71); a count this
+        # hub reached again after the restore carries a different mark (AG79)
+        return base is not None and isinstance(_rg, int) and (
+            _rg < int(base.get("hub_generation") or 0)
+            or (isinstance(_seen_mark, str) and isinstance(_now_mark, str) and _now_mark != _seen_mark))
 
     def plan(self, root: Path, base_id: str = "hub",
              share: Sequence[str] | None = None) -> tuple[manifest.SyncPlan, dict, dict]:
@@ -372,8 +435,7 @@ class SyncClient:
         prefixes = normalize_share(share)
         local_policy = _share_principal(prefixes)
         _seen = self._own_base(base_id) or {}
-        self._since_generation = _seen.get("hub_generation") if isinstance(_seen.get("hub_generation"), int) else None
-        remote = self.remote_manifest()
+        remote, _ = self.manifest_and_restore(base_id)
         hub_policy = _hub_policy(remote)
         if local_policy is None and (hub_policy is None or hub_policy.kind == "peer"):
             raise SyncClientError(
@@ -388,14 +450,8 @@ class SyncClient:
                         if _visible(k, local_policy, hub_policy)}
         base = self._own_base(base_id)
         self._rolled_back = False
-        _rg = remote.get("generation") if isinstance(remote, dict) else None
-        _seen_mark = (base or {}).get("hub_generation_mark")
-        _now_mark = remote.get("since_mark") if isinstance(remote, dict) else None
-        if base is not None and isinstance(_rg, int) and (
-                _rg < int(base.get("hub_generation") or 0)
-                or (isinstance(_seen_mark, str) and isinstance(_now_mark, str) and _now_mark != _seen_mark)):
-            # the hub is older than this device last saw (restored from a backup): every difference is a conflict (MN71);
-            # a count this hub reached again after the restore carries a different mark (AG79)
+        if self._restored(base, remote):
+            # restored from a backup: every difference is a conflict (MN71, AG79)
             base = None
             self._rolled_back = True
         base_files = {k: v for k, v in ((base or {}).get("files", {}) or {}).items()
@@ -420,7 +476,25 @@ class SyncClient:
             for bucket in (plan.to_push, plan.to_pull, plan.conflicts):
                 if rel in bucket:
                     bucket.remove(rel)
+        plan.hub_restored = self._rolled_back
+        # A file the hub cannot take is not sent: by the limit the hub advertises, or (an older hub)
+        # because the hub already refused these exact bytes as too large. It went up every sync (AG88).
+        limit = _too_large_limit(remote)
+        refused = _seen.get("refused") if isinstance(_seen.get("refused"), dict) else {}
+        plan.too_large = [rel for rel in plan.to_push
+                          if (limit and int((local["files"].get(rel) or {}).get("size") or 0) > limit)
+                          or (refused.get(rel) and refused.get(rel) == (local["files"].get(rel) or {}).get("sha256"))]
+        plan.to_push = [rel for rel in plan.to_push if rel not in plan.too_large]
         return plan, local, remote
+
+    def too_large_reason(self, rel: str, local: dict, remote: dict) -> str:
+        size = int((local.get("files", {}).get(rel) or {}).get("size") or 0)
+        limit = _too_large_limit(remote)
+        if limit and size > limit:
+            return (f"{rel}: not sent: {size:,} bytes is over the hub's limit of {_mb(limit)} per file "
+                    "(split the file, or move it out of the synced corpus)")
+        return (f"{rel}: not sent again: the hub refused this copy as too large ({size:,} bytes); "
+                "split the file or move it out of the synced corpus (an edit is sent once more)")
 
     def sync_once(self, root: Path, base_id: str = "hub", dry_run: bool = False,
                   share: Sequence[str] | None = None, progress=None) -> SyncReport:
@@ -451,6 +525,8 @@ class SyncClient:
             local_files=len(local.get("files", {})),
             hub_prefixes=list(hub_policy.prefixes) if hub_policy else [],
             kept_local_edits=list(plan.kept_local_edits),
+            too_large=list(plan.too_large),
+            hub_restored=plan.hub_restored,
         )
         if dry_run:
             report.conflicts = list(plan.conflicts)
@@ -458,8 +534,7 @@ class SyncClient:
 
         old_base = {} if getattr(self, "_rolled_back", False) else (self._own_base(base_id) or {})
         if getattr(self, "_rolled_back", False):
-            report.errors.append("the hub reports an older state than this device last synced (it was restored from a backup?): "
-                                 "nothing was pulled over your copies; every difference is parked as a conflict to review")
+            report.errors.append(RESTORED_HUB)
         old_base_files: dict = old_base.get("files", {}) or {}
         proposed: dict = dict(old_base.get("proposed", {}) or {})
         report.proposed = list(plan.proposed)
@@ -469,6 +544,11 @@ class SyncClient:
         unresolved: set[str] = set(plan.local_deleted)
         unresolved.update(plan.conflicts)  # every conflict keeps its old anchor even when the run stops early (AG73)
         unresolved.update(plan.kept_local_edits)  # old anchor kept: a restored hub copy is a conflict, never a pull over the edit
+        _seen_refused = (self._own_base(base_id) or {}).get("refused")
+        refused: dict = dict(_seen_refused) if isinstance(_seen_refused, dict) else {}
+        for rel in plan.too_large:
+            report.errors.append(self.too_large_reason(rel, local, _remote))
+            unresolved.add(rel)
         # A long first sync printed nothing for minutes (AG82): the caller gets counts as files land.
         _total = len(plan.to_pull) + len(plan.to_push)
         if progress is not None and _total:
@@ -547,8 +627,15 @@ class SyncClient:
                     }
                 )
             if changes:
+                _landed = [0]
+
+                def _batch(part: list) -> None:  # counts only what the hub took, never its refusals (AG88)
+                    _landed[0] += sum(1 for it in part if isinstance(it, dict) and it.get("result") in ("applied", "inbox"))
+                    if progress is not None:
+                        progress("push", _done + _landed[0], _total, len(plan.to_pull), len(plan.to_push))
                 try:
-                    _push_answer = self.push(changes)
+                    # progress only when asked for: a wrapped push(changes) keeps working
+                    _push_answer = self.push(changes, on_batch=_batch) if progress is not None else self.push(changes)
                     results = _push_answer.get("results", [])
                     if isinstance(_push_answer.get("generation"), int):
                         _hub_gen = _push_answer["generation"]  # the hub's own count after our push
@@ -568,8 +655,7 @@ class SyncClient:
                         report.errors.append(f"{change['path']}: {exc}")
                         unresolved.add(change["path"])
                     results = []
-                if progress is not None and results:
-                    progress("push", _done + len(results), _total, len(plan.to_pull), len(plan.to_push))
+                _done += _landed[0]
                 for item in results:
                     if not isinstance(item, dict):
                         continue
@@ -613,7 +699,13 @@ class SyncClient:
                     else:
                         report.errors.append(f"{rel}: {item.get('detail', result)}")
                         unresolved.add(rel)
+                        if str(item.get("detail") or "").startswith("file too large"):
+                            sent = next((ch for ch in changes if ch["path"] == rel), None)
+                            if sent:
+                                refused[rel] = sent["sha256"]  # remembered: the same bytes are not sent again
 
+        if progress is not None and _total:
+            progress("end", _done, _total, len(plan.to_pull), len(plan.to_push))
         for rel in plan.conflicts:
             if auth_stopped:
                 break  # every conflict is already unresolved: nothing parked, nothing lost
@@ -664,6 +756,8 @@ class SyncClient:
         }
         for rel in refreshed["proposed"]:
             files.pop(rel, None)
+        refreshed["refused"] = {rel: sha for rel, sha in refused.items()
+                                if (local_after.get(rel) or {}).get("sha256") == sha}  # an edit is tried again
         refreshed["files"] = files
         refreshed["manifest_hash"] = manifest.files_hash(files)
         if isinstance(_hub_gen, int):
@@ -677,6 +771,8 @@ class SyncClient:
             store.save_base_manifest(base_id, refreshed)  # the legacy file: `status` and an older build read it
         if auth_stopped:
             return report  # the check-in would be one more 401 (AG73)
+        if progress is not None and _total:
+            progress("checkin", _done, _total, len(plan.to_pull), len(plan.to_push))  # the hub re-hashes its corpus: 18 s silent on 6,000 files (AG88)
         try:
             self.checkin({"manifest_hash": refreshed["manifest_hash"]})
         except (SyncClientError, httpx.HTTPError):
