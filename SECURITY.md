@@ -18,6 +18,9 @@ Reports most valuable to this project:
 - Secrets leaking into logs, transcripts, or derived state
 - Anything that lets a remote party reach a write path with
   `ATLAS_AUTONOMOUS` off
+- Any write that passes with `ATLAS_AUTONOMOUS` off because some other
+  variable is set: `ATLAS_SESSION_AUTONOMOUS` scopes the Stop hook's
+  summarizer and suggest-facts only, never Brain jobs, tickets or curation
 
 Out of scope: issues that require the attacker to already have local code
 execution as the same user, and self-inflicted misconfiguration (for example

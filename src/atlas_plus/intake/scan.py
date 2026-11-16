@@ -19,6 +19,10 @@ ARCHIVE_DIRNAME = "_imported"
 MANIFEST_NAME = "MANIFEST.md"
 
 IGNORED_NAMES = {"desktop.ini", "thumbs.db", ".ds_store", MANIFEST_NAME.lower(), "readme.md"}
+# A sidecar carries frontmatter for a file that cannot hold its own (a zip, a
+# PDF, an image): ``<file>.meta.md`` next to ``<file>``. It rides along with
+# its file (archived with it) and is never a candidate itself (2026-11-15).
+SIDECAR_SUFFIX = ".meta.md"
 IGNORED_PREFIXES = ("~$", ".~", "._", ".")
 # Google native documents are shortcuts; browser/office temp files are partial.
 NATIVE_DOC_SUFFIXES = (".gdoc", ".gsheet", ".gslides", ".gdraw", ".gform", ".gmap", ".gsite", ".gjam", ".gscript", ".glink")
@@ -45,7 +49,29 @@ def skip_reason(path: Path) -> str | None:
         return "native-gdoc-shortcut"
     if low.endswith(PARTIAL_SUFFIXES):
         return "partial-download"
+    if low.endswith(SIDECAR_SUFFIX) and path.with_name(name[: -len(SIDECAR_SUFFIX)]).exists():
+        return "sidecar"
     return None
+
+
+def sidecar_for(path: Path) -> Path:
+    """The ``<file>.meta.md`` sidecar path for ``path`` (may not exist)."""
+    return path.with_name(path.name + SIDECAR_SUFFIX)
+
+
+def zip_names(path: Path, limit: int = 2000) -> list[str]:
+    """Entry names of a zip (posix, at most ``limit``); ``[]`` for anything that is not a readable zip.
+
+    Used only to classify a drop (a brand kit, a Claude Design export); nothing is
+    extracted here.
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(path) as z:
+            return [n.replace("\\", "/") for n in z.namelist()[:limit]]
+    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError):
+        return []
 
 
 def discover(source: Path, recursive: bool = True) -> tuple[list[Candidate], list[tuple[str, str]]]:

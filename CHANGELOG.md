@@ -19,6 +19,17 @@ public tree.
 
 ## [Unreleased]
 
+### Fixed: the session override no longer opens the general write gate (ATL-068)
+
+- `ATLAS_SESSION_AUTONOMOUS=on` reached `require_autonomous_writes()` through an early return added
+  with the AG40 fix (sweep 15), so any process that inherited the variable, the Brain and its worker
+  included, passed every unattended write with `ATLAS_AUTONOMOUS=off`: on one install the weekly
+  unconfirmed-decay job lowered the confidence of 47 memory notes and the nightly tag job tagged 290
+  files. The general gate reads `ATLAS_AUTONOMOUS` only again; the Stop hook's writers (summarizer,
+  `atlas-suggest-facts --auto`) use the new `require_session_write()`, which is the only place the
+  session variable is honoured. Tests pin both directions. If you set the session variable in a
+  shared service environment, set it in the hook command's `--env` flag instead.
+
 ### Sweep 24, agentic wave (AG91: the Nordic languages)
 
 - Redaction: Danish, Norwegian (bokmal and nynorsk), Swedish, Finnish, Icelandic and Faroese key names (`kodeord`,

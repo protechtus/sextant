@@ -127,15 +127,20 @@ def test_memory_health_degraded_when_state_dir_is_a_file(tmp_path, monkeypatch):
 
 
 def test_session_override_enables_autonomous_writes(monkeypatch):
-    from atlas_plus.autonomous import require_autonomous_writes
+    # ATL-068: the override reaches the fact writer through require_session_write; the general
+    # gate (require_autonomous_writes) must stay closed under it, or every Brain job writes.
+    from atlas_plus.autonomous import require_autonomous_writes, require_session_write
 
     monkeypatch.setenv("ATLAS_AUTONOMOUS", "off")
     monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")
-    require_autonomous_writes("memory_write")                      # no raise
+    require_session_write("suggest_facts")                         # no raise: the hook's writer
+    with pytest.raises(RuntimeError) as e:
+        require_autonomous_writes("memory_confidence_downgrade")   # a Brain job: still blocked
+    assert "Sextant autonomous" in str(e.value)
     monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "off")
     with pytest.raises(RuntimeError) as e:
-        require_autonomous_writes("memory_write")
-    assert "Sextant autonomous" in str(e.value)
+        require_session_write("suggest_facts")
+    assert "Sextant session" in str(e.value)
 
 
 # --- AG40 F2/F4: suggest-facts dedupe, redact-before-cut, once per session, identity never auto -----------

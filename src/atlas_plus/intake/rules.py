@@ -63,7 +63,7 @@ class Rule:
     on_import: tuple[str, ...] = ()
     describe: str = ""
 
-    def matches(self, name: str, fm: dict) -> bool:
+    def matches(self, name: str, fm: dict, path: Path | None = None) -> bool:
         m = self.match
         if not m:
             return True
@@ -72,6 +72,18 @@ class Rule:
             return False
         if "glob" in m and not fnmatch.fnmatch(name.lower(), str(m["glob"]).lower()):
             return False
+        if "zip_any" in m:
+            # Classify a zip by what it holds (2026-11-15): any entry path containing
+            # one of the needles, case-insensitive. Needs the real file; a name-only
+            # resolve never matches a zip rule.
+            if path is None or ext != ".zip":
+                return False
+            from .scan import zip_names
+
+            needles = [str(n).lower() for n in m["zip_any"]]
+            entries = [e.lower() for e in zip_names(path)]
+            if not any(any(n in e for n in needles) for e in entries):
+                return False
         if "frontmatter_has" in m:
             keys = m["frontmatter_has"]
             if isinstance(keys, str):
@@ -92,6 +104,24 @@ DEFAULT_RULES: tuple[Rule, ...] = (
         dest="{workspace}/{fm.destination}",
         on_import=("notify",),
         describe="Frontmatter names an explicit workspace-relative destination.",
+    ),
+    # Brand kits and Claude Design exports (2026-11-15). The zip itself is archived
+    # exactly where brand/README.md's intake checklist step 1 puts it; the
+    # ``brand-import`` action then extracts, validates and opens a ticket. A
+    # sidecar ``project:`` (if any) names the brand slug.
+    Rule(
+        name="design-export",
+        match={"ext": [".zip"], "zip_any": [".dc.html", "design-canvas", "/pages/", "brand.jsx"]},
+        dest="{workspace}/archive/brand-kit-zips-{date}/{name}",
+        on_import=("brand-import", "ticket", "notify"),
+        describe="A Claude Design export (holds .dc.html pages): archived, extracted to brand/_incoming, ticketed.",
+    ),
+    Rule(
+        name="brand-kit",
+        match={"ext": [".zip"], "zip_any": ["brand.md", "/logo/", "/favicon/", "favicon.svg", "site.webmanifest", "wordmark", "/social/"]},
+        dest="{workspace}/archive/brand-kit-zips-{date}/{name}",
+        on_import=("brand-import", "ticket", "notify"),
+        describe="A brand kit zip (logos, favicons, BRAND.md): archived, extracted to brand/_incoming, validated, ticketed.",
     ),
     Rule(
         name="frontmatter-project",
@@ -323,11 +353,17 @@ def _check_destination(rel: str, dest: Path, landing: Path, projects: Path,
             None, False)
 
 
-def resolve(name: str, fm: dict, rules: list[Rule] | None = None, *, today: str | None = None) -> Decision:
-    """Pick the first matching rule and render its destination for ``name``."""
+def resolve(name: str, fm: dict, rules: list[Rule] | None = None, *, today: str | None = None,
+            path: Path | None = None) -> Decision:
+    """Pick the first matching rule and render its destination for ``name``.
+
+    ``path`` (optional) is the real file, so content-sniffing rules (``zip_any``)
+    can look inside it. ``today`` is the ``{date}`` token; a backlog sweep passes
+    the file's own modification date instead of the import date.
+    """
     rules = rules if rules is not None else load_rules()
     today = today or datetime.now(timezone.utc).date().isoformat()
-    rule = next((r for r in rules if r.matches(name, fm)), DEFAULT_RULES[-1])
+    rule = next((r for r in rules if r.matches(name, fm, path)), DEFAULT_RULES[-1])
     workspace = atlas_paths.workspace_root()
     projects = atlas_paths.projects_root()
     slug = project_slug(fm.get("project"))

@@ -21,12 +21,20 @@ from pathlib import Path
 from . import engine, rules as rules_mod, scan, store
 
 
-def _source(args) -> Path:
+def _sources(args) -> list[Path]:
+    """Every drop folder this invocation covers: each ``--source``, else ``ATLAS_INTAKE_DIR``."""
+    given = getattr(args, "source", None) or []
+    if isinstance(given, (str, Path)):
+        given = [given]
     try:
-        return engine.source_dir(getattr(args, "source", None))
+        return [engine.source_dir(s) for s in given] or [engine.source_dir(None)]
     except engine.IntakeConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2)
+
+
+def _source(args) -> Path:
+    return _sources(args)[0]
 
 
 def _print_report(report: store.RunReport, as_json: bool) -> None:
@@ -53,17 +61,23 @@ def _print_report(report: store.RunReport, as_json: bool) -> None:
 
 
 def cmd_run(args) -> int:
-    src = _source(args)
-    report = engine.run_once(
-        src,
-        dry_run=args.dry_run,
-        leave_originals=args.leave,
-        settle_seconds=args.settle,
-        min_age_seconds=args.min_age,
-        notify=not args.no_notify,
-    )
-    _print_report(report, args.json)
-    return 1 if any(r.status == "error" for r in report.records) else 0
+    rc = 0
+    for src in _sources(args):
+        report = engine.run_once(
+            src,
+            dry_run=args.dry_run,
+            leave_originals=args.leave,
+            settle_seconds=args.settle,
+            min_age_seconds=args.min_age,
+            notify=not args.no_notify,
+            skip_executables=args.skip_executables,
+            date_from_mtime=args.date_from_mtime,
+            recursive=not getattr(args, "top_level", False),
+        )
+        _print_report(report, args.json)
+        if any(r.status == "error" for r in report.records):
+            rc = 1
+    return rc
 
 
 def cmd_watch(args) -> int:
@@ -121,6 +135,22 @@ def cmd_manifest(args) -> int:
     return 0
 
 
+def cmd_brand_import(args) -> int:
+    """Extract and validate a kit zip that is already in the archive (re-run after a refusal)."""
+    rc = 0
+    for z in args.zip:
+        p = Path(z)
+        if not p.is_file():
+            print(f"  [error] not a file: {p}")
+            rc = 1
+            continue
+        out = engine.brand_import_zip(p, project=args.project)
+        print(f"  [{'refused' if out.startswith('refused') else 'ok':>8}] {p.name}: {out}")
+        if out.startswith("refused"):
+            rc = 1
+    return rc
+
+
 def cmd_rules(args) -> int:
     print(f"rules file: {rules_mod.rules_path()} ({'present' if rules_mod.rules_path().is_file() else 'absent, defaults only'})")
     for i, r in enumerate(rules_mod.load_rules(), 1):
@@ -131,12 +161,18 @@ def cmd_rules(args) -> int:
 
 
 def _common(p: argparse.ArgumentParser, *, run_flags: bool = True) -> None:
-    p.add_argument("--source", help="drop folder (default: ATLAS_INTAKE_DIR)")
+    p.add_argument("--source", action="append", help="drop folder; repeatable (default: ATLAS_INTAKE_DIR)")
     if run_flags:
         p.add_argument("--leave", action="store_true", help="leave originals in place instead of archiving under _imported/")
         p.add_argument("--settle", type=float, default=2.0, help="seconds between the two size samples (default 2)")
         p.add_argument("--min-age", type=float, default=5.0, help="skip files modified fewer than N seconds ago (default 5)")
         p.add_argument("--no-notify", action="store_true", help="do not push a summary notification")
+        p.add_argument("--skip-executables", action="store_true",
+                       help="leave installers and scripts in place (for a Downloads sweep)")
+        p.add_argument("--date-from-mtime", action="store_true",
+                       help="{date} in destinations is the file's modification date, not today")
+        p.add_argument("--top-level", action="store_true",
+                       help="only loose files at the top of the folder; never descend (Downloads sweep)")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -169,6 +205,11 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("rules", help="print the effective routing rules")
     p.set_defaults(func=cmd_rules)
+
+    p = sub.add_parser("brand-import", help="extract + validate an archived kit zip into brand/_incoming (re-run)")
+    p.add_argument("zip", nargs="+", help="archived zip path(s)")
+    p.add_argument("--project", help="brand slug (default: from the zip name)")
+    p.set_defaults(func=cmd_brand_import)
 
     args = parser.parse_args(argv)
     raise SystemExit(args.func(args))

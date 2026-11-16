@@ -336,3 +336,89 @@ class TestDowngradeStaleConfirmations:
         self._write_md(p, "type: reference\nconfidence: high\nlast_confirmed: 2020-01-01")
         result = downgrade_stale_confirmations(threshold_days=90, memory_root=mem)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Confidence bands (ATL-029)
+# ---------------------------------------------------------------------------
+
+class TestConfidenceBands:
+    """memory_search_tool maps the re-ranked top score to one of four bands
+    exactly as its docstring promises. The earlier band tests in test_fts.py
+    re-implement the thresholds locally; these drive the real tool so a
+    drifted threshold in server.py is caught, not mirrored.
+
+    Boundaries are half-open: starved < 0.2 <= low < 0.4 <= medium < 0.7 <= high.
+    """
+
+    def _search(self, results, query="anything"):
+        from unittest.mock import patch
+        from atlas_plus.mcp.memory_server import server
+
+        with patch("atlas_plus.mcp.memory_server.tools.search.memory_search_hybrid",
+                   return_value=(results, "fts-only")), \
+             patch("atlas_plus.mcp.memory_server.tools.search_log.log_search") as mock_log, \
+             patch.object(server, "_temporal_context_for_query", return_value=[]):
+            out = server.memory_search_tool(query)
+        return out, mock_log
+
+    @pytest.mark.parametrize("top_score, expected", [
+        (0.0, "starved"),
+        (0.19, "starved"),
+        (0.2, "low"),
+        (0.39, "low"),
+        (0.4, "medium"),
+        (0.69, "medium"),
+        (0.7, "high"),
+        (1.0, "high"),
+        (1.15, "high"),  # authority multiplier can push a score past 1.0
+    ])
+    def test_top_score_maps_to_band(self, top_score, expected):
+        out, _ = self._search([{"path": "reference/x.md", "snippet": "s", "score": top_score}])
+        assert out["confidence"] == expected
+
+    def test_no_results_is_starved(self):
+        out, _ = self._search([])
+        assert out["confidence"] == "starved"
+        assert out["results"] == []
+
+    def test_band_uses_max_not_first_result(self):
+        """A lower-scored row ahead of the best hit must not drag the band down."""
+        out, _ = self._search([
+            {"path": "reference/a.md", "snippet": "s", "score": 0.1},
+            {"path": "reference/b.md", "snippet": "s", "score": 0.85},
+        ])
+        assert out["confidence"] == "high"
+
+    def test_single_hit_with_normalized_score_is_not_starved(self):
+        """Regression guard for the launch blocker: one perfect unique match
+        must answer, not ask a clarifying question."""
+        out, _ = self._search([{"path": "reference/only.md", "snippet": "s", "score": 0.95}])
+        assert out["confidence"] == "high"
+        assert len(out["results"]) == 1
+
+    def test_string_scores_are_coerced(self):
+        """Scores arriving as strings (e.g. from a JSON round-trip) still band correctly."""
+        out, _ = self._search([{"path": "reference/x.md", "snippet": "s", "score": "0.5"}])
+        assert out["confidence"] == "medium"
+
+    def test_missing_score_key_defaults_to_zero(self):
+        out, _ = self._search([{"path": "reference/x.md", "snippet": "s"}])
+        assert out["confidence"] == "starved"
+
+    def test_search_log_receives_top_score_and_count(self):
+        results = [
+            {"path": "reference/a.md", "snippet": "s", "score": 0.3},
+            {"path": "reference/b.md", "snippet": "s", "score": 0.55},
+        ]
+        _, mock_log = self._search(results, query="quince")
+        mock_log.assert_called_once()
+        kwargs = mock_log.call_args.kwargs
+        assert kwargs["query"] == "quince"
+        assert kwargs["top_score"] == pytest.approx(0.55)
+        assert kwargs["result_count"] == 2
+
+    def test_response_shape(self):
+        out, _ = self._search([{"path": "reference/x.md", "snippet": "s", "score": 0.5}])
+        assert set(out.keys()) == {"confidence", "results", "retrieval"}
+        assert out["retrieval"] == "fts-only"

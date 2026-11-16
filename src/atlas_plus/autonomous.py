@@ -14,10 +14,15 @@ ATLAS_SESSION_AUTONOMOUS is a scoped override for session-end hooks only
 (summarizer + suggest-facts). Set it to "on" to allow those writes while
 keeping ATLAS_AUTONOMOUS=off for Brain, tickets, and manual remember calls.
 
-Resolution order:
+Resolution order (session writers ONLY: is_session_autonomous / require_session_write):
   1. ATLAS_SESSION_AUTONOMOUS=on  -> session writes allowed regardless of ATLAS_AUTONOMOUS
   2. ATLAS_SESSION_AUTONOMOUS=off -> session writes blocked regardless of ATLAS_AUTONOMOUS
   3. (not set)                    -> fall back to ATLAS_AUTONOMOUS
+
+The general gate (require_autonomous_writes / require_write) never reads the session
+variable. ATL-068 (2026-11-15): a sweep-15 change made it return early whenever the session
+variable was on, and because the shared service env sets that variable for the hook, the
+Brain's weekly decay and nightly tag jobs wrote to .memory unattended with ATLAS_AUTONOMOUS=off.
 """
 
 import os
@@ -68,16 +73,34 @@ def require_write(source: str, interactive: bool = False) -> None:
 
 
 def require_autonomous_writes(operation: str = "write") -> None:
-    """Raise RuntimeError unless autonomous writes are EXPLICITLY enabled (fail-closed)."""
+    """Raise RuntimeError unless autonomous writes are EXPLICITLY enabled (fail-closed).
+
+    Reads ATLAS_AUTONOMOUS only. The session override is deliberately NOT honoured here:
+    it belongs to the Stop hook's writers, which call require_session_write() (ATL-068).
+    """
     value = os.environ.get("ATLAS_AUTONOMOUS", "off").lower()
-    if os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").strip().lower() in _ENABLED_VALUES:
-        return  # the Stop hook's scoped override (rule 1 above): suggest-facts wrote nothing under it (AG40)
     if value not in _ENABLED_VALUES:
         raise RuntimeError(
             f"Sextant autonomous {operation} blocked: ATLAS_AUTONOMOUS={value!r}. "
             "Set ATLAS_AUTONOMOUS=on in the writer's own environment (an MCP registration's env block, "
             "a hook command's --env flag) to enable unattended writes."
         )
+
+
+def require_session_write(operation: str = "session_write") -> None:
+    """Gate a Stop-hook write (summarizer, suggest-facts): the scoped override applies here
+    and ONLY here. ATLAS_SESSION_AUTONOMOUS=on allows the write with ATLAS_AUTONOMOUS=off;
+    unset falls back to the general gate (is_session_autonomous). Fail-closed on garbage.
+    Restores the AG40 fix without widening require_autonomous_writes (ATL-068)."""
+    if is_session_autonomous():
+        return
+    session_val = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "")
+    general_val = os.environ.get("ATLAS_AUTONOMOUS", "off")
+    raise RuntimeError(
+        f"Sextant session {operation} blocked: ATLAS_SESSION_AUTONOMOUS={session_val!r}, "
+        f"ATLAS_AUTONOMOUS={general_val!r}. Set ATLAS_SESSION_AUTONOMOUS=on in the hook command's "
+        "--env flag to allow the Stop hook's writes."
+    )
 
 
 def is_session_autonomous() -> bool:

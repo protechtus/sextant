@@ -576,7 +576,8 @@ def _write_fact(scope: str, fact: str, confidence: float = None) -> dict:
 
     target, fm_template = resolve_target(scope)
     version_before_write(target)
-    append_fact(target, fact, fm_template, source="suggest-facts", confidence=confidence)
+    # session=True: the Stop hook's writer is gated by ATLAS_SESSION_AUTONOMOUS (ATL-068).
+    append_fact(target, fact, fm_template, source="suggest-facts", confidence=confidence, session=True)
     return {"ok": True, "file": str(target)}
 
 

@@ -1523,9 +1523,11 @@ def _suggest_facts_run(arg: str = "") -> None:
         i += 1
 
     if auto:
-        from atlas_plus.autonomous import require_autonomous_writes
+        # The Stop hook's writer: the session override applies here (AG40) and the general gate
+        # stays closed for everything else (ATL-068).
+        from atlas_plus.autonomous import require_session_write
         try:
-            require_autonomous_writes("suggest_facts")
+            require_session_write("suggest_facts")
         except RuntimeError as exc:
             console.print(f"[red]{exc}[/red]")
             return

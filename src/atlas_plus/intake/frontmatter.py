@@ -47,10 +47,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     return {str(k): v for k, v in data.items()}, "".join(lines[end + 1 :])
 
 
-def read_frontmatter(path: Path) -> dict:
-    """Frontmatter of ``path`` if its extension is text-like, else ``{}``."""
-    if path.suffix.lower() not in FRONTMATTER_EXTENSIONS:
-        return {}
+def _read_head_frontmatter(path: Path) -> dict:
     try:
         with path.open("rb") as f:
             head = f.read(MAX_HEAD_BYTES)
@@ -58,6 +55,22 @@ def read_frontmatter(path: Path) -> dict:
         return {}
     text = head.decode("utf-8", errors="replace").lstrip("﻿")
     fm, _ = parse_frontmatter(text)
+    return fm
+
+
+def read_frontmatter(path: Path) -> dict:
+    """Frontmatter of ``path``: its own head if text-like, plus a ``<file>.meta.md`` sidecar.
+
+    The sidecar (2026-11-15) lets a zip, PDF or image carry ``project:`` or
+    ``destination:``. Sidecar keys win over the file's own keys, because the
+    sidecar is what the operator wrote for THIS drop.
+    """
+    fm: dict = {}
+    if path.suffix.lower() in FRONTMATTER_EXTENSIONS:
+        fm = _read_head_frontmatter(path)
+    sidecar = path.with_name(path.name + ".meta.md")
+    if sidecar.is_file():
+        fm.update(_read_head_frontmatter(sidecar))
     return fm
 
 

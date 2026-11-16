@@ -934,6 +934,7 @@ def append_fact(
     task_id: Optional[str] = None,
     interactive: bool = False,
     pre_write=None,
+    session: bool = False,
 ) -> None:
     """Append fact to target under a dated header. Creates file if needed.
 
@@ -941,14 +942,23 @@ def append_fact(
     confidence: numeric 0-1 score mapped to high/medium/low frontmatter field.
     session_id: the Brain/Claude session that generated this fact (stored in frontmatter).
     task_id: the Brain task that triggered this write (stored in frontmatter).
+    session: True ONLY for the Stop hook's fact writer (suggest-facts): the write is then
+        gated by ATLAS_SESSION_AUTONOMOUS (require_session_write) instead of the general
+        gate. No other caller sets it (ATL-068).
     """
     # Kill switch at the write PRIMITIVE (audit HIGH-3 / ATL-013): the gate was previously only
     # at the MCP wrapper, so non-MCP callers (suggest-facts, curation, CLI) bypassed it. Gating
     # here covers every caller. Fail-closed when ATLAS_AUTONOMOUS is off/unset -- EXCEPT
     # interactive=True (a user-invoked MCP tool call: explicit consent, allowed by default;
     # ATLAS_INTERACTIVE_WRITES=off restores full gating). Background callers never set it.
-    from atlas_plus.autonomous import require_write
-    require_write("memory_write", interactive=interactive)
+    from atlas_plus.autonomous import require_session_write, require_write
+    if session and not interactive:
+        # The Stop hook's writer: the session override applies here and nowhere else. Until
+        # 2026-11-15 the override lived inside require_autonomous_writes and opened every
+        # unattended write path for any process that inherited the variable (ATL-068).
+        require_session_write("suggest_facts")
+    else:
+        require_write("memory_write", interactive=interactive)
     # Delimiter guard ONLY: keeps a fact from closing the frontmatter block.
     # It is deliberately not a general YAML/Markdown sanitizer -- the body is
     # never fed back through a YAML parser.

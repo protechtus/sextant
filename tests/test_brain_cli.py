@@ -2331,10 +2331,11 @@ class TestSuggestFacts:
         assert "3" in out or "candidates" in out.lower()
 
     def test_auto_requires_autonomous(self):
-        with patch("atlas_plus.autonomous.require_autonomous_writes",
-                   side_effect=RuntimeError("ATLAS_AUTONOMOUS is off")):
+        # --auto is the hook's writer: gated by the session predicate since ATL-068.
+        with patch("atlas_plus.autonomous.require_session_write",
+                   side_effect=RuntimeError("ATLAS_SESSION_AUTONOMOUS is off")):
             out = _run_cmd("/suggest-facts --auto")
-        assert "ATLAS_AUTONOMOUS" in out or "off" in out
+        assert "ATLAS_SESSION_AUTONOMOUS" in out or "off" in out
 
     def test_since_flag_parsed(self):
         stats = {"candidates": 0, "approved": 0, "written": 0}
