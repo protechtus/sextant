@@ -44,8 +44,8 @@ def _run(src: Path, **kw) -> engine.store.RunReport:
 
 def test_sidecar_frontmatter_applies_to_a_zip_and_is_not_a_candidate(tmp_path):
     z = _zip(tmp_path / "drop" / "kit.zip", {"kit/README.md": b"x"})
-    (tmp_path / "drop" / "kit.zip.meta.md").write_text("---\nproject: SLCene\n---\n", encoding="utf-8")
-    assert frontmatter.read_frontmatter(z) == {"project": "SLCene"}
+    (tmp_path / "drop" / "kit.zip.meta.md").write_text("---\nproject: Northstar\n---\n", encoding="utf-8")
+    assert frontmatter.read_frontmatter(z) == {"project": "Northstar"}
     cands, skipped = scan.discover(tmp_path / "drop")
     assert [c.rel for c in cands] == ["kit.zip"]
     assert ("kit.zip.meta.md", "sidecar") in skipped
@@ -100,7 +100,7 @@ def test_zip_names_on_a_non_zip_is_empty(tmp_path):
 
 def test_brand_import_extracts_validates_and_documents(ws, tmp_path, monkeypatch):
     drop = tmp_path / "drop"
-    _zip(drop / "SLCene (2).zip", {"kit/logo/mark.svg": b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/>",
+    _zip(drop / "Northstar (2).zip", {"kit/logo/mark.svg": b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/>",
                                    "kit/README.md": b"kit"})
     # a stand-in validator so the test does not depend on C:\Tools\brand\tools
     tools = ws / "brand" / "tools"
