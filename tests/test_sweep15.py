@@ -258,6 +258,9 @@ def test_hook_probe_accepts_the_exact_tag_only(monkeypatch):
 
     monkeypatch.setenv("ATLAS_OLLAMA_URL", "http://127.0.0.1:9")
     monkeypatch.setattr("atlas_plus.summarizer.providers.OLLAMA_MODEL", "qwen3:8b")
+    # MN87 (sweep 25) checks the loopback port with a 0.3 s TCP connect before the HTTP call; this test stands in
+    # for a LISTENING Ollama through urlopen, so the port check must say "something listens" too.
+    monkeypatch.setattr("atlas_plus.llm.ollama_url.loopback_refused", lambda *a, **k: False)
 
     class _R(io.BytesIO):
         def __enter__(self):

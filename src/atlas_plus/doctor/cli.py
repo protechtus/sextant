@@ -319,6 +319,9 @@ def check_stop_hook() -> dict:
     result["gate_value"] = _os.environ.get("ATLAS_SESSION_AUTONOMOUS", "")
     try:
         import urllib.request as _ur
+        from atlas_plus.llm.ollama_url import loopback_refused as _refused
+        if _refused(result["url"]):  # the Stop hook's fast refusal, same answer (MN87)
+            raise ConnectionRefusedError(result["url"])
         with _ur.urlopen(f"{result['url']}/api/tags", timeout=1.0) as resp:
             names = [str(m.get("name") or "") for m in (_json.loads(resp.read(200_000).decode("utf-8", "replace")) or {}).get("models", [])]
         result["reachable"] = True

@@ -145,7 +145,10 @@ def _summarizer_unavailable_reason() -> str:
         from atlas_plus.llm.ollama_url import default_ollama_url
         import urllib.request
         url = (os.environ.get("ATLAS_OLLAMA_URL") or "").strip().rstrip("/") or default_ollama_url()  # the summarizer's own variable first (AG34)
+        from atlas_plus.llm.ollama_url import loopback_refused
         try:
+            if loopback_refused(url):  # nothing listens on the loopback port: 0.3 s per address, not 1.5 (MN87)
+                raise ConnectionRefusedError(url)
             with urllib.request.urlopen(f"{url}/api/tags", timeout=1.5) as resp:
                 body = resp.read(200_000)
         except Exception:  # noqa: BLE001

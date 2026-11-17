@@ -150,6 +150,11 @@ _GREEK_ETC = str.maketrans({
 })
 
 
+# the characters _GREEK_ETC folds (Greek U+0386..U+03CE and the letters of its table), as one compiled class (MN87)
+_GREEK_ETC_RE = re.compile("[\u0386-\u03ce\u1e9e\u0259\u018f\u0111\u0110\u0142\u0141\u00f8\u00d8\u00f0\u00d0\u00fe\u00de"
+                           "\u0127\u0126\u0167\u0166\u00e6\u00c6\u0153\u0152]")
+
+
 def _recompose(text: str) -> str:
     """NFKC decomposes Thai sara am (U+0E33) into nikhahit + sara aa and Lao am (U+0EB3) likewise; the index and
     the snippets then showed `ทํา` for `ทำ` and `น้ำ` met `นา` (MN52). Put them back."""
@@ -157,7 +162,7 @@ def _recompose(text: str) -> str:
         text = text.replace("\u0e4d\u0e32", "\u0e33").replace("\u0ecd\u0eb2", "\u0eb3")
     if "\u200c" in text or "\u200d" in text:
         text = _INDIC_JOINER_RE.sub("", text)  # ZWJ/ZWNJ between Indic letters are typed or not by keyboard: `राम` must meet `रा\u200dम` (MN55); between Persian letters the ZWNJ stays a separator
-    if any("\u0386" <= c <= "\u03ce" or c in "\u1e9e\u0259\u018f\u0111\u0110\u0142\u0141\u00f8\u00d8\u00f0\u00d0\u00fe\u00de\u0127\u0126\u0167\u0166\u00e6\u00c6\u0153\u0152" for c in text):
+    if _GREEK_ETC_RE.search(text):  # one C-level scan: a Python generator over every character was 40% of a rebuild (MN87)
         text = text.translate(_GREEK_ETC)  # Greek tonos/dialytika, capital ẞ, Azeri ə: unicode61 folds none of them (MN62)
     if "\u0130" in text or "\u0131" in text:
         text = text.replace("\u0130", "i").replace("\u0131", "i")  # Turkish dotted I and dotless i: `Diyarbak\u0131r` met neither `diyarbakir` nor `D\u0130YARBAKIR` (AG72)
@@ -1231,13 +1236,20 @@ def update_incremental() -> int:
             _t0 = time.monotonic()
             if len(todo) >= _NOTICE_MIN_NOTES:  # a pull, sync or restore re-indexes thousands of notes: say so before the wait (AG84)
                 _notice(f"Sextant: re-indexing {len(todo):,} changed notes for search; this runs once.")
+            # A note with no recorded rowid (a new note) made _fts_delete scan the whole FTS table once per note:
+            # 1,500 notes added beside an index of one took 22.9 s, 20,000 more than 22 minutes (MN87). The paths
+            # the table holds are read once, and a path it does not hold has no row to delete.
+            fts_paths = None
+            if any(rowids.get(rel) is None for rel, _m, _s in todo):
+                fts_paths = {r[0] for r in conn.execute("SELECT path FROM memory_fts")}
             for rel, mtime, size in todo:
                 try:
                     raw = (MEMORY_ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
                 except OSError:
                     continue
                 frontmatter_json, body, confirmed_ts = _parse_md(raw)
-                _fts_delete(conn, rel, rowids.get(rel))
+                if rowids.get(rel) is not None or fts_paths is None or rel in fts_paths:
+                    _fts_delete(conn, rel, rowids.get(rel))
                 cur = conn.execute(
                     "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
                     (rel, frontmatter_json, _index_body(frontmatter_json, body)),
