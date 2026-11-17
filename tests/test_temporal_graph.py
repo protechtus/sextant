@@ -608,7 +608,7 @@ class TestPathGuard:
         )
 
     def test_harbor_app_is_rejected(self):
-        assert not _is_allowed_path(Path(r"C:\Tools\projects\some-other-project\data.md"))
+        assert not _is_allowed_path(Path(r"C:\Projects\projects\some-other-project\data.md"))
 
     def test_system_path_is_rejected(self):
         assert not _is_allowed_path(Path(r"C:\Windows\System32\drivers\etc\hosts"))

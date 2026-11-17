@@ -747,7 +747,9 @@ class TestTaskExport:
         r = client.get("/api/tasks/export?fmt=csv")
         assert r.status_code == 401
 
-    def test_export_csv_returns_csv(self):
+    def test_export_csv_returns_csv(self, monkeypatch):
+        # Never the owner's live Brain (sweep 25: with a Brain on 8767 the result depended on test order).
+        monkeypatch.setattr("atlas_plus.web.app.BRAIN_URL", "http://127.0.0.1:9")
         r = client.get("/api/tasks/export?fmt=csv&limit=5", headers=AUTH)
         # Brain may not be running; accept 503 proxy failure
         assert r.status_code in (200, 503)
@@ -1073,8 +1075,10 @@ class TestWorkerEndpoint:
         r = client.get("/api/workers")
         assert r.status_code == 401
 
-    def test_api_workers_returns_assessment(self):
+    def test_api_workers_returns_assessment(self, monkeypatch):
         """GET /api/workers returns a dict with assessment key."""
+        # Never the owner's live Brain (sweep 25: a live Brain answered 401 and the dict had no assessment).
+        monkeypatch.setattr("atlas_plus.web.app.BRAIN_URL", "http://127.0.0.1:9")
         r = client.get("/api/workers", headers=AUTH)
         assert r.status_code == 200
         data = r.json()

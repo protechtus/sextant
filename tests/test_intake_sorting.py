@@ -102,7 +102,7 @@ def test_brand_import_extracts_validates_and_documents(ws, tmp_path, monkeypatch
     drop = tmp_path / "drop"
     _zip(drop / "Northstar (2).zip", {"kit/logo/mark.svg": b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/>",
                                    "kit/README.md": b"kit"})
-    # a stand-in validator so the test does not depend on C:\Tools\brand\tools
+    # a stand-in validator so the test does not depend on C:\Projects\brand\tools
     tools = ws / "brand" / "tools"
     tools.mkdir(parents=True)
     (tools / "validate_brand_svgs.py").write_text("import sys; print('ok', sys.argv[1]); sys.exit(0)\n", encoding="utf-8")

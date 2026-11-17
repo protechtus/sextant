@@ -146,7 +146,8 @@ def test_the_folds_do_not_reach_ascii_or_quoted_queries(corpus):
     _, write, search = corpus
     _nordic(write)
     assert set(search("poet")) == {"n6"} and set(search("toe")) == {"n6"}  # no oe->o: `toe` is not `to`
-    assert set(search("aalborg")) == {"n2"}  # the reverse direction is not folded (it merges Finnish words: measured)
+    assert set(search("aalborg")) == {"n1", "n2"}  # AG96: the note's `Ålborg` is also indexed as `aalborg` (an alias, not a fold)
+    assert set(search("alborg")) == {"n1"}  # a typed `aa` is still not folded onto `a` (it merges Finnish words: measured)
     assert set(search('"Ålborg"')) == {"n1"}  # a quoted word is literal
 
 

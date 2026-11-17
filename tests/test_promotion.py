@@ -17,7 +17,7 @@ def test_promote_writes_when_no_contradiction():
 
     def fake_write(scope, fact, source, confidence):
         calls.append((scope, fact, source, confidence))
-        return f"C:/Tools/.memory/{scope}/x.md"
+        return f"C:/Projects/.memory/{scope}/x.md"
 
     res = promo.promote_idea(
         "Aurora is a strong name", scope="ideas",
@@ -97,7 +97,7 @@ def test_promote_idea_file_marks_status_and_preserves_body(tmp_path):
     f = _write_idea_file(tmp_path, "01-aurora.md", "Project name: Aurora")
     res = promo.promote_idea_file(
         f, scope="ideas",
-        write_fact=lambda scope, fact, src, conf: "C:/Tools/.memory/ideas/p.md",
+        write_fact=lambda scope, fact, src, conf: "C:/Projects/.memory/ideas/p.md",
         check_contradiction=lambda t: None,
     )
     assert res.action == "promoted"

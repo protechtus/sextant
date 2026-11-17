@@ -161,7 +161,7 @@ class TestTicketSyncClosePatterns:
     def test_repo_paths_keep_windows_drive_letters(self, tmp_path, monkeypatch):
         """Regression: repo parsing must not split on ':' -- it shredded C:\\... paths."""
         task, ctx = _ctx(tmp_path)
-        monkeypatch.setenv("ATLAS_TICKET_SYNC_REPOS", r"C:\Tools;D:\Work\repo two")
+        monkeypatch.setenv("ATLAS_TICKET_SYNC_REPOS", r"C:\Projects;D:\Work\repo two")
 
         with (
             patch("subprocess.run") as mock_run,
@@ -173,7 +173,7 @@ class TestTicketSyncClosePatterns:
 
         # gitsafe scans repo config (a separate git call) before each log; count the log calls
         cwds = [c.kwargs.get("cwd") for c in mock_run.call_args_list if "log" in c.args[0]]
-        assert cwds == [r"C:\Tools", r"D:\Work\repo two"]
+        assert cwds == [r"C:\Projects", r"D:\Work\repo two"]
 
     def test_result_includes_artifact_path(self, tmp_path):
         """ExecutionResult.artifact_path must be set (ticket-sync.md written)."""

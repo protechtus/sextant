@@ -381,13 +381,72 @@ def _dup_fold(text: str) -> str:
 # spelling is often the digraph (`Aalborg`, `Aarhus`). An unquoted query word that HOLDS one of the letters also matches its
 # digraph spelling: `Ålborg` finds `Aalborg`, `København` finds `Koebenhavn`. Only that direction: folding a typed `aa`/`oe`
 # onto the letter merged 1,736 of the 7,430 Finnish `aa` words with another word (`saada`/`sada`, 5.1% of running text) and
-# `oe` merged `poet`/`pot`, `does`/`dos` (measured on wordfreq's top-50,000 lists, docs/SEARCH.md).
-_NORDIC_LETTER_RE = re.compile("[\\w*]*[\u00e5\u00c5\u00f8\u00d8\u00f6\u00d6\u00e4\u00c4][\\w*]*")
+# `oe` merged `poet`/`pot`, `does`/`dos` (measured on wordfreq's top-50,000 lists; docs/USAGE.md, CHANGELOG AG91).
+_NORDIC_LETTERS = "\u00e5\u00c5\u00f8\u00d8\u00f6\u00d6\u00e4\u00c4\u00fc\u00dc"   # AG96: German ü/Ü joined (`München`/`Muenchen`)
+_NORDIC_LETTER_RE = re.compile("[\\w*]*[" + _NORDIC_LETTERS + "][\\w*]*")
 _NORDIC_DIGRAPHS = str.maketrans({"\u00e5": "aa", "\u00c5": "Aa", "\u00f8": "oe", "\u00d8": "Oe", "\u00f6": "oe", "\u00d6": "Oe",
-                                  "\u00e4": "ae", "\u00c4": "Ae"})
+                                  "\u00e4": "ae", "\u00c4": "Ae", "\u00fc": "ue", "\u00dc": "Ue"})
 _NORDIC_OPEN, _NORDIC_MID, _NORDIC_CLOSE = "\ue014", "\ue015", "\ue016"   # private: turned into the MN80 alternatives after the folds
-_NORDIC_STRIP = {ord(c): " " for c in (_NORDIC_OPEN, _NORDIC_MID, _NORDIC_CLOSE)}
+_ALIAS_MARK = "\ue017"   # private: opens a note's digraph-alias tail in the index (AG96)
+_NORDIC_STRIP = {ord(c): " " for c in (_NORDIC_OPEN, _NORDIC_MID, _NORDIC_CLOSE, _ALIAS_MARK)}
 _NORDIC_TO_ALT = str.maketrans({_NORDIC_OPEN: _ALT_OPEN, _NORDIC_MID: _ALT_MID, _NORDIC_CLOSE: _ALT_CLOSE})
+
+# AG96: the other direction, on the index side. A note's word holding å/ø/ö/ä/ü is also indexed in its digraph spelling, so a
+# typed `aarhus`, `oere`, `goeteborg`, `muenchen` finds `Århus`, `øre`, `Göteborg`, `München`. The aliases go in a tail after the
+# note's text (behind the sentence sentinel and a private mark, once per spelling): an alias placed beside its word would have
+# broken every quoted phrase through it (`"Århus kommune"`). A typed `aa`/`oe` is still never folded onto the letter, so `saada`
+# and `sada`, `poet` and `pot` stay apart; an alias only adds a spelling to a note that holds the letter. Measured on wordfreq's
+# top-300 da/nb/sv/fi/nl words, a real query word newly hitting another real word: tests/test_ag96.py, CHANGELOG (AG96).
+_ALIAS_WORD_RE = re.compile("\\w*[" + _NORDIC_LETTERS + "]\\w*")
+_ALIAS_HEAD = _SENTINEL + " " + _ALIAS_MARK + " "
+
+
+def _alias_of(word: str) -> str:
+    """A word's digraph spelling as the index holds it (NFKC-composed input)."""
+    return _recompose(word.translate(_NORDIC_DIGRAPHS)).casefold()
+
+
+def _digraph_aliases(text: str) -> str:
+    """The note's digraph spellings, each once, space separated; '' when the note holds none of the letters."""
+    if text.isascii():
+        return ""
+    text = unicodedata.normalize("NFKC", text)
+    if not _ALIAS_WORD_RE.search(text):
+        return ""
+    return " ".join(dict.fromkeys(_alias_of(m.group(0)) for m in _ALIAS_WORD_RE.finditer(text)))
+
+
+def _alias_snippet(orig: str, terms: list, width: int = 60):
+    """A snippet around the note's word whose digraph alias a query term matched (the tail itself is never shown); None
+    when no word of the note has that alias."""
+    want = [t.casefold().replace(_CJK_SEP, "") for t in terms]
+    want = [t for t in want if t]
+    if not want or not orig or orig.isascii():
+        return None
+    hit = part = None
+    for m in _WORD_RE.finditer(orig):
+        w = m.group(0)
+        if w.isascii():
+            continue
+        a = _alias_of(unicodedata.normalize("NFKC", w))
+        if a in want:
+            hit = (m.start(), m.end())
+            break
+        if part is None and any(a.startswith(t) for t in want):   # a prefix query (`aarh*`)
+            part = (m.start(), m.end())
+    hit = hit or part
+    if hit is None:
+        return None
+    i, e = hit
+    a, b = max(0, i - width), min(len(orig), e + width)
+    out, last = [], a
+    for m in _WORD_RE.finditer(orig, a, b):   # every word of the shown text that a term matched (`Soeren Koebenhavn`)
+        w = m.group(0)
+        if (m.start(), m.end()) == hit or (not w.isascii() and any(_alias_of(unicodedata.normalize("NFKC", w)).startswith(t) for t in want)):
+            out += [orig[last:m.start()], "[", w, "]"]
+            last = m.end()
+    out.append(orig[last:b])
+    return ("..." if a else "") + "".join(out) + ("..." if b < len(orig) else "")
 
 
 def _nordic_mark(q: str) -> str:
@@ -446,13 +505,19 @@ def _index_body(frontmatter_json: str, body: str) -> str:
     """The indexed body: the normalised note body followed by the frontmatter's values, so a
     CJK title or tag is searchable (MN16: `大阪城の歴史` in a title found nothing) while the
     stored frontmatter_json stays byte-for-byte parseable for the topics tool."""
+    if _ALIAS_MARK in body:
+        body = body.replace(_ALIAS_MARK, " ")   # only the alias tail holds the mark (AG96)
     text = _norm_index_text(body)
     try:
         values = _fm_values(json.loads(frontmatter_json))
     except (ValueError, TypeError):
         values = []
+    fm_text = "\n".join(values)[:_MAX_FM_INDEX_CHARS] if values else ""
     if values:
-        text += "\n" + _norm_index_text("\n".join(values)[:_MAX_FM_INDEX_CHARS])
+        text += "\n" + _norm_index_text(fm_text)
+    aliases = _digraph_aliases(body + "\n" + fm_text)   # AG96: last, so no phrase of the note runs through them
+    if aliases:
+        text += "\n" + _ALIAS_HEAD + _cjk_split(aliases)
     return text
 
 
@@ -594,6 +659,38 @@ def _snippet_from_fts(raw: str, indexed: str, orig: str) -> str:
         else:
             window.append(ch)
     window_s = "".join(window)
+    tail_at = indexed.rfind(_ALIAS_HEAD) if _ALIAS_MARK in indexed else -1
+    if tail_at >= 0:
+        # AG96: the window reaches the digraph-alias tail: the note's own word is shown for an alias hit, never the tail
+        k = window_s.find(_ALIAS_MARK)
+        if k >= 0:
+            j = window_s.rfind(_SENTINEL, 0, k)
+            cut = j if j >= 0 else k
+        else:
+            at = indexed.find(window_s)
+            cut = 0 if at > tail_at else len(window_s)
+        if cut < len(window_s):
+            spans, open_at = [], None
+            for off, is_open in marks:
+                if is_open:
+                    open_at = off
+                elif open_at is not None:
+                    spans.append((open_at, off))
+                    open_at = None
+            body_spans = [(a, min(b, cut)) for a, b in spans if a < cut]
+            terms = [window_s[a:b] for a, b in spans if a >= cut]
+            if not body_spans:
+                out = _alias_snippet(orig, terms) if terms else None
+                if out is not None:
+                    return out
+            window_s = window_s[:cut].rstrip()
+            marks = [(o, op) for a, b in body_spans for o, op in ((a, True), (b, False))]
+            trail = False   # only the tail followed: the note's text ends here
+            pieces, last = [], 0
+            for off, is_open in marks:
+                pieces += [window_s[last:off], _SNIP_OPEN if is_open else _SNIP_CLOSE]
+                last = off
+            raw = (_SNIP_ELL if lead else "") + "".join(pieces) + window_s[last:]
     if orig:
         at = indexed.find(window_s)
         hint = at / max(len(indexed), 1) if at >= 0 else 0.0
@@ -636,10 +733,15 @@ def _cheap_snippet(conn, rowid, query: str, width: int = 90, orig: str = "") -> 
                 e = _word_edge(orig, e, 1)
                 a, b = max(0, i - width), min(len(orig), e + width)
                 return ("..." if a else "") + orig[a:i] + "[" + orig[i:e] + "]" + orig[e:b] + ("..." if b < len(orig) else "")
+        out = _alias_snippet(orig, terms, width)   # AG96: a digraph spelling of a word the note holds (`aarhus` for `Århus`)
+        if out is not None:
+            return out
     try:
         body = conn.execute("SELECT body FROM memory_fts WHERE rowid = ?", (rowid,)).fetchone()[0] or ""
     except Exception:  # noqa: BLE001
         return ""
+    if _ALIAS_MARK in body:
+        body = body[:body.rfind(_ALIAS_HEAD)] if _ALIAS_HEAD in body else body.replace(_ALIAS_MARK, "")   # never show the alias tail (AG96)
     # `low` is the folded text and `pos` the body index of each folded character: casefold lengthens
     # some letters (U+01F0 -> 2) and the index keeps U+2060 between CJK characters, so an index found in
     # `low` was not an index into `body` (AG73: 400 such letters gave `...[]`; a CJK term never bracketed)
@@ -948,7 +1050,7 @@ def _walk_memory_stats():
                     yield rel, st0.st_mtime, st0.st_size   # the listing's stat, read once
 
 
-INDEX_FORMAT = "9"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89)
+INDEX_FORMAT = "10"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89; 10 = digraph-alias tail for å/ø/ö/ä/ü words, AG96)
 
 
 def _needs_rebuild() -> bool:
@@ -1358,6 +1460,8 @@ def search(query: str, scope: str = "", limit: int = 10,
            _healed: bool = False, _fallback_stage: int = 0, _raw: str | None = None) -> list[dict]:
     """FTS search. Returns list of {path, snippet, score}."""
     if _raw is None:
+        if _ALIAS_MARK in query:   # every query path, the literal-phrase fallback included: the mark matched every aliased note (AG96)
+            query = query.replace(_ALIAS_MARK, " ")
         # `fox fox fox ...` x1000 took 44 s: a repeated word adds nothing, so each word once, and
         # at most 64 of them (MN29)
         _words = list(dict.fromkeys(query.split()))
@@ -1463,7 +1567,7 @@ def search(query: str, scope: str = "", limit: int = 10,
                 snip = _cheap_snippet(conn, r[3], query, orig=orig)
             else:
                 snip = _snippet_from_fts(snip, indexed, orig)   # in the note's own letters (AG83)
-            snip = (snip or "").replace(_CJK_SEP, "").replace(" " + _SENTINEL + " ", " ").replace(_SENTINEL, "")
+            snip = (snip or "").replace(_CJK_SEP, "").replace(" " + _SENTINEL + " ", " ").replace(_SENTINEL, "").replace(_ALIAS_MARK, "")
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}
 

@@ -144,6 +144,8 @@ class SyncReport:
     too_large: list[str] = field(default_factory=list)
     # The hub reports an older state than this device last saw (restored from a backup).
     hub_restored: bool = False
+    # The hub holds OLDER copies than this device's (SEX-017): not pulled, the device's copies kept.
+    hub_older: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
@@ -157,6 +159,27 @@ RESTORED_HUB = ("the hub reports an older state than this device last synced (it
                 "nothing was pulled over your copies; every difference is parked as a conflict to review")
 RESTORED_HUB_AHEAD = ("the hub reports an older state than this device last synced (it was restored from a backup?): "
                       "a sync pulls nothing over your copies and parks every difference as a conflict to review")
+
+HUB_OLDER = ("the hub holds OLDER copies of {n} file(s) than this device (its corpus restored from a backup without its "
+             "state dir?): yours are kept. Put yours back on the hub: sync --push-newer; take the hub's: sync "
+             "--pull-older (yours stay under versions/)")
+
+
+def hub_older_files(remote: dict, local_files: dict) -> dict[str, str]:
+    """{rel: the hub's sha256 ('' when the hub no longer has it)} for every file whose copy on this device is one
+    the hub held AFTER the content it serves now (SEX-017): pulling it would put older content over newer."""
+    older = remote.get("hub_older") if isinstance(remote, dict) else None
+    files = remote.get("files") if isinstance(remote, dict) else None
+    if not isinstance(older, dict) or not isinstance(files, dict):
+        return {}
+    out: dict[str, str] = {}
+    for rel, newer in older.items():
+        mine = (local_files.get(rel) or {}).get("sha256") if isinstance(local_files.get(rel), dict) else None
+        if isinstance(newer, list) and isinstance(mine, str) and mine in newer:
+            out[rel] = (files.get(rel) or {}).get("sha256") or ""
+    if not any(out.values()):
+        return {}  # only files the hub no longer has: a plain deletion as far as this device can tell
+    return out
 
 
 def _check_hub_url(base_url: str) -> None:
@@ -458,7 +481,7 @@ class SyncClient:
             or (isinstance(_seen_mark, str) and isinstance(_now_mark, str) and _now_mark != _seen_mark))
 
     def plan(self, root: Path, base_id: str = "hub",
-             share: Sequence[str] | None = None) -> tuple[manifest.SyncPlan, dict, dict]:
+             share: Sequence[str] | None = None, on_older: str = "") -> tuple[manifest.SyncPlan, dict, dict]:
         """Compute the three-way plan against the hub. Returns (plan, local, remote).
 
         ``share`` is the LOCAL outbound allowlist (corpus-relative prefixes). When given,
@@ -523,6 +546,25 @@ class SyncClient:
                     plan.to_push.append(rel)
                     self._restored_anchor[rel] = sha
             plan.to_push.sort()
+        # The hub serves content older than a copy it held since (SEX-017: its corpus restored without its state
+        # dir; the corpus-hash bump made it look like a new hub edit and every device pulled it with rc 0). A file
+        # this device holds a newer copy of is not pulled; `on_older` is the operator's explicit choice.
+        for rel, hub_sha in hub_older_files(remote, local["files"]).items():
+            if on_older == "pull" or not _visible(rel, local_policy, hub_policy):
+                continue
+            if rel in plan.to_pull:
+                plan.to_pull.remove(rel)
+            elif rel in plan.remote_deleted and rel not in plan.kept_local_edits:
+                plan.remote_deleted.remove(rel)
+            else:
+                continue  # a conflict or an in-sync file: nothing would be pulled over it anyway
+            if on_older == "push":
+                plan.to_push.append(rel)
+                if hub_sha:
+                    self._restored_anchor[rel] = hub_sha  # pushed against the copy the hub serves now
+            else:
+                plan.hub_older.append(rel)
+        plan.to_push.sort()
         # A peer's accepted proposals (hub inbox) are neither re-sent nor pulled over while the
         # local copy is unchanged; the plan lists them separately (persona rerun 2026-11-10:
         # a peer re-planned the same push forever and could never be "in sync").
@@ -556,7 +598,7 @@ class SyncClient:
                 "split the file or move it out of the synced corpus (an edit is sent once more)")
 
     def sync_once(self, root: Path, base_id: str = "hub", dry_run: bool = False,
-                  share: Sequence[str] | None = None, progress=None) -> SyncReport:
+                  share: Sequence[str] | None = None, progress=None, on_older: str = "") -> SyncReport:
         """Plan, pull, push, record the new base. The whole spoke-side loop.
 
         Conflicts never overwrite local files: the hub's copy is parked in
@@ -573,7 +615,7 @@ class SyncClient:
         """
         prefixes = normalize_share(share)
         local_policy = _share_principal(prefixes)
-        plan, local, _remote = self.plan(root, base_id, prefixes)
+        plan, local, _remote = self.plan(root, base_id, prefixes, on_older=on_older)
         _hub_gen = _remote.get("generation") if isinstance(_remote, dict) else None
         _hub_mark = _remote.get("generation_mark") if isinstance(_remote, dict) else None
         hub_policy = _hub_policy(_remote)
@@ -586,6 +628,7 @@ class SyncClient:
             kept_local_edits=list(plan.kept_local_edits),
             too_large=list(plan.too_large),
             hub_restored=plan.hub_restored,
+            hub_older=list(plan.hub_older),
         )
         if dry_run:
             report.conflicts = list(plan.conflicts)
@@ -603,6 +646,9 @@ class SyncClient:
         unresolved: set[str] = set(plan.local_deleted)
         unresolved.update(plan.conflicts)  # every conflict keeps its old anchor even when the run stops early (AG73)
         unresolved.update(plan.kept_local_edits)  # old anchor kept: a restored hub copy is a conflict, never a pull over the edit
+        unresolved.update(plan.hub_older)  # old anchor kept: the next sync sees the same older hub copy again (SEX-017)
+        if plan.hub_older:
+            report.errors.append(HUB_OLDER.format(n=len(plan.hub_older)))
         _seen_base = self._own_base(base_id) or {}
         _seen_refused = _seen_base.get("refused")
         refused: dict = dict(_seen_refused) if isinstance(_seen_refused, dict) else {}
@@ -682,7 +728,7 @@ class SyncClient:
                     {
                         "path": rel,
                         "sha256": hashlib.sha256(raw).hexdigest(),
-                        "base_sha256": base_entry["sha256"] if base_entry else getattr(self, "_restored_anchor", {}).get(rel),
+                        "base_sha256": getattr(self, "_restored_anchor", {}).get(rel) or (base_entry["sha256"] if base_entry else None),
                         "content_b64": base64.b64encode(raw).decode("ascii"),
                     }
                 )

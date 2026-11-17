@@ -977,7 +977,7 @@ class TestSessionLogCommand:
         fake = {
             "ok": True,
             "entry": "## 2026-05-20 -- atlas-memory+\n\n/loop sprint.",
-            "paths_written": [r"C:\Tools\.memory\sessions\_history.md"],
+            "paths_written": [r"C:\Projects\.memory\sessions\_history.md"],
         }
         with patch("atlas_plus.sprint_summary.write_session_log", return_value=fake):
             out = _run_cmd("/session-log")
@@ -2519,8 +2519,8 @@ class TestSessionLog:
             "ok": True,
             "entry": "## 2026-05-21 -- atlas-memory+\n\nSome log.",
             "paths_written": [
-                "C:/Tools/.memory/sessions/_history.md",
-                "C:/Tools/updates.txt",
+                "C:/Projects/.memory/sessions/_history.md",
+                "C:/Projects/updates.txt",
             ],
         }
         with patch("atlas_plus.sprint_summary.write_session_log", return_value=result):

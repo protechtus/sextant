@@ -356,7 +356,8 @@ def test_redaction_long_quoted_values_unterminated_quotes_and_code_traps():
     t0 = time.perf_counter()
     out = redact(big)
     # 6 s, not 3: the Nordic key names (AG91) cost ~20% here (2.5 s -> 3.0 s on the workstation) and a busy machine tipped
-    # it over; the regression this guards was 97 s per MB (quadratic), which 6 s still catches. Ticket: win the 20% back.
+    # it over; the regression this guards was 97 s per MB (quadratic), which 6 s still catches. AG95 (SEX-027) won it back:
+    # the key-name trie brought this case to ~2.0 s, under the pre-AG91 2.4 s (tests/test_ag95.py holds the ratio guards).
     assert time.perf_counter() - t0 < 6.0 and "ｘｙｚｗｖｕ" not in out
 
 

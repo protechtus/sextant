@@ -1315,7 +1315,7 @@ def _ticket_sync(ctx: ExecutorContext) -> ExecutionResult:
     default_repos = f"{atlas_paths.workspace_root()};{atlas_paths.projects_root() / 'atlas-memory+'}"
     repos_raw = os.environ.get("ATLAS_TICKET_SYNC_REPOS", default_repos)
     # ";"-separated. Do NOT split on ":" -- it shreds Windows drive letters
-    # (the old replace(":", ";") turned C:\Tools into ["C", "\Tools"]).
+    # (the old replace(":", ";") turned C:\Projects into ["C", "\Tools"]).
     repo_paths = [p.strip() for p in repos_raw.split(";") if p.strip()]
 
     _ID_RE = re.compile(r"\b((?=[A-Z0-9]{0,7}[A-Z])[A-Z0-9]{2,8}-\d{1,4})\b")  # `closes K8S-001` too (MN79)

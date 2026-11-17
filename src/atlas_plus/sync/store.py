@@ -123,6 +123,98 @@ def generation_mark(g: int, root: Path | None = None) -> str | None:
     return found
 
 
+# -- File history: "older content came back" (SEX-017) ------------------------
+# The generation count and its marks live in the state dir, so a corpus restored on its own over a live state
+# dir (or a backup tool that saves only the notes) left them untouched; the corpus-hash bump (MN77) then made
+# the older corpus look like a NEWER hub edit and every device pulled the older copies with rc 0. The hub now
+# remembers the last few contents it held per file: a file whose content is one it held BEFORE its newest is
+# reported as older, with the newer hashes, so a device holding one of them refuses to pull it.
+_HISTORY_FILE = "file-history.json"
+_HISTORY_KEEP = 8
+
+
+def _load_history(d: Path) -> dict:
+    try:
+        data = json.loads((d / _HISTORY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_history(d: Path, hist: dict) -> None:
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / f"{_HISTORY_FILE}.{os.getpid()}.part"
+    tmp.write_text(json.dumps(hist, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+    os.replace(tmp, d / _HISTORY_FILE)
+
+
+def observe_files(files: dict, root: Path | None = None) -> dict:
+    """Record the content of every file the hub serves; return {rel: [newer sha256, ...]} for each file whose
+    content is an OLDER one this hub held (and, when that happened, for each file the hub held and no longer
+    has: a restore drops notes born after the backup). Never raises on a bad history file."""
+    d = root or sync_dir()
+    hist = _load_history(d)
+    changed = False
+    older: dict[str, list] = {}
+    for rel, entry in files.items():
+        sha = entry.get("sha256") if isinstance(entry, dict) else None
+        if not isinstance(sha, str):
+            continue
+        seq = hist.get(rel)
+        if not isinstance(seq, list) or not seq:
+            hist[rel] = [sha]
+            changed = True
+        elif seq[-1] != sha:
+            if sha in seq:
+                older[rel] = seq[seq.index(sha) + 1:]
+            else:
+                hist[rel] = (seq + [sha])[-_HISTORY_KEEP:]
+                changed = True
+    gone = [rel for rel in hist if rel not in files]
+    if older:
+        for rel in gone:
+            if isinstance(hist[rel], list) and hist[rel]:
+                older[rel] = list(hist[rel])
+    elif gone:
+        for rel in gone:  # a plain delete (archive-not-delete moves a note out): forget it
+            hist.pop(rel, None)
+        changed = True
+    if changed:
+        _save_history(d, hist)
+    return older
+
+
+def record_written(written: dict, root: Path | None = None) -> None:
+    """Devices pushed these bytes ({rel: sha256}): they are the newest content now, even when one equals an older
+    content (a revert). One read and one write per push request."""
+    d = root or sync_dir()
+    hist = _load_history(d)
+    for rel, sha in written.items():
+        seq = [s for s in (hist.get(rel) or []) if s != sha] if isinstance(hist.get(rel), list) else []
+        hist[rel] = (seq + [sha])[-_HISTORY_KEEP:]
+    try:
+        _save_history(d, hist)
+    except OSError:
+        pass  # the push landed; a lost record only risks a false "older" report, which the operator can accept
+
+
+def accept_current(files: dict, root: Path | None = None) -> list[str]:
+    """Operator action on the hub (`sextant-sync accept-restore`): the corpus as it is now is the newest for every
+    file reported older, and files the hub no longer has are forgotten. Returns the paths accepted."""
+    d = root or sync_dir()
+    older = observe_files(files, d)
+    hist = _load_history(d)
+    for rel in older:
+        if rel in files:
+            sha = files[rel]["sha256"]
+            hist[rel] = ([s for s in hist[rel] if s != sha] + [sha])[-_HISTORY_KEEP:]
+        else:
+            hist.pop(rel, None)
+    if older:
+        _save_history(d, hist)
+    return sorted(older)
+
+
 # -- Base manifests (three-way anchor per remote) ---------------------------
 
 def base_manifest_path(principal_id: str, root: Path | None = None) -> Path:

@@ -1058,6 +1058,16 @@ async def tasks_partial(request: Request, limit: int = 20, status: Optional[str]
     return HTMLResponse("\n".join(rows))
 
 
+def _brain_error_detail(exc: Exception) -> str:
+    """A 503 from a Brain call says why (MN85): a refused connect has an empty str() on Windows,
+    so Run, Ask Claude, Quick Run and Retry showed a bare "Error: HTTP 503" while the Agents tab
+    and the chat (MN56) named the fix."""
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)) or not str(exc).strip():
+        return (f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), "
+                "or set ATLAS_BRAIN_URL.")
+    return str(exc)
+
+
 @app.post("/api/tasks", status_code=202)
 async def submit_task(req: TaskSubmit, request: Request):
     """POST /api/tasks -- submit a new task to the Brain worker (proxies to Brain /task).
@@ -1078,7 +1088,7 @@ async def submit_task(req: TaskSubmit, request: Request):
         return task
     except Exception as exc:
         log.error("POST /api/tasks failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.post("/api/tasks/claude", status_code=202)
@@ -1105,7 +1115,7 @@ async def submit_claude_task(req: TaskSubmit, request: Request):
         return task
     except Exception as exc:
         log.error("POST /api/tasks/claude failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.get("/api/tasks/exhausted-badge", response_class=HTMLResponse)
@@ -1147,7 +1157,7 @@ async def get_task_json(task_id: str, request: Request):
         raise
     except Exception as exc:
         log.error("GET /api/tasks/%s failed: %s", task_id, exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.get("/api/tasks/{task_id}/detail", response_class=HTMLResponse)
@@ -1286,7 +1296,7 @@ async def bump_task_priority(task_id: str, request: Request):
         return r.json()
     except Exception as exc:
         log.error("PATCH /api/tasks/%s/priority failed: %s", task_id, exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.post("/api/tasks/retry-failed", status_code=202)
@@ -1334,7 +1344,7 @@ async def retry_task(task_id: str, request: Request):
         return new_task
     except Exception as exc:
         log.error("POST /api/tasks/%s/retry failed: %s", task_id, exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.post("/api/tasks/{task_id}/stop")
@@ -1394,7 +1404,7 @@ async def scheduler_trigger_proxy(job_id: str, request: Request):
         raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
     except Exception as exc:
         log.error("POST /api/scheduler/trigger/%s failed: %s", job_id, exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.get("/api/scheduler/jobs")
@@ -1421,7 +1431,7 @@ async def credit_reset_proxy(request: Request):
         return r.json()
     except Exception as exc:
         log.error("POST /api/credit/reset failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.get("/api/tasks/export")
@@ -2200,7 +2210,7 @@ async def approve_fact_proxy(fact_id: str, request: Request):
         r.raise_for_status()
         return r.json()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.post("/api/pending-facts/{fact_id}/reject")
@@ -2220,7 +2230,7 @@ async def reject_fact_proxy(fact_id: str, request: Request):
         r.raise_for_status()
         return r.json()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
 @app.get("/api/pending-facts/count")
@@ -3415,8 +3425,8 @@ async def inbox_list(request: Request, status_filter: str = ""):
         rows.append(
             f'<div class="flex items-center gap-2 py-1 border-b border-slate-700 row-hover cursor-pointer"'
             f' onclick="showInboxDetail({_js_arg(it.id)})">'
-            f'<span class="text-slate-500 text-xs w-24">{it.id}</span>'
-            f'<span class="{col} text-xs w-20">{it.status}</span>'
+            f'<span class="text-slate-500 text-xs w-24">{_html_mod.escape(str(it.id))}</span>'
+            f'<span class="{col} text-xs w-20">{_html_mod.escape(str(it.status))}</span>'
             f'<span class="text-slate-300 text-xs flex-1 truncate">{label}{flag}</span>'
             f'</div>'
         )
@@ -3433,9 +3443,15 @@ async def inbox_detail(item_id: str, request: Request):
         return HTMLResponse('<div class="text-red-400 text-xs">Not found.</div>')
     esc = _html_mod.escape
     parts = [f'<div class="text-slate-300 text-sm font-semibold mb-1">{esc(it.title or it.id)}</div>']
-    parts.append(f'<div class="text-xs text-slate-500 mb-2">{it.status} | {it.source} | {it.created}</div>')
+    # Every frontmatter field is data: an item synced from another device or written by hand
+    # carried markup into the Inbox tab (MN86, the sibling of MN70's task and ticket escapes).
+    parts.append(f'<div class="text-xs text-slate-500 mb-2">{esc(str(it.status))} | {esc(str(it.source))} | {esc(str(it.created))}</div>')
     if it.url:
-        parts.append(f'<div class="mb-2"><a href="{esc(it.url)}" target="_blank" class="text-blue-400 text-xs break-all">{esc(it.url)}</a></div>')
+        # Only http(s) becomes a link: `javascript:` runs in the dashboard's origin on click (MN86).
+        if str(it.url).strip().lower().startswith(("http://", "https://")):
+            parts.append(f'<div class="mb-2"><a href="{esc(it.url)}" target="_blank" rel="noopener noreferrer" class="text-blue-400 text-xs break-all">{esc(it.url)}</a></div>')
+        else:
+            parts.append(f'<div class="mb-2 text-slate-400 text-xs break-all">{esc(str(it.url))}</div>')
     if it.tags:
         parts.append('<div class="mb-2">' + ' '.join(f'<span class="text-cyan-400 text-xs">#{esc(t)}</span>' for t in it.tags) + '</div>')
     summ = esc(it.summary) if it.summary else '<span class="text-slate-600">(no summary yet)</span>'
@@ -3488,7 +3504,14 @@ async def inbox_archive(item_id: str, request: Request):
 # live /health probes, and on-disk presence -- never a hardcoded install
 # shape -- so a fresh user's map shows THEIR stack, not the maintainer's.
 MCP_URL = os.environ.get("ATLAS_MCP_URL", f"http://127.0.0.1:{os.environ.get('ATLAS_MCP_PORT', '8765').strip() or '8765'}").rstrip("/")  # the port variable, like the doctor (AG77)
-OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")  # import-time default; the Map reads _map_ollama_url()
+
+
+def _map_ollama_url() -> str:
+    """The Ollama the Brain uses, read per request (MN85): the status pill took this helper
+    with MN25, the Map node kept OLLAMA_BASE_URL only and showed another install's 11434 as up."""
+    from atlas_plus.llm.ollama_url import default_ollama_url
+    return default_ollama_url().rstrip("/")
 SYNC_HUB_URL = os.environ.get("ATLAS_SYNC_URL", f"http://127.0.0.1:{os.environ.get('ATLAS_SYNC_PORT', '8768').strip() or '8768'}").rstrip("/")
 
 _MAP_EDGES = [
@@ -3533,7 +3556,7 @@ async def api_topology(request: Request):
         brain_s, mcp_s, ollama_s, sync_s = await asyncio.gather(
             _probe_health(client, f"{BRAIN_URL}/health"),
             _probe_health(client, f"{MCP_URL}/health"),
-            _probe_health(client, f"{OLLAMA_URL}/api/tags"),
+            _probe_health(client, f"{_map_ollama_url()}/api/tags"),
             _probe_health(client, f"{SYNC_HUB_URL}/sync/v1/health"),
         )
     # Worker has no port: call it active when the task lifecycle pulsed
@@ -3564,7 +3587,7 @@ async def api_topology(request: Request):
         {"id": "worker", "label": "Worker", "kind": "service", "status": worker_s,
          "detail": "task executor"},
         {"id": "ollama", "label": "Model backend", "kind": "service", "status": ollama_s,
-         "detail": OLLAMA_URL},
+         "detail": _map_ollama_url()},
         {"id": "sync", "label": "Sync hub", "kind": "service", "status": sync_s,
          "detail": "on-demand" if sync_s == "down" else SYNC_HUB_URL},
         _store_node("corpus", "Memory corpus", MEMORY_ROOT, "markdown + git"),

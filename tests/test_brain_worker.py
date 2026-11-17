@@ -116,7 +116,7 @@ def test_worker_once_runs_gaps_report_executor_and_writes_report(monkeypatch, tm
 
     class Completed:
         returncode = 0
-        stdout = "Written: C:\\Tools\\.atlas\\reports\\gaps-2026-W21.md"
+        stdout = "Written: C:\\Projects\\.atlas\\reports\\gaps-2026-W21.md"
         stderr = ""
 
     def fake_run(cmd, **kwargs):
@@ -140,7 +140,7 @@ def test_worker_once_runs_gaps_report_executor_and_writes_report(monkeypatch, tm
     report = tmp_path / task.task_id / "gaps-report.md"
     assert report.exists()
     text = report.read_text(encoding="utf-8")
-    assert "Written: C:\\Tools\\.atlas\\reports\\gaps-2026-W21.md" in text
+    assert "Written: C:\\Projects\\.atlas\\reports\\gaps-2026-W21.md" in text
 
 
 def test_worker_once_runs_curation_report_executor_and_writes_report(monkeypatch, tmp_path, db):
@@ -148,7 +148,7 @@ def test_worker_once_runs_curation_report_executor_and_writes_report(monkeypatch
 
     class Completed:
         returncode = 0
-        stdout = "Written: C:\\Tools\\.memory\\_atlas\\cleanup-2026-05-19.md"
+        stdout = "Written: C:\\Projects\\.memory\\_atlas\\cleanup-2026-05-19.md"
         stderr = ""
 
     def fake_run(cmd, **kwargs):

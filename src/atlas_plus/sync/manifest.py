@@ -233,6 +233,9 @@ class SyncPlan:
     # The hub reports an older state than this device last saw (restored from a backup): plan,
     # checkin and a dry run say so, not only a real sync (AG88).
     hub_restored: bool = False
+    # The hub holds an OLDER copy than this device (or lost a file this device has): its corpus came back
+    # from a backup without its state dir, or was reverted by hand. Not pulled without --pull-older (SEX-017).
+    hub_older: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -242,11 +245,13 @@ class SyncPlan:
             or self.conflicts
             or self.local_deleted
             or self.remote_deleted
+            or self.hub_older
         )
 
     def summary(self) -> str:
         extra = f", proposed {len(self.proposed)}" if self.proposed else ""
         extra += f", too large {len(self.too_large)}" if self.too_large else ""
+        extra += f", hub older {len(self.hub_older)}" if self.hub_older else ""
         return (
             f"pull {len(self.to_pull)}, push {len(self.to_push)}, "
             f"conflicts {len(self.conflicts)}, in sync {self.in_sync}{extra}"

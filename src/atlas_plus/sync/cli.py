@@ -160,7 +160,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     root = atlas_paths.memory_root()
     try:
         with SyncClient(hub, token) as client:
-            plan, _local, _remote = client.plan(root, share=_share_args(args))
+            plan, _local, _remote = client.plan(root, share=_share_args(args), on_older=_on_older(args))
     except SyncClientError as exc:
         print(f"plan refused: {exc}", file=sys.stderr)
         return 2
@@ -171,12 +171,16 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "remote_deleted": plan.remote_deleted, "in_sync": plan.in_sync,
             "kept_local_edits": plan.kept_local_edits,
             "too_large": plan.too_large, "hub_restored": plan.hub_restored,
+            "hub_older": plan.hub_older,
         }, indent=2))
         return 0
     print(plan.summary())
     if plan.hub_restored:
         from atlas_plus.sync.client import RESTORED_HUB_AHEAD
         print(f"  WARNING: {RESTORED_HUB_AHEAD} (docs/HOWTO-sync.md, After the hub was restored from a backup)")
+    if plan.hub_older:
+        from atlas_plus.sync.client import HUB_OLDER
+        print(f"  WARNING: {HUB_OLDER.format(n=len(plan.hub_older))} (docs/HOWTO-sync.md, After the hub was restored from a backup)")
     share = _share_args(args)
     if share and plan.in_sync == 0 and not (plan.to_pull or plan.to_push or plan.conflicts or plan.proposed):
         print("  note: nothing on either side matches this share (check it against the hub's --prefix; "
@@ -187,6 +191,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         ("proposed, awaiting the hub's review", plan.proposed),
         ("edited here, deleted on the hub (your copy is kept, not pushed)", plan.kept_local_edits),
         ("too large for the hub, not sent", plan.too_large),
+        ("the hub's copy is OLDER than yours or gone, not pulled (yours kept)", plan.hub_older),
         ("deleted remotely (no action)", [r for r in plan.remote_deleted if r not in plan.kept_local_edits]),
         ("deleted locally (no action)", plan.local_deleted),
     ):
@@ -203,7 +208,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     try:
         with SyncClient(hub, token) as client:
             report = client.sync_once(root, dry_run=args.dry_run, share=_share_args(args),
-                                      progress=None if args.dry_run else _progress_printer())
+                                      progress=None if args.dry_run else _progress_printer(),
+                                      on_older=_on_older(args))
     except SyncClientError as exc:
         print(f"sync refused: {exc}", file=sys.stderr)
         return 2
@@ -211,6 +217,11 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if args.dry_run and report.hub_restored:
         from atlas_plus.sync.client import RESTORED_HUB_AHEAD
         print(f"  WARNING: {RESTORED_HUB_AHEAD}")
+    if args.dry_run and report.hub_older:
+        from atlas_plus.sync.client import HUB_OLDER
+        print(f"  WARNING: {HUB_OLDER.format(n=len(report.hub_older))}")
+    for rel in report.hub_older:
+        print(f"  the hub's copy is OLDER than yours or gone, {'a sync would not pull it' if args.dry_run else 'not pulled'}: {rel}")
     if args.dry_run:
         for rel in report.too_large:
             print(f"  too large for the hub, a sync would not send it: {rel}")
@@ -318,6 +329,9 @@ def cmd_checkin(args: argparse.Namespace) -> int:
                 if plan.hub_restored:
                     from atlas_plus.sync.client import RESTORED_HUB_AHEAD
                     print(f"not current: {RESTORED_HUB_AHEAD} (run: {_prog_name()} plan)")
+                elif plan.hub_older:
+                    from atlas_plus.sync.client import HUB_OLDER
+                    print(f"not current: {HUB_OLDER.format(n=len(plan.hub_older))}")
                 elif plan.to_pull or plan.to_push or plan.conflicts or plan.too_large:
                     print(f"not current: {plan.summary()} (run: {_prog_name()} sync)")
                 else:
@@ -336,13 +350,40 @@ def cmd_checkin(args: argparse.Namespace) -> int:
         from atlas_plus.sync.client import RESTORED_HUB_AHEAD
         print(f"not current: {RESTORED_HUB_AHEAD} (run: {_prog_name()} plan)")
         return 0
+    from atlas_plus.sync.client import HUB_OLDER, hub_older_files
+    older = hub_older_files(_remote, local["files"])
+    if older:  # it said "different corpus state" and plan then pulled the older copies (SEX-017)
+        print(f"not current: {HUB_OLDER.format(n=len(older))}")
+        return 0
     same = result.get("server_manifest_hash") == local["manifest_hash"]
     print("in sync with hub" if same else f"hub has different corpus state (run: {_prog_name()} plan)")
     return 0
 
 
+def _on_older(args: argparse.Namespace) -> str:
+    """The operator's explicit choice for files the hub holds an older copy of (SEX-017)."""
+    if getattr(args, "pull_older", False) and getattr(args, "push_newer", False):
+        raise SystemExit("--pull-older and --push-newer are opposites: pick one")
+    return "pull" if getattr(args, "pull_older", False) else "push" if getattr(args, "push_newer", False) else ""
+
+
+def cmd_accept_restore(args: argparse.Namespace) -> int:
+    """On the hub: the corpus as it is now is the newest (a deliberate rollback), so devices pull it again."""
+    root = atlas_paths.memory_root()
+    accepted = store.accept_current(manifest.build_manifest(root)["files"])
+    if not accepted:
+        print("nothing to accept: the hub holds no copy older than one it held before")
+        return 0
+    print(f"accepted {len(accepted)} file(s) as the hub's newest copies; devices pull them at their next sync "
+          "(their own copies stay under versions/):")
+    for rel in accepted:
+        print(f"  {rel}")
+    return 0
+
+
 _VALUE_FLAGS = ("--token", "--hub")
-_KNOWN_FLAGS = ("--hub", "--token", "--json", "--dry-run", "--share", "--help", "-h", "--all")
+_KNOWN_FLAGS = ("--hub", "--token", "--json", "--dry-run", "--share", "--help", "-h", "--all",
+                "--pull-older", "--push-newer")
 
 
 def _join_dash_values(argv: list[str]) -> list[str]:
@@ -393,6 +434,10 @@ def main() -> None:
     p.add_argument("name")
     p.set_defaults(func=cmd_revoke)
 
+    p = sub.add_parser("accept-restore", help="hub-side: take the corpus as it is now as the newest (after a "
+                                              "deliberate rollback), so devices stop refusing its older copies")
+    p.set_defaults(func=cmd_accept_restore)
+
     p = sub.add_parser("status", help="local sync status (corpus, principals, conflicts)")
     p.set_defaults(func=cmd_status)
 
@@ -408,6 +453,13 @@ def main() -> None:
             p.add_argument("--json", action="store_true")
         if name == "sync":
             p.add_argument("--dry-run", action="store_true")
+        if name in ("plan", "sync"):
+            p.add_argument("--pull-older", action="store_true",
+                           help="take the hub's copies even where they are OLDER than yours (after a deliberate "
+                                "rollback on the hub; your copies stay under versions/)")
+            p.add_argument("--push-newer", action="store_true",
+                           help="put your copies back on the hub where the hub's are OLDER than yours "
+                                "(after the hub's corpus was restored from a backup)")
         if name in ("plan", "sync", "checkin"):
             p.add_argument("--share", action="append", metavar="PREFIX",
                            help="corpus prefix this system agrees to exchange (repeatable; "

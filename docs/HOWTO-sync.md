@@ -97,7 +97,18 @@ The `sync` output names the parked path.
 
 ### After the hub was restored from a backup
 
-Restore the hub's corpus AND its state dir together, from the same backup. A corpus restored on its own over a live state dir is NOT detected: devices see the older files as new hub edits and pull them over their newer copies (each device keeps a version copy under `versions/`, so nothing is gone, but nothing warns you either).
+Restore the hub's corpus AND its state dir together, from the same backup. A corpus restored on its own (over a live
+state dir, or by a backup tool that saved only the notes) is caught per file: the hub remembers the last few contents it
+held of each file, and a device whose copy is newer than the hub's does not pull it. `plan`, `checkin`, `sync --dry-run`
+and `sync` say "the hub holds OLDER copies of N file(s) than this device" and list them (`sync` exits 1); your copies
+stay live. Then choose, explicitly:
+
+- `sextant-sync sync --push-newer` on the device with the newest edits puts its copies back on the hub (and a note the
+  hub lost in the restore); the other devices are then in sync.
+- `sextant-sync sync --pull-older` takes the hub's older copies on this device (yours stay under `versions/`).
+- `sextant-sync accept-restore`, ON THE HUB, when the rollback was deliberate: the hub's copies become its newest and
+  every device pulls them at its next sync. A note reverted by hand on the hub (an old version copied back) reads as
+  older content too; `accept-restore` is the answer there. A revert pushed from a device is a new edit and needs nothing.
 
 A device that synced after the backup was taken notices the older hub at its next `sync`: it pulls nothing over your
 copies, parks every difference as a conflict, and says "the hub reports an older state than this device last synced (it

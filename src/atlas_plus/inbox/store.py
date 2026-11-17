@@ -203,6 +203,9 @@ def create_item(
         raise ValueError("Inbox item must have a url or some text.")
     if url and len(url) > _MAX_URL:
         raise ValueError(f"url must be {_MAX_URL} characters or fewer.")
+    if url and not url.lower().startswith(("http://", "https://")):
+        # A `javascript:` or `file:` url became a live link in the dashboard (MN86).
+        raise ValueError("url must start with http:// or https://")
     if title and len(title) > _MAX_TITLE:
         raise ValueError(f"title must be {_MAX_TITLE} characters or fewer.")
     if len(text) > _MAX_TEXT:

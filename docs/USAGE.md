@@ -59,11 +59,14 @@ plain keyword otherwise, automatically). For targeted reads there are
 library, `research_search_tool` searches it with citations.
 
 Keyword search folds case and accents (`zurich` finds `Zürich`, `kobenhavn` finds `København`), and a word typed with
-`å`, `ø`, `ö` or `ä` also finds its spelling with `aa`, `oe` or `ae` (`Ålborg` finds `Aalborg`). The other direction is
-not folded: `aalborg` finds only `Aalborg`, since treating `aa` as `å` would merge Finnish and Dutch words (`saada` and
-`sada`). Words are matched whole, with an English stemmer: a Danish, Norwegian, Swedish, Finnish or Icelandic compound
+`å`, `ø`, `ö`, `ä` or `ü` also finds its spelling with `aa`, `oe`, `ae` or `ue` (`Ålborg` finds `Aalborg`, `München`
+finds `Muenchen`). The other direction works too: `aarhus`, `oere`, `goeteborg` and `muenchen` find `Århus`, `øre`,
+`Göteborg` and `München`, because the index also keeps each such word of a note in its digraph spelling. A typed `aa`
+or `oe` is never folded onto the letter, so words without the letter stay apart (`saada` and `sada`, `poet` and `pot`);
+the price is that a real word which is also an old digraph spelling meets the letter word (Dutch `naar` finds `når`,
+Finnish `saa` finds `så`). Words are matched whole, with an English stemmer: a Danish, Norwegian, Swedish, Finnish or Icelandic compound
 or definite form is its own word, so `sommerhus` does not find `sommerhusudlejning` and `hus` does not find `huset`; add
-a star for the prefix (`sommerhus*`, `hus*`). The second part of a compound (`udlejning`) is not found. <!-- AG91 -->
+a star for the prefix (`sommerhus*`, `hus*`). The second part of a compound (`udlejning`) is not found. <!-- AG91, AG96 -->
 
 ## Keeping memory honest
 

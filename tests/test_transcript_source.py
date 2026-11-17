@@ -43,7 +43,7 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
             fh.write(json.dumps(r) + "\n")
 
 
-def _minimal_session(session_id: str, cwd: str = r"C:\Tools\projects\atlas-memory+") -> list[dict]:
+def _minimal_session(session_id: str, cwd: str = r"C:\Projects\projects\atlas-memory+") -> list[dict]:
     return [
         {
             "type": "user",
@@ -80,7 +80,7 @@ class TestExtractMetadata:
         meta = _extract_transcript_metadata(path)
         assert meta["session_id"] == "real-session-id"
         assert meta["model"] == "claude-sonnet-4-6"
-        assert meta["cwd"] == r"C:\Tools\projects\atlas-memory+"
+        assert meta["cwd"] == r"C:\Projects\projects\atlas-memory+"
         assert meta["tokens_in"] == 100
         assert meta["tokens_out"] == 50
         assert meta["turn_count"] == 2
@@ -116,7 +116,7 @@ class TestExtractMetadata:
 
 class TestHelpers:
     def test_project_from_cwd_windows_path(self):
-        assert _project_from_cwd(r"C:\Tools\projects\atlas-memory+") == "atlas-memory+"
+        assert _project_from_cwd(r"C:\Projects\projects\atlas-memory+") == "atlas-memory+"
 
     def test_project_from_cwd_none(self):
         assert _project_from_cwd(None) is None

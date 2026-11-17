@@ -19,6 +19,17 @@ public tree.
 
 ## [Unreleased]
 
+### Fixed: a hub corpus restored without its state dir is caught per file (SEX-017, sweep 25 AG94)
+
+- A corpus restored on its own over a live state dir left the generation and its marks untouched, and the corpus-hash
+  bump (MN77) made the older corpus look like a new hub edit: every device pulled the older copies over its newer ones
+  with rc 0 and a note born after the backup read as "deleted on the hub". The hub now keeps a short history of each
+  file's content (`<state>/sync/file-history.json`, eight per file) and reports `hub_older` in its manifest; a device
+  holding a newer copy refuses to pull it in `plan`, `checkin`, `sync --dry-run` and `sync` (exit 1, one sentence),
+  and keeps its base so the next sync says it again. `sync --push-newer` puts the device's copies (and notes the hub
+  lost) back; `sync --pull-older` takes the hub's; `accept-restore` on the hub accepts a deliberate rollback. A revert
+  pushed by a device is recorded as new content, not a restore.
+
 ### Fixed: the session override no longer opens the general write gate (ATL-068)
 
 - `ATLAS_SESSION_AUTONOMOUS=on` reached `require_autonomous_writes()` through an early return added
@@ -29,6 +40,19 @@ public tree.
   `atlas-suggest-facts --auto`) use the new `require_session_write()`, which is the only place the
   session variable is honoured. Tests pin both directions. If you set the session variable in a
   shared service environment, set it in the hook command's `--env` flag instead.
+
+### Sweep 25 (AG96: digraph spellings find the Nordic and German letters, SEX-021)
+
+- Search: a query typed in digraph spelling now finds the note written with the letter: `aarhus` finds `Århus`, `oere`
+  finds `øre`, `goeteborg` and `vaesteraas` find `Göteborg` and `Västerås`, `muenchen` finds `München` (CLI, MCP and
+  dashboard; before, all found nothing). The index keeps each `å`/`ø`/`ö`/`ä`/`ü` word of a note once more in its
+  digraph spelling, in a tail after the note's text, so quoted phrases are unchanged and snippets show the note's own
+  word. A typed `aa`/`oe` is still never folded onto the letter, so ASCII words stay apart. Measured on wordfreq's
+  top-300 Danish, Norwegian, Swedish, Finnish and Dutch words (1,500 notes, 1,182 real-word queries): no hit lost;
+  13 new real-word pairs, 11 of them the same word or a cognate (`gjør`/`gjøre`, `hjælp`/`hjälp`, `længe`/`länge`)
+  and 2 unrelated (Dutch `naar` finds `når`, Finnish `saa` finds `så`); each of the 191 digraph spellings that is not
+  itself a word finds its letter word. `ü` joins the query side as well (`München` finds `Muenchen`). INDEX_FORMAT is "10": the first
+  search, `sextant verify`, the MCP server and the dashboard rebuild an older index once, with the usual notice.
 
 ### Sweep 24, agentic wave (AG91: the Nordic languages)
 

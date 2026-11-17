@@ -71,6 +71,10 @@ def _cached_full_manifest(root: Path) -> dict:
         store.observe_corpus(str(built.get("manifest_hash") or ""))  # a hub-local write is a new count too (MN77)
     except OSError:
         pass
+    try:
+        built["older"] = store.observe_files(built["files"])  # older content came back: a restore of the corpus alone (SEX-017)
+    except (OSError, ValueError, TypeError):
+        built["older"] = {}
     _MANIFEST_CACHE.update(
         path=str(root), expires=now + _manifest_ttl(), manifest=built
     )
@@ -88,6 +92,7 @@ def _manifest_for(root: Path, principal) -> dict:
         "generated_utc": full["generated_utc"],
         "manifest_hash": manifest.files_hash(files),
         "files": files,
+        "older": policy.filter_manifest(full.get("older") or {}, principal),
     }
 
 
@@ -174,6 +179,8 @@ def create_app() -> FastAPI:
     async def get_manifest(device: devices.Device = Depends(_require_principal), since: int | None = None) -> dict:
         principal = device.principal()
         result = dict(_manifest_for(_corpus_root(), principal))
+        # {path: [newer sha256, ...]}: the hub holds content OLDER than it held before (SEX-017)
+        result["hub_older"] = result.pop("older", {})
         # The caller learns HOW this hub pairs it. A spoke uses this only to be MORE
         # restrictive (a peer with no local share list refuses to push); local consent
         # is never inferred from it (wave-2 2026-11-09, R2-01).
@@ -234,6 +241,7 @@ def create_app() -> FastAPI:
             )
         root = _corpus_root()
         results = []
+        written: dict = {}
         for change in changes:
             rel = str(change.get("path", ""))
             outcome: dict = {"path": rel}
@@ -275,6 +283,7 @@ def create_app() -> FastAPI:
                     current = apply.current_sha256(root, rel)
                     if current is not None and current == hashlib.sha256(raw).hexdigest():
                         outcome["result"] = "applied"  # the hub already holds these bytes: two overlapping syncs made 150 fake conflicts (MN65)
+                        written[rel] = current  # a device chose these bytes: newest now (SEX-017)
                     elif current is not None and current != base_sha:
                         parked = apply.quarantine(
                             root, rel, raw,
@@ -286,6 +295,7 @@ def create_app() -> FastAPI:
                     else:
                         apply.apply_change(root, rel, raw, announced, principal)
                         outcome["result"] = "applied"
+                        written[rel] = hashlib.sha256(raw).hexdigest()  # a pushed revert is new content, not a restore (SEX-017)
             except apply.SyncPolicyError as exc:
                 outcome["result"] = "denied"
                 outcome["detail"] = str(exc)
@@ -301,6 +311,8 @@ def create_app() -> FastAPI:
             )
             results.append(outcome)
         _invalidate_manifest_cache()  # the corpus just changed
+        if written:
+            store.record_written(written)
         if any(r.get("result") == "applied" for r in results):
             store.bump_hub_generation()
         _g = store.hub_generation()

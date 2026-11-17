@@ -100,6 +100,148 @@ _KV_NAMES = (r"(?:api[_ -]?key|apikey|secret|token|password|passwd|pwd|pass|clie
              r"|clave[ _]API|clave[ _]de[ _]API|API[ _-]?ключ|ключ[ _]API|API[ _]anahtar[ıi]|API[ ]키|API[ _]कुंजी|الرمز[ _]السري"  # MN74: two-word key names (`API key: V`, `secret key: V`, `clave API=V`, `API-ключ=V`) leaked
              + _MARKED_NAMES + ")")  # Thai, Hindi, and the mark-tolerant Arabic/Hebrew names (AG52, MN46)
 _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,3})){0,2}"
+
+
+# ---- AG95: the key-name alternation as a prefix trie with exact case classes ---------------------------------------
+# Under (?i) the regex engine enters every one of the ~150 key-name alternatives at every word start and at every
+# backtrack point of the camel head; a case-insensitive literal is never skipped by its first character. AG91 added
+# ~65 Nordic names and the key=value pass grew 65% (SEX-027). The same alternation is rewritten as a trie: each branch
+# opens with an exact case class (`[kKK]`), which the engine tests in C before entering the branch, and the rest of
+# the branch keeps (?i). Alternatives are merged under a shared first character only when every group they move ahead
+# of starts with a disjoint set of characters, so the leftmost alternative that matches is the same one as before.
+_CASED_LIMIT = 0x20000  # every letter with case lies below U+20000; the planes above hold CJK ideographs and private use
+_NAMES_SLOT = "\x00names\x00"  # where the key-name alternation goes in the two patterns built on first use
+
+
+def _top_alts(body: str) -> list[str]:
+    """Split a regex alternation body at its top-level bars (classes, groups and escapes respected)."""
+    alts, cur, depth, i = [], [], 0, 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\":
+            cur.append(body[i:i + 2])
+            i += 2
+            continue
+        if ch == "[":
+            j = i + 1 + (body[i + 1:i + 2] == "]")
+            while body[j] != "]":
+                j += 2 if body[j] == "\\" else 1
+            cur.append(body[i:j + 1])
+            i = j + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "|" and depth == 0:
+            alts.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    alts.append("".join(cur))
+    return alts
+
+
+def _group_end(alt: str, k: int) -> int:
+    """The index just past the `)` that closes the group opened at alt[k - 1]."""
+    depth = 1
+    while depth:
+        c = alt[k]
+        if c == "\\":
+            k += 2
+            continue
+        if c == "[":
+            k += 1 + (alt[k + 1:k + 2] == "]")
+            while alt[k] != "]":
+                k += 2 if alt[k] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        k += 1
+    return k
+
+
+def _distribute(alt: str) -> list[str]:
+    """`(?:a|b)X` -> `aX`, `bX` (the same order, so the same leftmost match); anything else stays whole."""
+    if not alt.startswith("(?:"):
+        return [alt]
+    k = _group_end(alt, 3)
+    tail = alt[k:]
+    if tail[:1] in ("?", "*", "+", "{"):
+        return [alt]
+    return [a + tail for a in _top_alts(alt[3:k - 1])]
+
+
+def _case_sets(chars) -> dict:
+    """For each character, every character that (?i) matches it, asked of the regex engine itself (Greek symbol forms,
+    U+1C80 Cyrillic, the Kelvin sign, dotless and dotted i all differ from lower()/upper())."""
+    import array
+    space = array.array("I", range(_CASED_LIMIT)).tobytes().decode("utf-32-le", "surrogatepass")
+    chars = sorted(set(chars))
+    found = "".join(sorted(set(re.findall("(?i)[" + "".join(re.escape(c) for c in chars) + "]", space)) | set(chars)))
+    return {c: frozenset(re.findall("(?i)" + re.escape(c), found)) for c in chars}
+
+
+def _case_trie(alts: list[str], sets: dict) -> str:
+    """A case-sensitive regex equivalent to `(?i:alt1|alt2|...)`, branching on exact first-character classes."""
+    groups: list = []  # [key, first char, rests]; key None = any first character (never merged, never jumped)
+    for a in alts:
+        c = a[:1]
+        key = None
+        if c and c not in "([\\.^$|)" and a[1:2] not in ("?", "*", "+", "{"):
+            key = sets[c]
+        target = None
+        if key is not None:
+            for g in reversed(groups):  # join the latest group with this key unless a group in between could match too
+                if g[0] == key:
+                    target = g
+                    break
+                if g[0] is None or g[0] & key:
+                    break
+        if target is not None:
+            target[2].append(a[1:])
+        elif key is not None:
+            groups.append([key, c, [a[1:]]])
+        else:
+            groups.append([None, "", [a]])
+    out = []
+    for key, c, rests in groups:
+        if key is None:
+            out.append("(?i:" + rests[0] + ")")
+            continue
+        cls = re.escape(c) if len(key) == 1 else "[" + "".join(re.escape(x) for x in sorted(key)) + "]"
+        if len(rests) == 1:
+            out.append(cls + ("(?i:" + rests[0] + ")" if rests[0] else ""))
+        else:
+            out.append(cls + "(?:" + _case_trie(rests, sets) + ")")
+    return "|".join(out)
+
+
+def _fast_names(names: str) -> str:
+    """`(?:a|b|...)` (matched under (?i)) -> the same set of matches, as a first-character trie."""
+    alts = [d for a in _top_alts(names[3:-1]) for d in _distribute(a)]
+    return "(?-i:" + _case_trie(alts, _case_sets(ch for a in alts for ch in a)) + ")"
+
+
+_KV_PAIR = None
+
+
+def _kv_res():
+    """(_KV_RE, _K8S_RE), built on the first redact(): the trie and its case classes cost ~40 ms once."""
+    global _KV_PAIR
+    if _KV_PAIR is None:
+        names = _fast_names(_KV_NAMES)
+        _KV_PAIR = (re.compile(_KV_SRC.replace(_NAMES_SLOT, names)), re.compile(_K8S_SRC.replace(_NAMES_SLOT, names), re.M))
+    return _KV_PAIR
+
+
+def __getattr__(name: str):
+    if name in ("_KV_RE", "_K8S_RE"):
+        return _kv_res()[name == "_K8S_RE"]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 # Exact key NAMES: a bounded prefix of up to eight `_`/`-` segments (`MY_APP_PROD_EU_WEST_DB_`), an
 # optional camelCase head (`dbPassword`, `AccessToken`), the name, and up to two short suffixes
 # (`_KEY_BASE`, `_HASH`, `_v2`). The open `[A-Za-z0-9_-]*name[A-Za-z0-9_-]*` form was quadratic and
@@ -109,8 +251,8 @@ _KV_SUFFIX = r"(?:[_-]?(?:key|token|secret|value|str|string|id|base|hash|v?\d{1,
 # inside the mask); an unquoted value runs to the next whitespace, `&` included (AG43: a password
 # with `&` leaked its tail; a query-string tail is over-masked instead). The lookbehind limits the
 # scan to word starts, so a 1 MB blob costs one attempt per word, not per character.
-_KV_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_\-\u0590-\u05ff\u0600-\u06ff])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
+_KV_SRC = (
+    r"(?i)(?<![A-Za-z0-9_\-\u0590-\u05ff\u0600-\u06ff])(-{0,2}(?:[A-Za-z0-9]{1,32}[_-]){0,16}(?:[a-z0-9]{1,32})?" + _NAMES_SLOT + _KV_SUFFIX + r")"  # `--secret-key=`, `-Dpassword=`, `-ApiKey:` start at their dashes (MN43); up to sixteen segments (MN48: a nine-segment slug leaked)
     r"(?![A-Za-z0-9\u00c0-\u024f])"
     r"(['\"]?\]?\s*[=:：＝]\s*(?:r(?=['\"]))?(?:(?:&[\w-]{1,64}|!![a-z]{1,16})[ \t]+)?)"  # AG62: the environ-subscript assignment `environ['DB_PASS...'] = 'V'` and `params[:password] = V` leaked; AG68: a YAML anchor or core tag before the value (`password: &pw V`, `password: !!str V`)
     r"(\"\"\"[^\n]{4,}?\"\"\"|'''[^\n]{4,}?'''"  # AG68: a TOML multi-line basic or literal string on one line leaked whole
@@ -251,12 +393,13 @@ def _kv_mask(m: "re.Match[str]") -> str:
 
 
 def _kv_redact(out: str) -> str:
-    out = _KV_RE.sub(_kv_mask, out)
+    kv_re = _kv_res()[0]
+    out = kv_re.sub(_kv_mask, out)
     folded = out.translate(_FULLWIDTH)
     if folded != out:
         pieces = []
         pos = 0
-        for m in _KV_RE.finditer(folded):
+        for m in kv_re.finditer(folded):
             v = m.group(3)
             if _kv_skip(m.group(1), v, m.group(2), folded, m.start(), m.end()) or "[REDACTED]" in v:
                 continue
@@ -313,8 +456,8 @@ _NAME_FULL = r"(?:(?:[A-Za-z0-9]{1,32}[_.-]){0,4}" + _NAME_ASCII + r"(?:[_-]?[A-
 _ANY_NAME = r"(?:" + _NAME_FULL + r"|" + _KV_NAMES[3:-1] + r")"
 _VAL = r"(\"[^\"\n]{4,}\"|'[^'\n]{4,}'|[^\s'\"<>]{6,})"
 # Kubernetes / compose / CI env lists: `- name: API_TOKEN` then `value: V` on the next line
-_K8S_RE = re.compile(r"(?i)(^[ \t]*-?[ \t]*name[ \t]*:[ \t]*[\"']?(?:[A-Za-z0-9]{1,32}[_.-]){0,8}(?:[a-z0-9]{1,32})?" + _KV_NAMES + _KV_SUFFIX
-                     + r"[\"']?[ \t]*\r?\n[ \t]*value[ \t]*:[ \t]*)" + _VAL, re.M)
+_K8S_SRC = (r"(?i)(^[ \t]*-?[ \t]*name[ \t]*:[ \t]*[\"']?(?:[A-Za-z0-9]{1,32}[_.-]){0,8}(?:[a-z0-9]{1,32})?" + _NAMES_SLOT + _KV_SUFFIX
+             + r"[\"']?[ \t]*\r?\n[ \t]*value[ \t]*:[ \t]*)" + _VAL)  # compiled with re.M by _kv_res()
 # .netrc (`machine h login u password V`, also newline separated) and `default login u password V`
 _NETRC_RE = re.compile(r"(?im)^([ \t]*(?:machine[ \t]+\S+[ \t]+|default[ \t]+)?login[ \t]+\S+(?:\s+account\s+\S+)?\s+password[ \t]+)(\S{4,})")  # a .netrc line, not prose about a login page (MN49); the indentation stays (AG61)
 # .pgpass: host:port:database:user:password on a line of its own
@@ -460,7 +603,7 @@ def _md_columns(out: str) -> str:
 def _extra_redact(out: str) -> str:
     """The AG55 rules, each gated by a cheap substring test so ordinary text pays almost nothing."""
     if "value" in out:
-        out = _K8S_RE.sub(_k8s_mask, out)
+        out = _kv_res()[1].sub(_k8s_mask, out)
     if "login" in out.lower():
         out = _sub_value(_NETRC_RE, out, 2, ok=lambda v: not _doc_value(v) and "@" not in v)  # `password <your-password>`, an anonymous FTP e-mail (AG62)
     if ":" in out:
@@ -658,6 +801,20 @@ def _strip_marks_short(s: str) -> str:
 
 _PW_WORDS_STRIPPED = tuple(sorted({_strip_marks_short(w).casefold() for w in _PW_WORDS}, key=len, reverse=True))  # no class build at import (AG92)
 _PW_WORDS_ASCII = tuple(w for w in _PW_WORDS_STRIPPED if w.isascii())  # the ASCII pre-check is derived: it missed adgangskode and losenord (MN62)
+
+
+def _literal_trie(words) -> str:
+    """A regex that finds any of `words` (plain strings, matched as written): one scan instead of one `in` per word."""
+    if "" in words:
+        return ""  # a word ended here: the shorter word already matches, the longer ones add nothing to a search
+    heads: dict = {}
+    for w in words:
+        heads.setdefault(w[0], []).append(w[1:])
+    parts = [re.escape(h) + ("(?:" + _literal_trie(r) + ")" if len(r) > 1 or r[0] else "") for h, r in heads.items()]
+    return parts[0] if len(parts) == 1 else "(?:" + "|".join(parts) + ")"
+
+
+_PW_WORDS_RE = re.compile(_literal_trie(_PW_WORDS_STRIPPED))  # AG95: `any(w in probe for w in _PW_WORDS_STRIPPED)` per line cost 0.24 s per MB of Danish
 _PRODUCT_RE = re.compile(r"^[A-Za-z]{2,}[0-9]{1,4}(?:-\w+)?$")  # Windows11, iPhone15, Office365, Ubuntu24: names, not values (MN62: 35 of 69 ordinary sentences)
 
 
@@ -724,7 +881,7 @@ def _keyword_line_redact(text: str) -> str:
         slot = carried
         if not slot:
             bprobe = _strip_marks(before).casefold()
-            hits = [(bprobe.rfind(w), w) for w in _PW_WORDS_STRIPPED if w in bprobe]
+            hits = [(bprobe.rfind(w), w) for w in _PW_WORDS_STRIPPED if w in bprobe] if _PW_WORDS_RE.search(bprobe) else []
             if hits:  # a cue counts only beside a password word: `Password hashing moved to Argon2id` is no value (MN68)
                 pos, w = max(hits)
                 gap = bprobe[pos + len(w):].strip(" \t'\"`(「『“")
@@ -754,7 +911,7 @@ def _keyword_line_redact(text: str) -> str:
     carry_slot = False  # ...and it ended with a cue, so the next value keeps no name exemption (MN68: `password is\nSummer2024`)
     for line in text.split("\n"):
         probe = _strip_marks(line).casefold()
-        if any(w in probe for w in _PW_WORDS_STRIPPED):
+        if _PW_WORDS_RE.search(probe):
             new = _PW_TOKEN_RE.sub(_mask, line)
             carry = new == line and "[REDACTED" not in line  # an already-masked value does not carry to the next line (AG73)
             carry_slot = carry and bool(_LINE_ENDS_WITH_CUE_RE.search(_TRAILING_COMMENT_RE.sub("", _ROLE_PREFIX_RE.sub("", line))))  # `password is  # below` (AG79: the comment rule was on the value line only)
