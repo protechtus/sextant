@@ -366,7 +366,7 @@ async def cmd_remember(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         result = memory_remember(scope=scope, fact=fact)
         if result.get("ok"):
             await update.message.reply_text(
-                f"Remembered in `{result['file']}`", parse_mode="Markdown"
+                f"{'Already remembered' if result.get('already_remembered') else 'Remembered'} in `{result['file']}`", parse_mode="Markdown"
             )
         else:
             await update.message.reply_text(f"Error: {result.get('error', 'unknown')}")

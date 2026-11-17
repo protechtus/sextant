@@ -259,6 +259,10 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
     py = interpreter()
     distro = wsl_distro(environ)
     verify = f"{py} -m atlas_plus verify" if " " not in py else f"{_q(py)} -m atlas_plus verify"
+    # section 4 printed 8765 while ATLAS_MCP_PORT named another port (AG97, sweep 25); a bad value
+    # keeps the default here (the server itself refuses it with the variable's name)
+    _raw_port = str((os.environ if environ is None else environ).get("ATLAS_MCP_PORT", "") or "").strip()
+    port = int(_raw_port) if _raw_port.isdigit() and 1 <= int(_raw_port) <= 65535 else 8765
     out: dict = {
         "interpreter": py,
         "platform": "windows" if os.name == "nt" else ("wsl" if distro else "posix"),
@@ -305,8 +309,9 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
                            f"-m {SERVER_MODULE}",
         "remote_claude_code": 'claude mcp add -s user --transport http sextant https://<your-host>/mcp '
                               '--header "Authorization: Bearer $ATLAS_MCP_TOKEN"',
-        "lan_url": "http://<host>:8765/mcp",
-        "verify_http": "python -m atlas_plus verify --url http://<host>:8765/mcp --token $ATLAS_MCP_TOKEN",
+        "port": port,
+        "lan_url": f"http://<host>:{port}/mcp",
+        "verify_http": f"python -m atlas_plus verify --url http://<host>:{port}/mcp --token $ATLAS_MCP_TOKEN",
         "docs": _self_hosting_doc(),
     }
     import shutil as _shutil
@@ -460,11 +465,11 @@ def render(info: dict, client: str = "all") -> str:
             if not info.get("claude_on_path"):
                 lines.append("   (`claude` is not on PATH here, so section 1 applies on the client machine)")
             lines += ["   " + h["serve"],
-                      "   (binds 127.0.0.1:8765; the token is required; ready when the log says "
+                      f"   (binds 127.0.0.1:{h.get('port', 8765)}; the token is required; ready when the log says "
                       "`Uvicorn running on`, a few seconds)",
                       "   In a container: " + h["serve_container"],
                       "   (0.0.0.0 inside the container, and publish the port on the host's loopback "
-                      "only: -p 127.0.0.1:8765:8765)",
+                      f"only: -p 127.0.0.1:{h.get('port', 8765)}:{h.get('port', 8765)})",
                       "   " + h["remote_claude_code"],
                       f"   (behind an ingress; on a LAN or the same host the URL is {h['lan_url']}, and for "
                       "another machine on the LAN the server must bind beyond loopback: ATLAS_MCP_HOST=<this "
@@ -473,7 +478,7 @@ def render(info: dict, client: str = "all") -> str:
                       "and shell history show it)",
                       "   Prove a write over HTTP from the client machine, with that machine's own Python that "
                       "has the package (or scripts/mcp_roundtrip.py from a clone): " + h["verify_http"],
-                      "   (curl -s http://<host>:8765/health answers without a token; 10 failed "
+                      f"   (curl -s http://<host>:{h.get('port', 8765)}/health answers without a token; 10 failed "
                       "requests from one source lock it out for 5 min (429), and every client behind "
                       "one NAT, Docker's bridge included, shares that counter: ATLAS_MCP_TRUSTED_PEERS=<ip> "
                       "exempts a peer you own)",

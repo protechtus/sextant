@@ -455,6 +455,9 @@ def cmd_remember(
             _err = "this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again."  # the codec dump (MN46)
         console.print(f"[red]Not stored:[/red] {_err}")
         raise typer.Exit(1)
+    if result.get("already_remembered"):
+        console.print(f"Already remembered in {result['file']} (the same fact stands there; nothing written)")
+        return
     console.print(f"Remembered in {result['file']}")
     if result.get("autocommit_note"):
         console.print(f"[yellow]{result['autocommit_note']}[/yellow]")  # AG57

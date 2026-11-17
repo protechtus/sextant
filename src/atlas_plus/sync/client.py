@@ -146,8 +146,15 @@ class SyncReport:
     hub_restored: bool = False
     # The hub holds OLDER copies than this device's (SEX-017): not pulled, the device's copies kept.
     hub_older: list[str] = field(default_factory=list)
+    # A dry run moves nothing: what a real sync would pull and push (AG97; it printed "pulled 0, pushed 0").
+    dry_run: bool = False
+    would_pull: list[str] = field(default_factory=list)
+    would_push: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
+        if self.dry_run:
+            return (f"dry run, nothing moved: would pull {len(self.would_pull)}, would push {len(self.would_push)}, "
+                    f"conflicts {len(self.conflicts)}")
         return (
             f"pulled {len(self.pulled)}, pushed {len(self.pushed)}, "
             f"conflicts {len(self.conflicts)}, denied {len(self.denied)}, "
@@ -632,6 +639,9 @@ class SyncClient:
         )
         if dry_run:
             report.conflicts = list(plan.conflicts)
+            report.dry_run = True
+            report.would_pull = list(plan.to_pull)
+            report.would_push = list(plan.to_push)
             return report
 
         old_base = {} if getattr(self, "_rolled_back", False) else (self._own_base(base_id) or {})

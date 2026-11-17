@@ -18,7 +18,13 @@ environment inside your clone; "activating" it points your current
 terminal at it.) Activate with `source .venv/bin/activate` (Linux/macOS)
 or `.venv\Scripts\Activate.ps1` (Windows PowerShell -- if that errors with
 "running scripts is disabled", run
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once). Or skip
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once). Then check:
+`pip --version` must name the `.venv` folder. If it names another Python, stop:
+activation failed (or the venv was made by a Python older than 3.11, whose
+`venv` can fail with `ensurepip ... exit status 101`), and the next `pip install`
+would land in that other Python. Delete `.venv` and recreate it with a named
+3.11+ interpreter (`py -3.12 -m venv .venv` on Windows, `python3 -m venv .venv`
+elsewhere). Or skip
 activation entirely and prefix each command the way the README quickstart
 does: `.venv/bin/sextant-init` on Linux/macOS,
 `.\.venv\Scripts\sextant-init.exe` on Windows, and so on.

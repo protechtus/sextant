@@ -10,6 +10,11 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+import sys
+
+# AG97: buttons and actions need the task to run THIS install; the fakes answer with this interpreter
+OURS = f'"{sys.executable}" -m atlas_plus.brain.server'
+
 
 def _client(monkeypatch, ps_impl):
     from atlas_plus.web import app as webapp
@@ -22,7 +27,7 @@ def _client(monkeypatch, ps_impl):
 
 class TestServicesPanel:
     def test_list_renders_states(self, monkeypatch):
-        out = "Atlas-Brain\tRunning\t0\nAtlas-Web-UI\tReady\t0\n"
+        out = f"Atlas-Brain\tRunning\t0\t{OURS}\nAtlas-Web-UI\tReady\t0\t{OURS}\n"
         client = _client(monkeypatch, lambda cmd, timeout=20.0: (0, out))
         r = client.get("/api/services")
         assert r.status_code == 200
@@ -36,7 +41,7 @@ class TestServicesPanel:
 
         def fake(cmd, timeout=25.0):
             calls["cmd"] = cmd
-            return (0, "ok")
+            return (0, OURS)
 
         client = _client(monkeypatch, fake)
         r = client.post("/api/services/Atlas-Brain/restart")
@@ -60,7 +65,7 @@ class TestServicesPanel:
 
         def fake(cmd, timeout=25.0):
             seen["cmds"].append(cmd)
-            return (0, "")
+            return (0, OURS)
 
         client = _client(monkeypatch, fake)
         client.post("/api/services/Atlas-MCP/start")

@@ -44,6 +44,11 @@ _FRESHNESS_HALF_LIFE_DAYS = 90.0
 
 
 def _tokenize(text: str) -> set[str]:
+    try:  # every script, the same folds as the prime's matching notes (AG97; it was ASCII-only)
+        from atlas_plus.hooks.prime import _tokenize as _prime_tokenize
+        return {w for w in _prime_tokenize(text) if w not in _STOP_WORDS}
+    except Exception:  # noqa: BLE001
+        pass
     words = re.findall(r"[a-z0-9]+", text.lower())
     return {w for w in words if len(w) > 2 and w not in _STOP_WORDS}
 

@@ -653,6 +653,23 @@ def _original_text(rel: str, indexed: str) -> str:
     return body + ("\n" + "\n".join(values)[:_MAX_FM_INDEX_CHARS] if values else "")
 
 
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+_OPEN_COMMENT_TAIL = re.compile(r"<!--(?:(?!-->)[^\n])*?(\.\.\.)?$")
+_CLOSE_COMMENT_HEAD = re.compile(r"^(\.\.\.)?[^\s<>]*(?:source|session|task|direct|agent|telegram|facts)[^\s<>]*"
+                                 r"(?:\s+(?:session|task):[^\s<>]*)*\s*-->")
+
+
+def strip_snippet_comments(snip: str) -> str:
+    """Drop HTML comments (the `<!-- source:... -->` provenance tag) from a snippet, including one the snippet window
+    cut open at either end: the dashboard, `sextant search` and the MCP tool all showed them (AG97, sweep 25)."""
+    if not snip or ("<!--" not in snip and "-->" not in snip):
+        return snip
+    s = _HTML_COMMENT.sub(" ", snip)
+    s = _OPEN_COMMENT_TAIL.sub(lambda m: m.group(1) or "", s)
+    s = _CLOSE_COMMENT_HEAD.sub(lambda m: m.group(1) or "", s)
+    return re.sub(r"[ \t]{2,}", " ", s).strip()
+
+
 def _snippet_from_fts(raw: str, indexed: str, orig: str) -> str:
     """Turn snippet()'s marked text into the bracketed snippet, in the note's own letters when it can be placed."""
     lead, trail = raw.startswith(_SNIP_ELL), raw.endswith(_SNIP_ELL)
@@ -1580,6 +1597,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             else:
                 snip = _snippet_from_fts(snip, indexed, orig)   # in the note's own letters (AG83)
             snip = (snip or "").replace(_CJK_SEP, "").replace(" " + _SENTINEL + " ", " ").replace(_SENTINEL, "").replace(_ALIAS_MARK, "")
+            snip = strip_snippet_comments(snip)   # the provenance tag is metadata, not text (AG97)
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}
 

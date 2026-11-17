@@ -724,6 +724,13 @@ async def status_partial(request: Request):
 
     parts = []
     for name, state in checks.items():
+        if name == "mcp" and state == "down" and not os.environ.get("ATLAS_MCP_URL", "").strip():
+            # A stdio install has no MCP HTTP server: its client starts the server itself. The first view after
+            # `ROUND-TRIP: OK` showed a red `mcp: down` (AG97, sweep 25); an explicit ATLAS_MCP_URL still goes red.
+            parts.append(f'<span class="text-gray-400" title="no MCP HTTP server on port {_html_mod.escape(str(mcp_port))}: '
+                         'a stdio install has none (your client starts the server itself; sextant verify proves it); '
+                         'HTTP mode is optional">mcp: stdio</span>')
+            continue
         c = ("text-green-400" if state.startswith("up")
              else ("text-yellow-400" if state == "degraded" else "text-red-400"))
         parts.append(f'<span class="{c}">{name}: {state}</span>')
@@ -768,6 +775,8 @@ async def status_partial(request: Request):
         _bad = [j for j in _summ["jobs"] if j["status"] in ("error", "stale", "unknown")]
         _detail = "; ".join(f'{j["job_id"]}: {j["status"]} ({j["age_label"]})' for j in _bad) or "all lanes fresh"
         _extra = "" if _summ["overall"] == "ok" else f" ({len(_bad)})"
+        if all(j["status"] == "unknown" for j in _summ["jobs"]):
+            raise LookupError("no lane has ever run: not configured here, so no pill (AG97)")
         parts.append(
             f'<span class="{_mcls}" title="maintenance lanes -- {_html_mod.escape(_detail)}">'
             f'maint: {_summ["overall"]}{_extra}</span>'
@@ -779,7 +788,9 @@ async def status_partial(request: Request):
     # freshness, read from .atlas/security/index.json (local file, no subprocess).
     try:
         from atlas_plus.web import security_status as _sec
-        parts.append(_sec.rollup_span(_sec.summarize_security(_sec.read_audit_index())))
+        _ssum = _sec.summarize_security(_sec.read_audit_index())
+        if _ssum.get("status") != "unknown":   # no audit has ever run: the feature is not set up here (AG97)
+            parts.append(_sec.rollup_span(_ssum))
     except Exception:
         pass
 
@@ -787,7 +798,9 @@ async def status_partial(request: Request):
     # limit, read from .build-logs/loop-state.json (local file, no subprocess).
     try:
         from atlas_plus.web import loop_status as _loops
-        parts.append(_loops.rollup_span(_loops.summarize_loops(_loops.read_loop_state())))
+        _lsum = _loops.summarize_loops(_loops.read_loop_state())
+        if _lsum.get("status") != "unknown":   # no loop-state snapshot: no build loop here (AG97)
+            parts.append(_loops.rollup_span(_lsum))
     except Exception:
         pass
 
@@ -3570,6 +3583,9 @@ async def api_topology(request: Request):
             worker_s = "active"
     except Exception:
         pass
+    _mcp_detail = MCP_URL
+    if mcp_s == "down" and not os.environ.get("ATLAS_MCP_URL", "").strip():
+        mcp_s, _mcp_detail = "n/a", "stdio: your client starts it (no HTTP server)"   # the status pill's sibling (AG97)
     state = atlas_paths.state_dir()
     try:
         from atlas_plus.tickets.store import TICKETS_ROOT as _tickets_root
@@ -3581,7 +3597,7 @@ async def api_topology(request: Request):
         {"id": "helm", "label": "Helm (this UI)", "kind": "service", "status": "up",
          "detail": f"port {WEB_PORT}"},
         {"id": "mcp", "label": "MCP server", "kind": "service", "status": mcp_s,
-         "detail": MCP_URL},
+         "detail": _mcp_detail},
         {"id": "brain", "label": "Brain", "kind": "service", "status": brain_s,
          "detail": BRAIN_URL},
         {"id": "worker", "label": "Worker", "kind": "service", "status": worker_s,
@@ -3634,6 +3650,33 @@ _SERVICE_TASKS = {s["task"] for s in _SERVICES}
 _SERVICE_ACTIONS = {"start", "stop", "restart"}
 
 
+def _install_marks() -> list[str]:
+    """Paths whose presence in a task's command line makes it THIS install's: the venv, its python, the clone."""
+    import sys as _sys
+    marks = [_sys.prefix, os.path.dirname(_sys.executable)]
+    try:
+        marks.append(str(Path(__file__).resolve().parents[3]))   # the clone of an editable install (src/atlas_plus/web)
+    except IndexError:
+        pass
+    out = []
+    for m in marks:
+        n = m.replace("\\", "/").rstrip("/").casefold()
+        if n and len(n) > 3 and n not in out:   # never a bare drive root: it would match every task
+            out.append(n)
+    return out
+
+
+def _task_is_this_install(cmdline: str) -> bool:
+    """A scheduled task is found by its FIXED name, so another install's Atlas-Brain answered as this one's (AG97,
+    sweep 25): its command line must name this install's venv, python or clone before the dashboard offers buttons."""
+    c = (cmdline or "").replace("\\", "/").casefold()
+    return bool(c.strip()) and any(m in c for m in _install_marks())
+
+
+_SERVICE_PS_ACTION = "$a=@($t.Actions)[0];"
+_SERVICE_PS_CMDLINE = "$($a.Execute) $($a.Arguments) $($a.WorkingDirectory)"
+
+
 def _run_powershell(cmd: str, timeout: float = 25.0) -> tuple[int, str]:
     """Run a PowerShell command; return (returncode, combined output). Module-level for test injection."""
     import subprocess
@@ -3654,21 +3697,38 @@ async def services_list(request: Request):
     names = "','".join(s["task"] for s in _SERVICES)
     cmd = (
         "$ErrorActionPreference='SilentlyContinue';@('" + names + "')|ForEach-Object{"
-        "$t=Get-ScheduledTask -TaskName $_;$i=Get-ScheduledTaskInfo -TaskName $_;"
-        "\"$_`t$($t.State)`t$($i.LastTaskResult)\"}"
+        "$t=Get-ScheduledTask -TaskName $_;$i=Get-ScheduledTaskInfo -TaskName $_;" + _SERVICE_PS_ACTION +
+        "\"$_`t$($t.State)`t$($i.LastTaskResult)`t" + _SERVICE_PS_CMDLINE + "\"}"
     )
     # PowerShell takes seconds; run it off-loop or every SSE/poll client in
     # this single-process uvicorn stalls behind it (sweep finding #3).
     rc, out = await asyncio.to_thread(lambda: _ttl_cached("services-ps", lambda: _run_powershell(cmd, 20.0), ttl=30.0))  # 5 s per poll before (MN34)
     states: dict[str, str] = {}
+    cmdlines: dict[str, str] = {}
     for line in out.splitlines():
         parts = line.split("\t")
         if len(parts) >= 2 and parts[0].strip():
             states[parts[0].strip()] = parts[1].strip()
-    rows = []
+            cmdlines[parts[0].strip()] = parts[3].strip() if len(parts) >= 4 else ""
+    rows = [('<div class="text-slate-500 text-xs pb-1 border-b border-slate-700">Windows Scheduled Tasks found by fixed '
+             'name (Atlas-*). Buttons appear only for a task whose command runs this install '
+             f'({_html_mod.escape(sys.prefix)}); a task of another install is listed, never started or stopped here.</div>')]
     for s in _SERVICES:
         state = states.get(s["task"], "?")
         dot = "text-green-400" if state == "Running" else ("text-slate-500" if state in ("Ready", "Disabled") else "text-yellow-400")
+        if not _task_is_this_install(cmdlines.get(s["task"], "")):
+            _why = ("no such task on this machine" if state in ("?", "") else
+                    "another install&#39;s task (not this one&#39;s command): no buttons")
+            rows.append(
+                f'<div class="flex items-center gap-2 py-1 border-b border-slate-700">'
+                f'<span class="{dot} text-xs">&#9679;</span>'
+                f'<span class="text-slate-300 text-xs w-28">{_html_mod.escape(s["label"])}</span>'
+                f'<span class="text-slate-500 text-xs w-20">{_html_mod.escape(state)}</span>'
+                f'<span class="text-slate-500 text-xs flex-1 truncate" title="{_html_mod.escape(cmdlines.get(s["task"], ""))}">'
+                f'{_why}</span>'
+                f'</div>'
+            )
+            continue
         rows.append(
             f'<div class="flex items-center gap-2 py-1 border-b border-slate-700">'
             f'<span class="{dot} text-xs">&#9679;</span>'
@@ -3691,6 +3751,13 @@ async def services_action(task: str, action: str, request: Request):
         raise HTTPException(status_code=400, detail="Unknown service")
     if action not in _SERVICE_ACTIONS:
         raise HTTPException(status_code=400, detail="Unknown action")
+    # The list hides the buttons; the endpoint refuses too (a stale page or a scripted POST): AG97
+    _rc0, _cl = await asyncio.to_thread(
+        _run_powershell, f"$ErrorActionPreference='SilentlyContinue';$t=Get-ScheduledTask -TaskName '{task}';"
+        + _SERVICE_PS_ACTION + '"' + _SERVICE_PS_CMDLINE + '"', 20.0)
+    if _rc0 != 0 or not _task_is_this_install(_cl):
+        raise HTTPException(status_code=409, detail=f"{task} is not this install's scheduled task (its command does not "
+                                                    "run this install's Python): start or stop it where it was installed")
     if action == "start":
         cmd = f"Enable-ScheduledTask -TaskName '{task}' -EA SilentlyContinue | Out-Null; Start-ScheduledTask -TaskName '{task}'"
     elif action == "stop":
@@ -4427,8 +4494,9 @@ async def memory_search(request: Request, q: str = ""):
                 text = md_file.read_text(encoding="utf-8", errors="replace")
                 if q_lower not in _gfold(text):
                     continue
+                from atlas_plus.mcp.memory_server.fts import strip_snippet_comments as _ssc
                 matching = [
-                    l.strip() for l in text.split("\n")
+                    _ssc(l.strip()) for l in text.split("\n")
                     if q_lower in _gfold(l) and l.strip() and not l.startswith("---")
                 ][:3]
                 rel = md_file.relative_to(MEMORY_ROOT).as_posix()   # it printed backslash paths on Windows (AG89)
@@ -4524,7 +4592,8 @@ async def sessions_search(q: str = "", request: Request = None):
             continue
         start = max(0, idx - 60)
         end = min(len(text), idx + len(q) + 100)
-        snippet = text[start:end].replace("\n", " ").strip()
+        from atlas_plus.mcp.memory_server.fts import strip_snippet_comments as _ssc
+        snippet = _ssc(text[start:end].replace("\n", " ").strip())   # `<!-- session:... -->` tags (AG97)
         results.append((f.name, snippet))
         if len(results) >= 20:
             break
@@ -4813,6 +4882,18 @@ async def ws_chat(websocket: WebSocket, session_id: str):
                 text = await websocket.receive_text()
                 if not text.strip():
                     continue
+                try:
+                    # A quick look first: with no Brain the chat said "Brain is thinking..." until the stream's
+                    # connect gave up (AG97, sweep 25); now the MN56 sentence comes at once
+                    await client.get(f"{BRAIN_URL}/health", headers=_brain_headers,
+                                     timeout=httpx.Timeout(3.0, connect=0.75))
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    await websocket.send_json({"type": "error", "detail": (
+                        f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), "
+                        "or set ATLAS_BRAIN_URL.")})
+                    continue
+                except Exception:  # noqa: BLE001 - a slow or odd health answer: the stream below says what is wrong
+                    pass
                 await websocket.send_json({"type": "thinking"})
                 try:
                     # Use streaming endpoint to relay live tool-call progress to browser.
@@ -5674,6 +5755,22 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   </div>
 </div>
 
+<!-- Keyboard shortcuts (`?` or the palette's "Keyboard shortcuts"; AG97: the dashboard had no help) -->
+<div id="kbd-help" class="palette-overlay" style="display:none" tabindex="-1" onclick="if(event.target===this)closeShortcuts()">
+  <div class="palette-box" role="dialog" aria-modal="true" aria-labelledby="kbd-help-title" style="padding:12px 16px">
+    <div id="kbd-help-title" class="text-sm font-bold mb-2">Keyboard shortcuts</div>
+    <table class="text-xs"><tbody>
+      <tr><td class="pr-4 font-mono">Ctrl+K</td><td>command palette (every action by name)</td></tr>
+      <tr><td class="pr-4 font-mono">/</td><td>search memory</td></tr>
+      <tr><td class="pr-4 font-mono">g d / g t / g a</td><td>go to Dashboard / Tasks / Agents</td></tr>
+      <tr><td class="pr-4 font-mono">g m / g c / g s / g k</td><td>go to Memory / Chat / Sessions / Tickets</td></tr>
+      <tr><td class="pr-4 font-mono">?</td><td>this list</td></tr>
+      <tr><td class="pr-4 font-mono">Esc</td><td>close a dialog</td></tr>
+    </tbody></table>
+    <div class="text-xs text-slate-500 mt-2">Shortcuts are off while you type in a box.</div>
+  </div>
+</div>
+
 <!-- Quick Dispatch Modal -->
 <div id="dispatch-modal"
   style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);align-items:center;justify-content:center;z-index:100">
@@ -6420,12 +6517,14 @@ document.addEventListener('keydown',e=>{{
   if(e.key==='Escape'){{
     const palOpen=document.getElementById('palette').style.display!=='none';
     const modalOpen=(document.getElementById('dispatch-modal')||{{style:{{}}}}).style.display==='flex';
-    closeDispatchModal(); closePalette(palOpen);
-    if(!palOpen&&!modalOpen&&_returnFromPane())e.preventDefault();
+    const helpOpen=(document.getElementById('kbd-help')||{{style:{{}}}}).style.display==='flex';
+    closeDispatchModal(); closePalette(palOpen); closeShortcuts();
+    if(!palOpen&&!modalOpen&&!helpOpen&&_returnFromPane())e.preventDefault();
   }}
   if((e.ctrlKey||e.metaKey)&&e.key==='k'){{ e.preventDefault(); openPalette(); return; }}
   const tag=document.activeElement&&document.activeElement.tagName;
   const inInput=(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT');
+  if(!inInput&&e.key==='?'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){{ e.preventDefault(); showShortcuts(); return; }}
   if(!inInput&&e.key==='/'){{
     e.preventDefault();
     switchTab('memory');
@@ -6459,7 +6558,7 @@ async function quickCapture(){{
       body:JSON.stringify({{fact,scope}})}});
     const d=await r.json();
     if(d.ok){{
-      st.textContent='saved';st.className='text-xs text-green-400 shrink-0';
+      st.textContent=d.already_remembered?'already remembered':'saved';st.className='text-xs text-green-400 shrink-0';
       inp.value='';
     }}else{{
       st.textContent=d.error||'error';st.className='text-xs text-red-400 shrink-0';
@@ -6792,8 +6891,11 @@ const _PALETTE_CMDS=[
   {{label:'Pending facts',hint:'memory',action:()=>{{closePalette();switchTab('memory');htmx.trigger(document.getElementById('pending-facts-list'),'load');}}}},
   {{label:'Toggle escalation',hint:'config',action:()=>{{closePalette();toggleConfig('ATLAS_CLAUDE_ESCALATION');}}}},
   {{label:'Retry all failed',hint:'tasks',action:()=>{{closePalette();switchTab('tasks');retryAllFailed();}}}},
+  {{label:'Keyboard shortcuts',hint:'help ?',action:()=>{{closePalette();showShortcuts();}}}},
   {{label:'Stop server',hint:'system',action:()=>stopServer()}},
 ];
+function showShortcuts(){{const h=document.getElementById('kbd-help');if(h){{h.style.display='flex';h.focus();}}}}
+function closeShortcuts(){{const h=document.getElementById('kbd-help');if(h)h.style.display='none';}}
 let _palActive=0,_palReturn=null;
 
 function openPalette(){{

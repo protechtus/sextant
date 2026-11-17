@@ -234,7 +234,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if hub and not any(d == h or d.startswith(h) or h.startswith(d) for d in declared for h in hub):
             print(f"  note: the hub allows only {', '.join(report.hub_prefixes)} for this pairing; "
                   f"your --share ({', '.join(declared)}) is outside it, so nothing can sync")
-        elif report.local_files == 0 and not report.pulled:
+        elif report.local_files == 0 and not (report.pulled or report.would_pull):
             print("  note: the declared share matches no local file yet (check the prefix spelling)")
     for rel in report.conflicts:
         if args.dry_run:  # nothing is parked in a dry run: it said "is parked at" (AG82)

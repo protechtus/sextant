@@ -12,7 +12,9 @@
 > Every LLM session should start with the context of every previous session -- without manual priming.
 
 ```text
-python -m venv .venv                                  # then activate it: . .venv/bin/activate  (Git Bash on Windows: . .venv/Scripts/activate; PowerShell: .venv\Scripts\Activate.ps1)
+py -3.12 -m venv .venv                                # Windows: any 3.11+ that `py --list` shows (py -3.13, py -3.11); macOS/Linux: python3 -m venv .venv (3.11+)
+.venv\Scripts\Activate.ps1                            # PowerShell; Git Bash: . .venv/Scripts/activate; macOS/Linux: . .venv/bin/activate
+pip --version                                         # STOP unless this names .venv: the venv or its activation failed (delete .venv, fix the line above)
 pip install git+https://github.com/protechtus/sextant
 sextant init                                          # a corpus (plain Markdown) and a state dir
 sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it

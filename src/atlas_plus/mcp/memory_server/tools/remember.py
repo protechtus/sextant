@@ -281,6 +281,22 @@ def _same_file_repeat(fact: str, written_to: Path) -> Optional[dict]:
     return None
 
 
+def _already_in_note(fact: str, target: Path) -> bool:
+    """The exact fact already stands in this note as a written fact line (`<fact>  <!-- source:... -->`).
+
+    Checked BEFORE the write: the same fact remembered twice was written twice and only then reported
+    as sim=1.0 (AG97, sweep 25). Exact text only; a near repeat still writes and gets the hint."""
+    try:
+        from ..routing import _scrub_controls
+        needle = _scrub_controls(fact or "").strip()
+        if not needle or not target.exists():
+            return False
+        raw = target.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+        return re.search(r"(?:^|\n)" + re.escape(needle) + r"[ \t]+<!--\s*source:", raw) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def memory_remember(
     scope: str,
     fact: str,
@@ -367,6 +383,16 @@ def memory_remember(
                           "ATLAS_MEMORY_ROOT (or ATLAS_WORKSPACE_ROOT) to the MCP server; "
                           "`sextant setup` prints the registration with them baked in")}
 
+    if _already_in_note(fact, target):
+        try:
+            _rel = target.resolve().relative_to(Path(_routing_root()).resolve()).as_posix()
+        except Exception:  # noqa: BLE001
+            _rel = target.name
+        return {"ok": True, "file": str(target), "version_copy": None, "error": None,
+                "already_remembered": True, "possible_duplicate": False, "duplicate_hint": None,
+                "autocommit_note": None, "anti_warning": None,
+                "note": f"Already remembered in {_rel}: the same fact stands there, nothing was written"}
+
     _vh: dict = {"path": None}
 
     def _version(t: Path) -> None:
@@ -412,6 +438,7 @@ def memory_remember(
         "file": str(target),
         "version_copy": str(version_path) if version_path else None,
         "error": None,
+        "already_remembered": False,
         "possible_duplicate": dup is not None,
         "autocommit_note": _ac_note or None,
         "duplicate_hint": f"Similar content at {dup['path']} (sim={dup['score']})" if dup else None,

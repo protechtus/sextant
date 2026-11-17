@@ -55,8 +55,33 @@ def _tokenize(text: str) -> set[str]:
         end = text.find("---", 3)
         if end != -1:
             text = text[end + 3:]
-    words = re.findall(r"[a-z0-9]+", text.lower())
-    return {w for w in words if len(w) > 2 and w not in _STOP_WORDS}
+    try:
+        # Search's word regex and folds (AG97, sweep 25): `[a-z0-9]+` gave a Cyrillic or Japanese task no tokens at
+        # all, so `sextant context` never named a matching note for it. CJK runs give bigrams (no word spaces).
+        import unicodedata as _ud
+        from atlas_plus.mcp.memory_server.fts import (
+            _CJK_RE, _WORD_RE, _alias_of, _fold_marks, _recompose,
+        )
+        s = _fold_marks(_recompose(_ud.normalize("NFKC", text))).casefold()
+        out: set[str] = set()
+        for w in _WORD_RE.findall(s):
+            if _CJK_RE.search(w):
+                for run in re.findall(_CJK_RE.pattern + "+", w):
+                    out.update(run[i:i + 2] for i in range(len(run) - 1))
+                w = re.sub(_CJK_RE.pattern + "+", " ", w).strip()
+                if not w or " " in w:
+                    out.update(p for p in w.split() if len(p) > 2 and p not in _STOP_WORDS)
+                    continue
+            if len(w) > 2 and w not in _STOP_WORDS:
+                out.add(w)
+                if not w.isascii():
+                    out.add(_ud.normalize("NFC", "".join(c for c in _ud.normalize("NFD", w)
+                                                         if not 0x300 <= ord(c) < 0x370)))  # `arhus` / `Århus`
+                    out.add(_alias_of(w))   # `aarhus` / `Århus`, like search (AG96)
+        return out
+    except Exception:  # noqa: BLE001 - priming never fails over a fold
+        words = re.findall(r"[a-z0-9]+", text.lower())
+        return {w for w in words if len(w) > 2 and w not in _STOP_WORDS}
 
 
 # A comment on its own line goes with its line; an inline one leaves the line break. The

@@ -19,6 +19,17 @@ public tree.
 
 ## [Unreleased]
 
+### Sweep 25 second wave (AG97: the stranger's first fifteen minutes)
+
+- README quickstart names the interpreter (`py -3.12`, any 3.11+) and stops when `pip --version` does not name `.venv`; GETTING-STARTED says the same.
+- The status bar shows a grey `mcp: stdio` (not a red `down`) when no MCP HTTP server is configured, and no `maint`/`sec`/`loops` pill for a feature that never ran; the Map's MCP node matches.
+- `sextant remember` (CLI, MCP tools, dashboard capture, Brain `/save`, Telegram) of a fact already in the note says "Already remembered" and writes nothing.
+- Search snippets (fts, so the CLI, the MCP tool and the dashboard; the dashboard's grep fallback and session search too) drop HTML comments, including a provenance tag the snippet window cut open.
+- The dashboard has a "Keyboard shortcuts" list: `?` or the palette entry.
+- The Services tab labels its Atlas-* rows as Windows Scheduled Tasks found by fixed name and offers start/stop only for a task whose command runs this install; the endpoint refuses the others (409).
+- Brain chat with no Brain answers with the not-running sentence at once instead of "Brain is thinking...".
+- `sextant setup` section 4 uses `ATLAS_MCP_PORT`; `sextant context` matching notes (and the temporal facts' scoring) tokenize every script with search's folds; `sync --dry-run` prints "would pull N, would push N".
+
 ### Fixed: a hub corpus restored without its state dir is caught per file (SEX-017, sweep 25 AG94)
 
 - A corpus restored on its own over a live state dir left the generation and its marks untouched, and the corpus-hash

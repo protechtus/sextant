@@ -544,7 +544,7 @@ def _save_fact(arg: str) -> None:
             else:
                 console.print(f"[red]Save failed: {error or result}[/red]")
         else:
-            console.print(f"[green]Saved[/green] to {result.get('file', scope)}")
+            console.print(f"[green]{'Already remembered in' if result.get('already_remembered') else 'Saved to'}[/green] {result.get('file', scope)}")
     except Exception as exc:
         console.print(f"[red]Save error: {exc}[/red]")
 

@@ -529,7 +529,10 @@ def test_same_file_repeat_is_a_duplicate(tmp_path, monkeypatch):
     first = memory_remember("project:dupseq", "the walrus operator landed in version three point eight", source="agent")
     second = memory_remember("project:dupseq", "the walrus operator landed in version three point eight", source="agent")
     assert first["ok"] and not first["possible_duplicate"]
-    assert second["ok"] and second["possible_duplicate"] and "dupseq" in (second["duplicate_hint"] or "")
+    # AG97: the exact repeat is no longer written at all; a repeat in other letter case still writes and gets the hint
+    assert second["ok"] and second["already_remembered"] and not second["possible_duplicate"]
+    third = memory_remember("project:dupseq", "The Walrus operator landed in version three point eight", source="agent")
+    assert third["ok"] and third["possible_duplicate"] and "dupseq" in (third["duplicate_hint"] or "")
 
 
 def test_decision_and_anti_tools_cap_their_text_and_doctor_flags_duplicate_keys(tmp_path, monkeypatch):
