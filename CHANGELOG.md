@@ -19,6 +19,23 @@ public tree.
 
 ## [Unreleased]
 
+### Sweep 25 fix wave (AG98: hardening follow-ups from the paranoid lane, MN86)
+
+- `sextant init` creates the corpus and state roots mode 0700 on Linux and macOS (they were 0755 under umask 022:
+  every note, the index and the sync device registry were readable by any local account); the sync state dir is
+  created 0700 too, also on a hub paired before init. An existing root is not changed: `sextant-doctor` shows a
+  Permissions warning with the `chmod 700` line. Windows is unchanged.
+- The sync hub's unauthenticated `/health` and `/sync/v1/health` answer 421 to a Host that is not loopback or listed
+  in the new `ATLAS_SYNC_ALLOWED_HOSTS` (the MCP server's rule; a bind beyond loopback with no list keeps the check
+  off). Behind a proxy or tunnel that you probe through, set it to the public name. Device routes are unchanged.
+- The dashboard serves Tailwind 3.4.17 from the package with subresource integrity; the CSP no longer allows
+  cdn.tailwindcss.com (htmx still comes from unpkg.com, SRI-pinned). See NOTICE.
+- A symlink or junction that leads out of the corpus is left out of the dashboard's file tree, the MCP list tool, the
+  `atlas://memory/` catalog, tag suggestions and the topic index (the list tool used to read its title).
+- The research link checker checks every redirect hop against the public-address rule and never probes loopback,
+  LAN or metadata addresses (such a link is reported as skipped, never removed).
+- `.github/dependabot.yml`: weekly grouped updates for the SHA-pinned actions and the pip dependencies.
+
 ### Sweep 25 second wave (AG97: the stranger's first fifteen minutes)
 
 - README quickstart names the interpreter (`py -3.12`, any 3.11+) and stops when `pip --version` does not name `.venv`; GETTING-STARTED says the same.

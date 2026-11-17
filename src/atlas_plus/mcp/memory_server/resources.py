@@ -36,6 +36,9 @@ def register_resources(mcp: FastMCP) -> None:
             parts = p.relative_to(MEMORY_ROOT).parts
             if parts and (parts[0] in EXCLUDED_DIRS or is_excluded_mirror(parts)):
                 continue
+            from atlas_plus._fsutil import inside as _inside
+            if not _inside(p, MEMORY_ROOT):
+                continue  # a link out of the corpus (MN86, sweep 25)
             rel = str(p.relative_to(MEMORY_ROOT)).replace("\\", "/")
             lines.append(f"- atlas://memory/{rel}")
         return "\n".join(lines)

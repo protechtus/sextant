@@ -162,18 +162,57 @@ async def _require_principal(request: Request) -> devices.Device:
     return device
 
 
-def create_app() -> FastAPI:
+def _split_host(value: str) -> tuple[str, str]:
+    """`name[:port]` / `[v6][:port]` / bare v6 -> (lowercased name without brackets, port or "")."""
+    h = (value or "").strip().lower()
+    if h.startswith("["):
+        name, _, rest = h[1:].partition("]")
+        return name, rest.lstrip(":")
+    if h.count(":") == 1:
+        name, _, port = h.partition(":")
+        return name, port
+    return h, ""
+
+
+def host_allowed(host_header: str, bind_host: str | None = None) -> bool:
+    """The MCP server's Host rule, for the hub's unauthenticated routes (MN86, sweep 25).
+
+    Loopback names always pass. ATLAS_SYNC_ALLOWED_HOSTS (comma-separated; an entry without a
+    port matches any port) adds the public name a proxy or tunnel forwards. A bind beyond loopback
+    with no list turns the check off, as on the MCP server. A DNS-rebinding page could otherwise
+    read `/health` from any name that resolves to this machine.
+    """
+    bind = (bind_host if bind_host is not None else os.environ.get("ATLAS_SYNC_HOST", "127.0.0.1")).strip() or "127.0.0.1"
+    extra = [_split_host(e) for e in os.environ.get("ATLAS_SYNC_ALLOWED_HOSTS", "").split(",") if e.strip()]
+    if bind not in _LOOPBACK and not extra:
+        return True
+    name, port = _split_host(host_header)
+    if name in _LOOPBACK:
+        return True
+    return any(name == en and (not ep or ep == "*" or ep == port) for en, ep in extra)
+
+
+def create_app(bind_host: str | None = None) -> FastAPI:
     _invalidate_manifest_cache()  # fresh app, fresh view (also isolates tests)
     app = FastAPI(title="Sextant Sync", docs_url=None, redoc_url=None, openapi_url=None)
 
-    @app.get("/sync/v1/health")
-    async def health() -> dict:
+    def _health_answer(request: Request):
+        if not host_allowed(request.headers.get("host", ""), bind_host):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                {"detail": "Invalid Host header. Behind a proxy or tunnel, start the hub with "
+                           "ATLAS_SYNC_ALLOWED_HOSTS=<the public name> (docs/CONFIGURATION.md)."},
+                status_code=421)
         return {"status": "ok", "role": "hub", "protocol": PROTOCOL_VERSION}
 
+    @app.get("/sync/v1/health")
+    async def health(request: Request):
+        return _health_answer(request)
+
     @app.get("/health")
-    async def health_alias() -> dict:
+    async def health_alias(request: Request):
         """The same liveness answer at the path every other service uses (doctor, monitors)."""
-        return {"status": "ok", "role": "hub", "protocol": PROTOCOL_VERSION}
+        return _health_answer(request)
 
     @app.get("/sync/v1/manifest")
     async def get_manifest(device: devices.Device = Depends(_require_principal), since: int | None = None) -> dict:
@@ -367,7 +406,7 @@ def main() -> None:
         print(f"Port {args.port} is already in use on {args.host}: another hub, or another program. Set ATLAS_SYNC_PORT to a free "
               "port.", file=__import__('sys').stderr)  # the raw uvicorn bind error named nothing (AG71)
         raise SystemExit(3)
-    uvicorn.run(create_app(), host=args.host, port=args.port,
+    uvicorn.run(create_app(bind_host=args.host), host=args.host, port=args.port,
                 log_level=_os.environ.get("ATLAS_SYNC_LOG_LEVEL", "warning").lower(), access_log=False, proxy_headers=False)  # every request incl. file paths was logged at INFO (MN35)
 
 

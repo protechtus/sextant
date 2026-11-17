@@ -98,14 +98,20 @@ def run_init(dry_run: bool = False) -> dict:
     created: list[str] = []
     existed: list[str] = []
 
-    def _ensure_dir(p: Path) -> None:
+    def _ensure_dir(p: Path, private: bool = False) -> None:
         if p.is_dir():
             existed.append(str(p))
         else:
             created.append(str(p))
             if not dry_run:
                 try:
-                    p.mkdir(parents=True, exist_ok=True)
+                    if private:
+                        # 0700 on POSIX: the notes, the index and the sync registry were world-readable
+                        # under umask 022 (MN86, sweep 25); the subdirectories sit behind this one
+                        from atlas_plus._fsutil import make_private_dir
+                        make_private_dir(p)
+                    else:
+                        p.mkdir(parents=True, exist_ok=True)
                 except PermissionError as exc:
                     raise SystemExit(_permission_sentence(p, exc)) from None
 
@@ -129,7 +135,7 @@ def run_init(dry_run: bool = False) -> dict:
                         pass
                     raise SystemExit(f"Could not write {p}: {exc.strerror or exc}. Free some space (or fix the folder) and run sextant init again; it repairs what is missing.") from None
 
-    _ensure_dir(memory_root)
+    _ensure_dir(memory_root, private=True)
     for scope in _SCOPE_DIRS:
         _ensure_dir(memory_root / scope)
     _ensure_file(memory_root / "identity" / "user.md", _IDENTITY_TEMPLATE)
@@ -150,7 +156,7 @@ def run_init(dry_run: bool = False) -> dict:
             "and shows no sign of being Sextant state. Sextant will not claim it: point\n"
             f"ATLAS_STATE_DIR at a new or empty directory (for example {state_dir / 'sextant-state'})."
         )
-    _ensure_dir(state_dir)
+    _ensure_dir(state_dir, private=True)
     # Positive ownership marker: the uninstaller refuses to delete a "state dir" without it
     # (data-safety audit 2026-11-09: a mistyped ATLAS_STATE_DIR could aim rmtree anywhere).
     marker = state_dir / ".sextant-state"

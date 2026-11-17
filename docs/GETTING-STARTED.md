@@ -283,7 +283,7 @@ imported vault: `--scope reference:obsidian/README`.
   `python -c "import secrets; print(secrets.token_urlsafe(32))"`,
   set it as `ATLAS_WEB_API_KEY` (persistently: see docs/CONFIGURATION.md's
   note on setting variables), then `sextant-web` and open. The page itself
-  loads two UI libraries (htmx, Tailwind) from public CDNs in your browser:
+  loads one UI library (htmx) from a public CDN in your browser (Tailwind is served by the dashboard):
   offline or with those hosts blocked, every panel stays at "loading..." and
   the page says so; the server's JSON endpoints still answer. Open
   `http://127.0.0.1:8766/?key=<your key>` once; that exchanges the key for a

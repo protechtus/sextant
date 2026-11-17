@@ -5,6 +5,18 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
+import pytest as _pytest_ag98
+
+
+@_pytest_ag98.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """check_url resolves every hop before probing it (AG98): answer with a public address so these
+    mocked-HTTP tests stay offline and do not depend on example.com's real DNS."""
+    import socket
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 443))])
+
+
 def _write_report(path: Path, refs: list[str] = None, body: str = "Body.\n") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     fm = '---\ntitle: "Test Report"\ndate: 2026-05-20\n'

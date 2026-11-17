@@ -21,12 +21,27 @@ def sync_dir() -> Path:
     return atlas_paths.state_dir() / "sync"
 
 
+def private_mkdir(d: Path) -> None:
+    """Create ``d`` (and, when it lies under the default sync dir, the state root and the sync dir first) with mode
+    0700 on POSIX for every directory this call creates. The device registry holds token hashes and the audit trail
+    names every device; under umask 022 both were readable by any local account (MN86, sweep 25)."""
+    from atlas_plus._fsutil import make_private_dir
+    try:
+        sd = sync_dir()
+        chain = [atlas_paths.state_dir(), sd] if (d == sd or sd in d.parents) else []
+    except SystemExit:
+        chain = []
+    for p in chain:
+        make_private_dir(p)
+    make_private_dir(d)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_mkdir(path.parent)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
@@ -45,7 +60,7 @@ def hub_generation(root: Path | None = None) -> int:
 def bump_hub_generation(root: Path | None = None) -> int:
     p = (root or sync_dir()) / "generation"
     g = hub_generation(root) + 1
-    p.parent.mkdir(parents=True, exist_ok=True)
+    private_mkdir(p.parent)
     _record_generation_mark(p.parent, g)  # the mark first: a crash between the two leaves an unused mark, never an unmarked count
     tmp = p.with_name(f"generation.{os.getpid()}.part")
     tmp.write_text(str(g), encoding="ascii")
@@ -100,7 +115,7 @@ def observe_corpus(corpus_hash: str, root: Path | None = None) -> int:
         return g
     if rec_g == str(g):
         g = bump_hub_generation(root)
-    d.mkdir(parents=True, exist_ok=True)
+    private_mkdir(d)
     tmp = p.with_name(f"{_CORPUS_FILE}.{os.getpid()}.part")
     tmp.write_text(f"{g} {corpus_hash}", encoding="ascii")
     os.replace(tmp, p)
@@ -142,7 +157,7 @@ def _load_history(d: Path) -> dict:
 
 
 def _save_history(d: Path, hist: dict) -> None:
-    d.mkdir(parents=True, exist_ok=True)
+    private_mkdir(d)
     tmp = d / f"{_HISTORY_FILE}.{os.getpid()}.part"
     tmp.write_text(json.dumps(hist, separators=(",", ":"), sort_keys=True), encoding="utf-8")
     os.replace(tmp, d / _HISTORY_FILE)
@@ -305,7 +320,7 @@ def audit(event: str, root: Path | None = None, **fields) -> None:
     """Append one audit line. Never raises; auditing must not break syncing."""
     try:
         path = audit_path(root)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        private_mkdir(path.parent)
         record = {"ts": _now(), "event": event, **fields}
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, sort_keys=True) + "\n")

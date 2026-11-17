@@ -529,8 +529,8 @@ def test_tailwind_tag_has_no_cors_mode_and_the_banner_names_the_library():
     from atlas_plus.web import app as web
 
     src = inspect.getsource(web)
-    assert 'src="https://cdn.tailwindcss.com/3.4.17"></script>' in src
-    assert 'crossorigin="anonymous"' not in src.split("cdn.tailwindcss.com/3.4.17")[1][:200]
+    # same-origin now (MN86, sweep 25): SRI without crossorigin works for a same-origin script
+    assert 'src="/static/tailwind-3.4.17.js" integrity="{_TAILWIND_SRI}"></script>' in src
     assert 'typeof tailwind==="undefined"' in src
 
 

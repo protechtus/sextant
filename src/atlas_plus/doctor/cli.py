@@ -253,6 +253,18 @@ def check_disk() -> dict:
         return {}
 
 
+def check_permissions() -> dict:
+    """POSIX: the corpus, state and sync-state roots that group or other can read (MN86, sweep 25).
+
+    `sextant init` creates them 0700 now; an install made before that (umask 022) still has 0755
+    roots, and doctor is where that owner hears about it, with the exact chmod line. Windows: {}.
+    """
+    from atlas_plus import _fsutil
+    from atlas_plus import paths as _paths
+    state = _paths.state_dir()
+    return {"loose": _fsutil.loose_dir_modes([MEMORY_ROOT, state, state / "sync"])}
+
+
 def check_temporal() -> dict:
     """Return temporal graph stats: entity count, active fact count, last build time, and staleness flag.
 
@@ -1899,6 +1911,14 @@ def render_text(data: dict) -> str:
         lines.append(f"  {disk.get('drive')}  free: {color}{free} GB\033[0m  used: {pct}%")
         lines.append("")
 
+    # Permissions (POSIX): a root other local accounts can read (MN86, sweep 25)
+    loose = (data.get("permissions") or {}).get("loose") or []
+    if loose:
+        lines.append("\033[1mPermissions\033[0m")
+        for row in loose:
+            lines.append(f"  \033[33mwarning\033[0m  {row['path']} is mode {row['mode']}: other accounts on this machine can read it. Fix: {row['fix']}")
+        lines.append("")
+
     # Memory quality overview
     mq = data.get("memory_quality", {})
     if mq and mq.get("total_files", 0) > 0:
@@ -2271,6 +2291,7 @@ def collect() -> dict:
         ("worker_detail",     check_worker_detail),
         ("autonomous",        check_autonomous),
         ("disk",              check_disk),
+        ("permissions",       check_permissions),
         ("temporal",          check_temporal),
         ("stop_hook",         check_stop_hook),
         ("tickets",           check_tickets),

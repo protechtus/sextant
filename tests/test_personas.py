@@ -246,7 +246,7 @@ def test_sync_hub_answers_on_health(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "mem"))
     monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
     (tmp_path / "mem").mkdir()
-    c = TestClient(api.create_app())
+    c = TestClient(api.create_app(), base_url="http://127.0.0.1")  # loopback Host (AG98: a foreign one gets 421)
     assert c.get("/health").status_code == 200 and c.get("/sync/v1/health").status_code == 200
 
 
@@ -1396,10 +1396,9 @@ def test_dashboard_hides_the_api_map_and_sends_security_headers(tmp_path, monkey
     import inspect
     src = inspect.getsource(web)
     assert 'htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-' in src
-    # no SRI/CORS mode on Tailwind: cdn.tailwindcss.com sends no Access-Control-Allow-Origin, so the
-    # pinned tag was blocked in every browser and the page rendered unstyled (MN29, sweep 14)
-    assert 'cdn.tailwindcss.com/3.4.17"></script>' in src
-    assert 'crossorigin="anonymous"' not in src.split('cdn.tailwindcss.com/3.4.17')[1][:200]
+    # Tailwind is served by the app itself now (MN86, sweep 25): no third-party script host for it
+    assert 'cdn.tailwindcss.com' not in h["content-security-policy"]
+    assert c.get("/static/tailwind-3.4.17.js").status_code == 200
     assert "history.replaceState" in src
 
 

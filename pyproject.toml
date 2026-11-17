@@ -121,6 +121,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Non-Python files the installed package needs (wheel/sdist audit 2026-11-09).
 "atlas_plus.summarizer" = ["templates/*.j2"]
+"atlas_plus.web" = ["static/*.js"]  # vendored Tailwind 3.4.17 (MN86, sweep 25)
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

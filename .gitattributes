@@ -11,3 +11,7 @@
 *.dll binary
 *.db  binary
 *.sqlite binary
+
+# Vendored third-party files are served byte-for-byte under a subresource-integrity hash:
+# a CRLF checkout on Windows changed the bytes and the browser refused the script (AG98)
+src/atlas_plus/web/static/* -text

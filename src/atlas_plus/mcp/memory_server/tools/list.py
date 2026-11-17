@@ -20,6 +20,15 @@ def _excluded(rel_parts: tuple) -> bool:
         return True
     return is_excluded_mirror(rel_parts)
 
+
+def _outside(p: Path, base: Path) -> bool:
+    """True when ``p`` is reached through a link (symlink, junction) that leads out of the corpus.
+    Reading and search refuse such a file; listing it read its frontmatter title from outside (MN86, sweep 25)."""
+    try:
+        return not p.resolve().is_relative_to(base)
+    except (OSError, ValueError):
+        return True
+
 _cache: dict[str, Any] = {}
 _cache_ts: dict[str, float] = {}  # per-key timestamps — shared float was a bug
 
@@ -71,7 +80,7 @@ def memory_list(prefix: str = "", limit: int = 50) -> list[dict]:
 
     for p in candidates:
         rel_parts = p.relative_to(base).parts
-        if _excluded(rel_parts):
+        if _excluded(rel_parts) or _outside(p, base):
             continue
 
         rel = str(p.relative_to(base)).replace("\\", "/")
@@ -118,7 +127,7 @@ def memory_list_confirmed(since_days: int = 7, limit: int = 50) -> list[dict]:
 
     for p in candidates:
         rel_parts = p.relative_to(base).parts
-        if _excluded(rel_parts):
+        if _excluded(rel_parts) or _outside(p, base):
             continue
 
         try:

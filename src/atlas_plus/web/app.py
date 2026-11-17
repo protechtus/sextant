@@ -480,8 +480,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 
-# Browser hardening (MN4, pipeline sweep 2026-11-11): htmx is pinned by subresource integrity
-# (Tailwind cannot be: its CDN sends no CORS header, MN29), only those two origins may run script, nothing may frame the page,
+# Browser hardening (MN4, pipeline sweep 2026-11-11): htmx is pinned by subresource integrity; Tailwind is
+# served by this app from the package (its CDN sent no CORS header, so it could not carry SRI: MN29, MN86),
+# only this origin and unpkg.com may run script, nothing may frame the page,
 # and the referrer never leaves. 'unsafe-inline' stays for the page's own inline script and
 # Tailwind's generated styles.
 async def _json_object(request: Request, required: tuple[str, ...] = ()) -> dict:
@@ -540,7 +541,7 @@ def _too_deep(raw: bytes, limit: int = 200) -> bool:
     return False
 
 
-_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com; "
+_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
 
@@ -1530,6 +1531,7 @@ async def memory_files(request: Request):
     _SKIP_DIRS = {"_inbox", "__pycache__", ".git", "versions", "_atlas", ".locks", "_sync"}  # copies and state are not notes (MN29: 86% of the tree was versions/)
 
     _FILE_SUFFIXES = (".md", ".txt", ".json", ".yaml", ".yml")
+    from atlas_plus._fsutil import inside as _inside, is_link as _is_link
 
     def _render_tree(directory: str, root: str) -> str:
         # os.scandir: entry types come from the directory read (no per-entry
@@ -1546,6 +1548,8 @@ async def memory_files(request: Request):
         for entry in entries:
             if entry.name in _SKIP_DIRS:
                 continue
+            if _is_link(Path(entry.path)) and not _inside(Path(entry.path), Path(root)):
+                continue  # a link out of the corpus is refused for reading and search; it was still listed by name (MN86)
             if entry.is_dir(follow_symlinks=False):
                 inner = _render_tree(entry.path, root)
                 parts.append(
@@ -1568,6 +1572,26 @@ async def memory_files(request: Request):
     # handler, blocking the event loop for the whole render.
     html = await asyncio.to_thread(_render_tree, str(MEMORY_ROOT), str(MEMORY_ROOT))
     return HTMLResponse(f'<div class="space-y-0.5">{html}</div>')
+
+
+# Tailwind CSS 3.4.17 (Play CDN build), vendored unmodified from https://cdn.tailwindcss.com/3.4.17
+# (MIT License, Copyright (c) Tailwind Labs, Inc.; see NOTICE). The browser fetched it from that host
+# with no integrity check (MN86, sweep 25); it is now part of the package and pinned:
+# sha384-igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K
+_TAILWIND_SRI = "sha384-igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K"
+_TAILWIND_BYTES: bytes | None = None
+
+
+@app.api_route("/static/tailwind-3.4.17.js", methods=["GET", "HEAD"])
+async def tailwind_asset():
+    """A public library, no corpus data: served without a session like /expired (the tag loads before sign-in)."""
+    global _TAILWIND_BYTES
+    if _TAILWIND_BYTES is None:
+        from importlib import resources as _res
+        _TAILWIND_BYTES = (_res.files("atlas_plus.web") / "static" / "tailwind-3.4.17.js").read_bytes()
+    from fastapi.responses import Response as _Resp
+    return _Resp(_TAILWIND_BYTES, media_type="text/javascript; charset=utf-8",
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @app.api_route("/expired", methods=["GET", "HEAD"], response_class=HTMLResponse)  # link checkers probe with HEAD (MN25)
@@ -2299,12 +2323,15 @@ async def memory_suggest_tags(request: Request):
 
     def _do_suggest() -> dict:
         from atlas_plus.curation.tag_suggest import suggest_tags_for_file, inject_tags
+        from atlas_plus._fsutil import inside as _inside
         _excluded = {"archive", "_sync", "versions", "sessions"}
         candidates = []
         for md_file in sorted(MEMORY_ROOT.rglob("*.md")):
             rel_parts = md_file.relative_to(MEMORY_ROOT).parts
             if rel_parts and rel_parts[0] in _excluded:
                 continue
+            if not _inside(md_file, MEMORY_ROOT):
+                continue  # a link out of the corpus: never read, never tagged (MN86, sweep 25)
             tags = suggest_tags_for_file(md_file, memory_root=MEMORY_ROOT, max_tags=4)
             if tags:
                 candidates.append({
@@ -2474,6 +2501,7 @@ async def memory_next_actions(request: Request, limit: int = 5):
             result["orphans"] = []
 
         try:
+            from atlas_plus._fsutil import inside as _fs_inside
             untagged = []
             for md_file in sorted(MEMORY_ROOT.rglob("*.md")):
                 if len(untagged) >= limit:
@@ -2483,8 +2511,8 @@ async def memory_next_actions(request: Request, limit: int = 5):
                     continue
                 if is_excluded_mirror(rel_parts):
                     continue
-                if md_file.name.startswith("_"):
-                    continue
+                if md_file.name.startswith("_") or not _fs_inside(md_file, MEMORY_ROOT):
+                    continue  # a link out of the corpus (MN86, sweep 25)
                 tags = suggest_tags_for_file(md_file, memory_root=MEMORY_ROOT, max_tags=4)
                 if tags:
                     untagged.append({
@@ -2922,6 +2950,7 @@ def _generate_report_isolated():
 def _build_topic_index(memory_root) -> dict[str, list[str]]:
     """Scan .memory/ for frontmatter tags: fields. Return {tag: [path, ...]} sorted by count desc."""
     import yaml as _yaml
+    from atlas_plus._fsutil import inside as _fs_inside
     skip_dirs = {"archive", "_sync", "versions", "_atlas", "anti"}
     tag_to_paths: dict[str, list[str]] = {}
 
@@ -2929,8 +2958,8 @@ def _build_topic_index(memory_root) -> dict[str, list[str]]:
         rel_parts = md_file.relative_to(memory_root).parts
         if any(p in skip_dirs for p in rel_parts):
             continue
-        if md_file.name.startswith("_"):
-            continue
+        if md_file.name.startswith("_") or not _fs_inside(md_file, memory_root):
+            continue  # a link out of the corpus (MN86, sweep 25)
         try:
             raw = md_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -5022,7 +5051,7 @@ def _html_full(key: str) -> str:
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,{_FAVICON_SVG_B64}">
 <link rel="icon" type="image/x-icon" href="data:image/x-icon;base64,{_FAVICON_ICO_B64}">
 <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
-<script src="https://cdn.tailwindcss.com/3.4.17"></script><!-- no integrity/crossorigin: cdn.tailwindcss.com answers without Access-Control-Allow-Origin, so a CORS-mode fetch is blocked and the page renders unstyled (MN29) -->
+<script src="/static/tailwind-3.4.17.js" integrity="{_TAILWIND_SRI}"></script>
 <script>
 // The bootstrap key must not stay in the address bar, history or any referrer: the cookie
 // carries the session from here on (MN4, pipeline sweep 2026-11-11).
@@ -5133,13 +5162,13 @@ div:has(> #mem-q){{flex-wrap:wrap}}
 </head>
 <body hx-headers='{{"X-Sextant-Request": "1"}}'>
 <div id="cdn-missing" style="display:none;margin:8px;padding:10px 14px;border:1px solid #b45309;background:#431407;color:#fde68a;font:14px system-ui,sans-serif;border-radius:6px">
-This dashboard loads two UI libraries (htmx from unpkg.com, Tailwind from cdn.tailwindcss.com) in your browser.
+This dashboard loads one UI library (htmx) from unpkg.com in your browser; Tailwind is served by the dashboard itself.
 <span id="cdn-missing-which"></span> Without htmx every panel stays at "loading..."; without Tailwind nothing is styled. You are offline, or that host is blocked.
 The server itself is fine; its JSON endpoints (for example <code>/api/stats/summary</code>) answer without them.
 </div>
 <script>
 // Offline, the page was a permanent "loading..." shell with no explanation (AG18, sweep 11).
-window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htmx==="undefined")miss.push("htmx (unpkg.com)");if(typeof tailwind==="undefined")miss.push("Tailwind (cdn.tailwindcss.com)");if(miss.length){{var b=document.getElementById("cdn-missing");if(b){{var w=document.getElementById("cdn-missing-which");if(w)w.textContent="Not loaded: "+miss.join(", ")+".";b.style.display="block";}}}}}});
+window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htmx==="undefined")miss.push("htmx (unpkg.com)");if(typeof tailwind==="undefined")miss.push("Tailwind (/static/tailwind-3.4.17.js on this dashboard)");if(miss.length){{var b=document.getElementById("cdn-missing");if(b){{var w=document.getElementById("cdn-missing-which");if(w)w.textContent="Not loaded: "+miss.join(", ")+".";b.style.display="block";}}}}}});
 </script>
 
 <!-- Top bar, capture bar and tab bar: one banner landmark (display:contents keeps the flex layout) -->

@@ -68,7 +68,8 @@ def _load_raw(path: Path | None = None) -> list[dict]:
 
 def _save_raw(devices: list[dict], path: Path | None = None) -> None:
     p = path or registry_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
+    from atlas_plus.sync.store import private_mkdir
+    private_mkdir(p.parent)  # token hashes: 0700 on POSIX (MN86, sweep 25)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps({"devices": devices}, indent=2, sort_keys=True),

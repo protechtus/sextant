@@ -22,7 +22,8 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(corpus))
     monkeypatch.setenv("ATLAS_STATE_DIR", str(state))
     _, token = devices.pair("laptop")
-    client = TestClient(api.create_app(), raise_server_exceptions=False)
+    # a loopback Host: the health routes answer 421 to a foreign one such as TestClient's `testserver` (AG98)
+    client = TestClient(api.create_app(), raise_server_exceptions=False, base_url="http://127.0.0.1")
     return client, token, corpus
 
 

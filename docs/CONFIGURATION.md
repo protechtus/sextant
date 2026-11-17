@@ -81,6 +81,7 @@ registration reaches only the MCP server process, not the hooks.
 | `ATLAS_WEB_HOST` / `ATLAS_WEB_PORT` | `127.0.0.1` / `8766` | Web dashboard. |
 | `ATLAS_BRAIN_HOST` / `ATLAS_BRAIN_PORT` | `127.0.0.1` / `8767` | Brain task-queue API. |
 | `ATLAS_SYNC_HOST` / `ATLAS_SYNC_PORT` | `127.0.0.1` / `8768` | Device-sync hub. |
+| `ATLAS_SYNC_ALLOWED_HOSTS` | unset | Comma-separated Host names the sync hub's unauthenticated `/health` and `/sync/v1/health` answer besides loopback (same form as `ATLAS_MCP_ALLOWED_HOSTS`). Set it to the public name when a proxy or tunnel forwards that name and you probe liveness through it; otherwise those two routes answer 421 Invalid Host header (DNS-rebinding guard). The device routes are guarded by the device token and do not check the Host. With `ATLAS_SYNC_HOST` beyond loopback and no list, the check is off. |
 | `ATLAS_BRAIN_URL` | `http://127.0.0.1:8767` | Where clients (web UI, Telegram, doctor) find the Brain. Change together with `ATLAS_BRAIN_PORT`. |
 | `ATLAS_MCP_URL` | derived | Where doctor and the web UI's Map tab probe the MCP server. |
 | `ATLAS_WEB_URL` | `http://127.0.0.1:8766` | Where doctor probes the dashboard's health. Change together with `ATLAS_WEB_PORT`. |

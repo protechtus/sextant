@@ -22,6 +22,7 @@ _SKIP_DOMAINS = {
 }
 _TIMEOUT_SECS = 5.0
 _MAX_WORKERS = 8
+_MAX_REDIRECTS = 5
 
 
 def _should_skip(url: str) -> bool:
@@ -42,7 +43,7 @@ def check_url(url: str) -> dict:
     Returns {url, status, ok, gated, skipped, error}.
       ok:      HTTP 200-399 (reachable)
       gated:   HTTP 401/403 (auth-required, may still exist)
-      skipped: domain on skip list
+      skipped: domain on skip list, or a hop that is not a public address (never probed, never removed)
       error:   connection/timeout error text, or None
     """
     if _should_skip(url):
@@ -54,14 +55,31 @@ def check_url(url: str) -> dict:
             "User-Agent": "Atlas-LinkChecker/1.0 (research corpus health check)",
             "Accept": "*/*",
         }
-        with httpx.Client(timeout=_TIMEOUT_SECS, follow_redirects=True) as client:
-            try:
-                r = client.head(url, headers=headers)
+        from atlas_plus.inbox.summarize import _refuse_private_target
+        # Redirects are followed by hand and every hop must be a public address: a report's link
+        # (written from web research) that redirected to 127.0.0.1, the LAN or a metadata address
+        # made the checker probe it blind (MN86's rule, applied here by AG98, sweep 25).
+        with httpx.Client(timeout=_TIMEOUT_SECS, follow_redirects=False) as client:
+            hop = url
+            for _ in range(_MAX_REDIRECTS + 1):
+                try:
+                    _refuse_private_target(hop, what="link check", allow_env=None)
+                except ValueError as exc:
+                    if "cannot resolve" in str(exc):  # a dead name is a broken link, as before
+                        return {"url": url, "status": None, "ok": False, "gated": False, "skipped": False, "error": str(exc)[:160]}
+                    return {"url": url, "status": None, "ok": True, "gated": False, "skipped": True, "error": str(exc)[:160]}
+                try:
+                    r = client.head(hop, headers=headers)
+                except httpx.RequestError:
+                    # Some servers reject HEAD -- fall back to GET with a small range
+                    r = client.get(hop, headers={**headers, "Range": "bytes=0-0"})
                 status = r.status_code
-            except httpx.RequestError:
-                # Some servers reject HEAD -- fall back to GET with a small range
-                r = client.get(url, headers={**headers, "Range": "bytes=0-0"})
-                status = r.status_code
+                if not (r.is_redirect is True and r.headers.get("location")):
+                    break
+                hop = str(r.url.join(r.headers["location"]))
+            else:
+                return {"url": url, "status": status, "ok": False, "gated": False, "skipped": False,
+                        "error": f"more than {_MAX_REDIRECTS} redirects"}
 
         if status in (401, 403):
             return {"url": url, "status": status, "ok": True, "gated": True, "skipped": False, "error": None}

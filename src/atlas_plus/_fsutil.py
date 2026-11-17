@@ -30,3 +30,38 @@ def inside(path: Path, root: Path) -> bool:
         return path.resolve().is_relative_to(root.resolve())
     except (OSError, ValueError):
         return False
+
+
+def make_private_dir(path: Path) -> bool:
+    """``mkdir -p path``; when this call creates ``path`` on POSIX, it ends up mode 0700.
+
+    Under the usual umask 022 a new corpus or state root was 0755 and every note, the search
+    index and the sync device registry were readable by any local account (MN86, sweep 25).
+    Only a directory this call creates is changed: an existing one keeps the owner's choice
+    (doctor reports it). Windows is untouched (ACLs, not mode bits). Returns True if created.
+    """
+    existed = path.is_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    if not existed and os.name != "nt":
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    return not existed
+
+
+def loose_dir_modes(paths) -> list[dict]:
+    """POSIX only: the directories in ``paths`` that exist and grant group or other any access."""
+    out: list[dict] = []
+    if os.name == "nt":
+        return out
+    import shlex
+    import stat as _stat
+    for p in paths:
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if _stat.S_ISDIR(st.st_mode) and st.st_mode & 0o077:
+            out.append({"path": str(p), "mode": oct(st.st_mode & 0o777)[2:], "fix": f"chmod 700 {shlex.quote(str(p))}"})
+    return out

@@ -196,7 +196,7 @@ sextant.example.com {
 ```bash
 sudo systemctl reload caddy
 curl -s https://sextant.example.com/health          # web liveness
-curl -s https://sextant.example.com/sync/v1/health  # sync hub liveness
+curl -s https://sextant.example.com/sync/v1/health  # sync hub liveness (start the hub with ATLAS_SYNC_ALLOWED_HOSTS=sextant.example.com, or it answers 421)
 ```
 
 Device config for sync: `ATLAS_SYNC_HUB=https://sextant.example.com`

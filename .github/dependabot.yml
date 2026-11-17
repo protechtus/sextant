@@ -1,0 +1,29 @@
+# Weekly update PRs (MN86, sweep 25). Workflow actions are pinned by full commit SHA with the tag
+# in a trailing comment (`uses: actions/checkout@<sha>  # v4`); Dependabot keeps that style: it
+# bumps the SHA and rewrites the comment. Python dependencies come grouped into one weekly PR so
+# the CI matrix runs once per batch, not once per package. Security updates are not grouped and
+# are not held for the weekly run (Dependabot raises them as soon as an advisory lands, when
+# "Dependabot security updates" is on in the repository settings).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 5

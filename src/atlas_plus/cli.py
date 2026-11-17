@@ -342,7 +342,7 @@ def cmd_dashboard(ctx: typer.Context) -> None:
     # The banner prints inside web.main once every refusal (unknown flag, --port, missing or short
     # key, busy port) has passed: it preceded each of them (AG71 fixed two, AG90 the rest).
     _webapp._START_BANNER = ("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
-                             "bind, default 127.0.0.1:8766; the page loads htmx and Tailwind from the internet).")
+                             "bind, default 127.0.0.1:8766; the page loads htmx from the internet).")
 
     _delegate(web_main, "sextant web", ctx.args)
 

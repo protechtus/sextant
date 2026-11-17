@@ -450,7 +450,7 @@ What it does not do (know these before you rely on it):
   see CONFIGURATION.md). `ATLAS_LOCAL_ONLY=on`
   refuses every cloud provider, everywhere -- including the summarizer's
   own fallback path, enforced in code on both. Separately, the web
-  dashboard loads two UI libraries (htmx, Tailwind) from public CDNs:
+  dashboard loads one UI library (htmx) from a public CDN (Tailwind ships inside the package):
   your browser contacts them, the data path stays local; offline, the page
   says so and its panels stay empty while the JSON endpoints keep working.
 - **Two opt-in features make their own outbound calls.** The Brain's
