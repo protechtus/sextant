@@ -6,7 +6,7 @@
 aiosqlite==0.22.1
 annotated-doc==0.0.6
 annotated-types==0.8.0
-anthropic==2.9.0
+anthropic==2.10.0
 anyio==4.16.0
 APScheduler==3.11.3
 attrs==26.1.0
@@ -16,7 +16,7 @@ click==8.5.1
 colorama==0.4.6
 cryptography==50.0.2
 docstring_parser==0.18.0
-fastapi==0.163.1
+fastapi==0.163.2
 h11==0.16.0
 httpcore==1.0.9
 httpcore2==2.16.2
@@ -32,7 +32,7 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 markdown-it-py==4.3.0
 MarkupSafe==3.0.4
-mcp==1.30.0
+mcp==2.3.0
 mdurl==0.1.2
 opentelemetry-api==1.45.2
 packaging==26.3
