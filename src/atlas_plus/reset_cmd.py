@@ -23,6 +23,7 @@ unconditionally.
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import argparse
 
 from atlas_plus import init_cmd, uninstall_cmd
@@ -36,7 +37,7 @@ def reset_state(yes: bool) -> str:
     outcome = uninstall_cmd.clear_derived_state(yes)
     if outcome == "absent" or outcome.startswith(("refused", "REFUSED")):
         return outcome
-    atlas_paths.state_dir().mkdir(parents=True, exist_ok=True)
+    make_private_dir(atlas_paths.state_dir())
     return f"reset ({outcome}; indexes rebuild on next use)"
 
 

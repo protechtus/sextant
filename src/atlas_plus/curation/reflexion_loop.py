@@ -23,6 +23,7 @@ Report written to .atlas/reflexion-report-YYYY-MM-DD.json.
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import json
 import os
 import sys
@@ -343,7 +344,7 @@ def run_reflexion_loop(
 def _write_report(report: dict) -> None:
     path = STATE_DIR / f"reflexion-report-{_date_str()}.json"
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        make_private_dir(STATE_DIR)
         path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     except OSError as e:
         print(f"[reflexion-loop] Could not write report: {e}", file=sys.stderr)

@@ -27,6 +27,7 @@ Report written to .atlas/weekly-synthesis-report-YYYY-MM-DD.json.
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import json
 import os
 import sys
@@ -143,7 +144,7 @@ def run_daily_append(
 
     # Append to draft
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        make_private_dir(STATE_DIR)
         with draft_path.open("a", encoding="utf-8") as fh:
             fh.write(f"\n## {date_stem}\n\n{summary}\n")
     except OSError as e:

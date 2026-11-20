@@ -5,6 +5,7 @@ Used by Layer 3 (cross-LLM) tests to produce structured comparison reports.
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import json
 import re
 from datetime import date
@@ -133,7 +134,7 @@ def write_report(
         "results": results,
     }
 
-    state_dir.mkdir(parents=True, exist_ok=True)
+    make_private_dir(state_dir)
     out = state_dir / f"persistence-report-{provider}-{report['date']}.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return out

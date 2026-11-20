@@ -12,12 +12,19 @@ permissions:
 
 jobs:
   test:
+    # Dependabot PRs are reviewed on the public repository; in the private one a run on them only
+    # spends minutes (the bump lands through the private tree and the PR closes itself).
+    if: github.repository == 'protechtus/sextant' || github.actor != 'dependabot[bot]'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The 3-OS matrix runs only in the public repository. The private source repository
+        # runs ubuntu only: macOS minutes bill at 10x and windows at 2x against the private
+        # Actions allowance, and shared code is one tree, so the public run already covers
+        # the other two platforms (2026-11-20).
+        os: ${{ fromJSON(github.repository == 'protechtus/sextant' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
         python-version: ["3.11"]
         # One 3.12 lane (ubuntu only): validates the 3.12 classifier the
         # public pyproject claims without doubling macOS/windows minutes.
@@ -25,8 +32,8 @@ jobs:
           - os: ubuntu-latest
             python-version: "3.12"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -43,11 +50,14 @@ jobs:
   # Rollback if an upstream disclosure blocks urgent work: add
   # continue-on-error: true to this job.
   deps-audit:
+    # Dependabot PRs are reviewed on the public repository; in the private one a run on them only
+    # spends minutes (the bump lands through the private tree and the PR closes itself).
+    if: github.repository == 'protechtus/sextant' || github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.11"
           cache: pip
@@ -66,12 +76,15 @@ jobs:
   # dashboard's multiline HTML f-string; a marker on that line would be
   # emitted into the page). Stays advisory until that anchor is solvable.
   audit:
+    # Dependabot PRs are reviewed on the public repository; in the private one a run on them only
+    # spends minutes (the bump lands through the private tree and the PR closes itself).
+    if: github.repository == 'protechtus/sextant' || github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.11"
           cache: pip
@@ -88,11 +101,14 @@ jobs:
   # build sdist+wheel from it, twine-check, and pin the public metadata.
   # GATING: a push that cannot produce a shippable package should be red.
   public-package:
+    # Dependabot PRs are reviewed on the public repository; in the private one a run on them only
+    # spends minutes (the bump lands through the private tree and the PR closes itself).
+    if: github.repository == 'protechtus/sextant' || github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.11"
           cache: pip

@@ -8,6 +8,7 @@ Usage:
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import json
 import os
 import re
@@ -1260,7 +1261,7 @@ def record_trends_snapshot() -> dict:
     }
 
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        make_private_dir(STATE_DIR)
         existing = []
         if TRENDS_FILE.exists():
             try:

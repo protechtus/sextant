@@ -22,6 +22,7 @@ Entry points:
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import json
 import os
 import sys
@@ -266,7 +267,7 @@ def run_contradiction_check(
     if not dry_run:
         report_path = STATE_DIR / f"contradiction-report-{_date_str()}.json"
         try:
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            make_private_dir(STATE_DIR)
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         except OSError as e:
             print(f"[contradiction-check] Could not write report: {e}", file=sys.stderr)

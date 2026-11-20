@@ -1025,9 +1025,10 @@ def inject_quality_score(report_path: Path) -> dict:
 
 def _try_link_reference(topic: str, slug: str, date_str: str, report_path: Path) -> None:
     """Write a reference stub to .memory/reference/ pointing at the report."""
-    autonomous = autonomous_enabled()  # was denylist: WROTE on ATLAS_AUTONOMOUS=yes (audit 2026-09-21)
-    session_auto = os.environ.get("ATLAS_SESSION_AUTONOMOUS", "").lower() in ("on", "1", "true")
-    if not (autonomous or session_auto):
+    # General gate only. Until 2026-11-20 the session variable also opened this write: the ATL-068
+    # sibling (a research job is not the Stop hook's writer). Guardrail LES-G6 pins it; the earlier
+    # denylist bug (WROTE on ATLAS_AUTONOMOUS=yes, audit 2026-09-21) stays fixed via autonomous_enabled().
+    if not autonomous_enabled():
         log.debug("Autonomous off -- skipping reference link for %s", slug)
         return
 

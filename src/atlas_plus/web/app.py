@@ -541,9 +541,106 @@ def _too_deep(raw: bytes, limit: int = 200) -> bool:
     return False
 
 
-_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; "
-        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+# Tools tab (2026-11-19): local tool UIs shown as panes (iframes). The panes
+# are the operator's own, so they live in <state dir>/web/tool-panes.json and
+# never in the source: a JSON list of {"key", "label", "url"} rows, read once
+# at start. Loopback only: the pane loads from the viewer's own machine, so
+# over the tunnel these panes are blank by design. Each origin in the file
+# (and only these) is allowed by the CSP frame-src below. No file, or a file
+# with any bad row, means no panes, no Tools tab and frame-src 'none'.
+_TOOL_PANES_MAX = 12
+_TOOL_PANE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+_TOOL_PANE_URL = re.compile(r"http://127\.0\.0\.1:([0-9]{2,5})(/[A-Za-z0-9._~/?&=%-]*)?")
+
+
+def _load_tool_panes(path) -> list[dict]:
+    """Read and validate the tool panes file. Fails closed: one bad row
+    refuses the whole file, so a typo can never widen frame-src."""
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        log.warning("tool panes: cannot read %s (%s); no panes", path, type(exc).__name__)
+        return []
+    try:
+        rows = json.loads(raw)
+    except ValueError:
+        log.warning("tool panes: %s is not valid JSON; no panes", path)
+        return []
+    if not isinstance(rows, list) or len(rows) > _TOOL_PANES_MAX:
+        log.warning("tool panes: %s must be a list of at most %d rows; no panes", path, _TOOL_PANES_MAX)
+        return []
+    panes, seen = [], set()
+    for row in rows:
+        key = row.get("key") if isinstance(row, dict) else None
+        label = row.get("label") if isinstance(row, dict) else None
+        url = row.get("url") if isinstance(row, dict) else None
+        m = _TOOL_PANE_URL.fullmatch(url) if isinstance(url, str) else None
+        ok = (isinstance(key, str) and _TOOL_PANE_KEY.fullmatch(key) and key not in seen
+              and isinstance(label, str) and 0 < len(label.strip()) <= 60
+              and m is not None and 0 < int(m.group(1)) < 65536)
+        if not ok:
+            log.warning("tool panes: %s has a bad row (key, label up to 60 chars, "
+                        "url http://127.0.0.1:<port>/...); no panes", path)
+            return []
+        seen.add(key)
+        panes.append({"key": key, "label": label.strip(), "url": url})
+    return panes
+
+
+def _origin(url: str) -> str:
+    scheme, _, rest = url.partition("://")
+    return f"{scheme}://{rest.split('/', 1)[0]}"
+
+
+def _csp_for(panes: list[dict]) -> str:
+    frame_src = " ".join(sorted({_origin(p["url"]) for p in panes})) or "'none'"
+    return ("default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+            f"frame-src {frame_src}; "
+            "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+
+
+_TOOL_PANES = _load_tool_panes(atlas_paths.state_dir() / "web" / "tool-panes.json")
+_CSP = _csp_for(_TOOL_PANES)
+
+
+def _tools_tab_button() -> str:
+    if not _TOOL_PANES:
+        return ""
+    return ('<div class="tab" data-tab="tools" onclick="switchTab(\'tools\')" role="tab" id="tabbtn-tools" '
+            'aria-controls="tab-tools" aria-selected="false" tabindex="-1">Tools</div>')
+
+
+def _tools_tab_html() -> str:
+    """The Tools tab: one pane per _TOOL_PANES row. Iframes are lazy so a
+    hidden tab costs nothing; each pane has open-in-new-tab and reload."""
+    import html as _h
+    if not _TOOL_PANES:
+        return ""
+    panes = []
+    for p in _TOOL_PANES:
+        k, label, url = _h.escape(p["key"]), _h.escape(p["label"]), _h.escape(p["url"])
+        panes.append(
+            f'<section class="card tool-pane" style="display:flex;flex-direction:column;min-height:0;padding:0">'
+            f'<div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-700">'
+            f'<h2 class="text-xs font-bold text-slate-300">{label}</h2>'
+            f'<span class="flex gap-3 text-xs">'
+            f'<button type="button" class="text-slate-400 hover:text-white" '
+            f'onclick="var f=document.getElementById(\'pane-{k}\');f.src=f.src">reload</button>'
+            f'<a class="text-sky-400 hover:text-sky-300" href="{url}" target="_blank" rel="noopener noreferrer">open</a>'
+            f'</span></div>'
+            f'<iframe id="pane-{k}" src="{url}" title="{label}" loading="lazy" '
+            f'referrerpolicy="no-referrer" style="flex:1;width:100%;border:0;min-height:60vh;background:#fff"></iframe>'
+            f'</section>')
+    return (
+        '<div id="tab-tools" role="tabpanel" aria-labelledby="tabbtn-tools" class="tab-content block-tab h-full overflow-y-auto">'
+        '<div class="flex items-center justify-between mb-2 px-1">'
+        '<span class="text-slate-500 text-xs">Local tools, one pane each. Panes load from this computer '
+        '(127.0.0.1); over the tunnel they stay blank.</span></div>'
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:12px">'
+        + "".join(panes) + '</div></div>')
 
 
 @app.middleware("http")
@@ -5215,6 +5312,7 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
   <div class="tab" data-tab="memory" onclick="switchTab('memory')" role="tab" id="tabbtn-memory" aria-controls="tab-memory" aria-selected="false" tabindex="-1">Memory<span id="facts-badge" class="ml-1 text-amber-400 text-xs"></span></div>
   <div class="tab" data-tab="sessions" onclick="switchTab('sessions')" role="tab" id="tabbtn-sessions" aria-controls="tab-sessions" aria-selected="false" tabindex="-1">Sessions</div>
   <div class="tab" data-tab="watchtower" onclick="switchTab('watchtower')" role="tab" id="tabbtn-watchtower" aria-controls="tab-watchtower" aria-selected="false" tabindex="-1">Watchtower</div>
+  {_tools_tab_button()}
 </div>
 </header>
 
@@ -5736,6 +5834,9 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
     </div>
   </div>
 </div>
+
+<!-- TOOLS TAB (local tool panes) -->
+{_tools_tab_html()}
 
 <!-- WATCHTOWER TAB (optional SIEM) -->
 <div id="tab-watchtower" role="tabpanel" aria-labelledby="tabbtn-watchtower" class="tab-content block-tab h-full overflow-y-auto">

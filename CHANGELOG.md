@@ -19,6 +19,22 @@ public tree.
 
 ## [Unreleased]
 
+### Lessons become tree-wide checks (sweep lessons, 2026-11-20)
+
+- `tests/test_guardrails.py`: six rules learned in the sweeps now run over the whole source tree with `ast`, each
+  with an allowlist that states its reason: every outbound HTTP call and every blocking subprocess call carries a
+  timeout; a state directory is created 0700 through the one helper; no operator paths in source or tests; vendored
+  static files keep `-text` in `.gitattributes` (SRI survives a Windows checkout); only `atlas_plus.autonomous` reads
+  `ATLAS_SESSION_AUTONOMOUS`. A new hit is fixed or allowlisted with a reason in the same commit.
+- The first run of those rules fixed what the sweeps had not reached: eight lazy state-directory creations left after
+  AG98 (the curation jobs, doctor, the pre-compact hook, reset, intake state); the research job's reference stub no
+  longer treats the session variable as a write permit (the sibling of the 2026-11-15 gate fix); `sextant-backup`
+  bounds rclone (6 h) and the Task Scheduler registration (5 min) instead of waiting forever.
+- CI actions bumped to the current SHA-pinned releases (checkout v7.0.1, setup-python v7.1.0, upload-artifact v7.0.2,
+  download-artifact v8.0.2; each SHA checked against its tag). `constraints.txt`: anthropic 2.9.0, fastapi 0.163.1,
+  httpx2 and httpcore2 2.16.2, pydantic-settings 2.16.3, pytest-asyncio 1.5.0, python-multipart 0.0.34. `mcp` stays
+  at 1.30.0: the 2.x major waits for a client-contract pass.
+
 ### Sweep 25 fix wave (AG98: hardening follow-ups from the paranoid lane, MN86)
 
 - `sextant init` creates the corpus and state roots mode 0700 on Linux and macOS (they were 0755 under umask 022:

@@ -23,6 +23,11 @@ from atlas_plus import paths as atlas_paths
 
 from atlas_plus.branding import product
 
+# LES-G2 (ATL-069): a stuck rclone (dead network, an unexpected prompt) must not hold the nightly task
+# or a terminal forever. Six hours is above any observed full run; the scheduled task's own limit is
+# the second fence.
+_RCLONE_TIMEOUT_SECS = 6 * 3600
+
 app = _SextantTyper(help=f"{product()} backup -- mirror the corpus with rclone")
 console = Console()
 
@@ -148,7 +153,11 @@ def _rclone(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
             cmd,
             capture_output=capture,
             text=True,
+            timeout=_RCLONE_TIMEOUT_SECS,
         )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            cmd, 124, stdout="", stderr=f"rclone exceeded {_RCLONE_TIMEOUT_SECS} s and was stopped (LES-G2)")
     except FileNotFoundError:
         # rclone is an optional external tool; its absence is a reportable state, not a crash
         # (deep install lane 2026-11-09: `sextant-backup verify` showed a raw traceback).
@@ -443,16 +452,21 @@ def install(
         )
         raise typer.Exit(1)
 
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NonInteractive",
-            "-ExecutionPolicy", "Bypass",
-            "-File", str(PS_INSTALL),
-            "-RunTime", time,
-        ],
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NonInteractive",
+                "-ExecutionPolicy", "Bypass",
+                "-File", str(PS_INSTALL),
+                "-RunTime", time,
+            ],
+            text=True,
+            timeout=300,  # LES-G2: schtasks registration is seconds; a hung elevation prompt is not
+        )
+    except subprocess.TimeoutExpired:
+        console.print("[red]Task Scheduler registration did not finish within 5 minutes.[/red]")
+        raise typer.Exit(1)
     if result.returncode != 0:
         console.print("[red]Task Scheduler registration failed.[/red]")
         console.print("Tip: run this command from an elevated PowerShell prompt.")

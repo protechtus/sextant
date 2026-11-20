@@ -9,6 +9,7 @@ Never blocks — exits 0 even on failure.
 
 from __future__ import annotations
 
+from atlas_plus._fsutil import make_private_dir
 import json
 import os
 import subprocess
@@ -62,7 +63,7 @@ def _git_oneliner(project_dir: Path) -> str:
 
 def main() -> None:
     """Claude Code pre-compact hook: snapshot session state before the context window is compressed."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    make_private_dir(STATE_DIR)
 
     state: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

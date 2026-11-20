@@ -183,3 +183,23 @@ class TestTheHookWriterStillWorks:
         out = run({"ATLAS_AUTONOMOUS": "off", "ATLAS_SESSION_AUTONOMOUS": "off"})
         assert len(calls) == 1
         assert "blocked" in out
+
+
+class TestTheResearchSiblingStaysClosed:
+    """LES-G6 sibling found 2026-11-20 (ATL-069): brain/research._try_link_reference read the session
+    variable itself and wrote a reference stub under ATLAS_SESSION_AUTONOMOUS=on with autonomy off."""
+
+    def _call(self, tmp_path, monkeypatch):
+        from atlas_plus.brain import research
+
+        monkeypatch.setattr(research, "_MEMORY_ROOT", tmp_path)
+        research._try_link_reference("Topic", "slug", "2026-11-20", tmp_path / "report.md")
+        return tmp_path / "reference" / "research-slug.md"
+
+    def test_session_on_general_off_writes_nothing(self, tmp_path, monkeypatch):
+        _env(monkeypatch, SESSION_ON_GENERAL_OFF)
+        assert not self._call(tmp_path, monkeypatch).exists()
+
+    def test_general_on_writes_the_stub(self, tmp_path, monkeypatch):
+        _env(monkeypatch, {"ATLAS_AUTONOMOUS": "on", "ATLAS_SESSION_AUTONOMOUS": "off"})
+        assert self._call(tmp_path, monkeypatch).exists()
