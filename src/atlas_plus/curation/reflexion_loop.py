@@ -8,10 +8,11 @@ anything? What's missing?" Produces revisions, invalidations, or supplements.
 Resolution rules:
   REVISE  -> update the fact text in the temporal graph (invalidate old, add new)
   SKIP    -> no action needed
-  TICKET  -> create a human-review ticket (ambiguous or high-stakes)
+  TICKET  -> file a proposal for the Helm desk (ambiguous or high-stakes); the operator's click makes the ticket
 
 ATLAS_AUTONOMOUS gate:
-  If ATLAS_AUTONOMOUS=off, all actions are downgraded to TICKET only.
+  If ATLAS_AUTONOMOUS=off, all actions are downgraded to TICKET only (proposals, since ATL-073 2026-11-20:
+  before that every REVISE wrote a human ticket straight into the ticket store, 35 in one night on 11-14).
   No writes to .memory/ or temporal graph are made.
 
 Entry points:
@@ -38,6 +39,9 @@ MEMORY_ROOT = atlas_paths.memory_root()
 
 _DEFAULT_LOOKBACK_DAYS = 7
 _BATCH_SIZE = 5  # facts per LLM call
+# Stop early when the model is down: 3 consecutive failed batches instead of running the worker's
+# 900 s clock out on an unreachable Ollama (every weekly run 11-01..11-15 ended that way; review 2026-11-20).
+_MAX_CONSECUTIVE_LLM_ERRORS = 3
 
 
 def _is_autonomous() -> bool:
@@ -182,9 +186,9 @@ def _apply_revision(critique: dict, provider, now_iso: str) -> bool:
     return True
 
 
-def _create_review_ticket(critique: dict, fact_text: str) -> Optional[object]:
-    """Create a human-review ticket for ambiguous or high-stakes facts."""
-    from atlas_plus.tickets.store import create_ticket
+def _propose_review(critique: dict, fact_text: str) -> Optional[dict]:
+    """File a review proposal for the desk (ATL-073). Approval creates the human ticket."""
+    from atlas_plus.brain.learning import add_proposal
 
     short_id = critique["fact_id"][:60]
     title = f"Reflexion review: {short_id}"[:200]
@@ -200,17 +204,14 @@ def _create_review_ticket(critique: dict, fact_text: str) -> Optional[object]:
         f"- [ ] Close this ticket\n"
     )
     try:
-        return create_ticket(
-            title=title,
-            project="atlas-memory+",
-            assignee="human",
-            priority="normal",
-            effort="S",
-            body=body,
+        return add_proposal(
+            "reflexion", "ticket", title, body,
+            {"project": "atlas-memory+", "assignee": "human", "priority": "normal", "effort": "S",
+             "fact_id": critique["fact_id"]},
         )
     except Exception as e:
-        # Do not hide a failed operator-facing ticket -- say so in the job log.
-        print(f"WARNING: reflexion ticket creation failed: {e}", file=sys.stderr)
+        # Do not hide a failed operator-facing proposal -- say so in the job log.
+        print(f"WARNING: reflexion proposal failed: {e}", file=sys.stderr)
         return None
 
 
@@ -264,9 +265,10 @@ def run_reflexion_loop(
         "dry_run": dry_run,
         "facts_reviewed": len(recent),
         "revised": 0,
-        "tickets_created": 0,
+        "proposals_created": 0,
         "skipped": 0,
         "errors": 0,
+        "aborted": None,
         "results": [],
     }
 
@@ -285,6 +287,7 @@ def run_reflexion_loop(
         _write_report(report)
         return report
 
+    consecutive_errors = 0
     # Process in batches
     for batch_start in range(0, len(recent), _BATCH_SIZE):
         batch = recent[batch_start: batch_start + _BATCH_SIZE]
@@ -296,7 +299,18 @@ def run_reflexion_loop(
         except RuntimeError as e:
             print(f"[reflexion-loop] LLM error on batch {batch_start}: {e}", file=sys.stderr)
             report["errors"] += len(batch)
+            consecutive_errors += 1
+            if consecutive_errors >= _MAX_CONSECUTIVE_LLM_ERRORS:
+                remaining = len(recent) - batch_start - len(batch)
+                report["errors"] += remaining
+                report["aborted"] = (
+                    f"stopped after {consecutive_errors} consecutive LLM errors; "
+                    f"{remaining} fact(s) not reviewed (provider down?)"
+                )
+                print(f"[reflexion-loop] {report['aborted']}", file=sys.stderr)
+                break
             continue
+        consecutive_errors = 0
 
         critiques = _parse_critique(raw, batch)
 
@@ -318,16 +332,16 @@ def run_reflexion_loop(
                     if applied:
                         report["revised"] += 1
                 else:
-                    # Autonomous off or no revised text: create ticket instead
-                    ticket = _create_review_ticket(critique, fact_text)
-                    if ticket:
-                        report["tickets_created"] += 1
+                    # Autonomous off or no revised text: propose a review instead
+                    proposal = _propose_review(critique, fact_text)
+                    if proposal:
+                        report["proposals_created"] += 1
                     applied = True
 
             elif action == "TICKET":
-                ticket = _create_review_ticket(critique, fact_text)
-                if ticket:
-                    report["tickets_created"] += 1
+                proposal = _propose_review(critique, fact_text)
+                if proposal:
+                    report["proposals_created"] += 1
                 applied = True
 
             report["results"].append({
@@ -380,7 +394,7 @@ def main() -> None:
 
     print(
         f"[reflexion-loop] Reviewed {report['facts_reviewed']} fact(s): "
-        f"{report['revised']} revised, {report['tickets_created']} tickets, "
+        f"{report['revised']} revised, {report['proposals_created']} proposals, "
         f"{report['skipped']} skipped, {report['errors']} errors"
     )
     if not autonomous:

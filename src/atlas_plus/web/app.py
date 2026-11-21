@@ -2367,6 +2367,105 @@ async def reject_fact_proxy(fact_id: str, request: Request):
         raise HTTPException(status_code=503, detail=_brain_error_detail(exc))
 
 
+@app.get("/api/proposals", response_class=HTMLResponse)
+async def proposals_panel(request: Request):
+    """The proposals desk (ATL-073): what the weekly supervisor and the reflexion loop propose,
+    one click each (approve / edit / reject). Proxies Brain /proposals."""
+    _check_auth(request)
+    try:
+        async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+            r = await client.get(f"{BRAIN_URL}/proposals?status=pending&limit=30", headers=_brain_headers)
+        r.raise_for_status()
+        rows_in = r.json().get("proposals", [])
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return HTMLResponse('<div class="text-slate-500 text-xs">Brain not reachable (optional: this panel fills when the Brain runs).</div>')
+    except Exception as exc:
+        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc) or exc.__class__.__name__)}</div>')
+
+    if not rows_in:
+        return HTMLResponse('<div class="text-slate-500 text-xs">No proposals waiting. The Monday supervisor and the Sunday reflexion loop file them here.</div>')
+
+    kind_c = {"lesson": "text-violet-300", "ticket": "text-sky-300", "fact": "text-emerald-300"}
+    rows = [
+        f'<div class="text-slate-500 text-xs mb-2">{len(rows_in)} proposal(s) waiting for your click</div>',
+        '<div class="space-y-1">',
+    ]
+    for p in rows_in:
+        pid = str(p.get("id", ""))
+        if not re.fullmatch(r"[0-9a-f]{32}", pid):
+            continue
+        kind = str(p.get("kind", ""))
+        title = _html_mod.escape(str(p.get("title", ""))[:200])
+        body = _html_mod.escape(str(p.get("body", ""))[:280])
+        source = _html_mod.escape(str(p.get("source", ""))[:40])
+        created = _html_mod.escape(str(p.get("created_at", ""))[:10])
+        rows.append(
+            f'<div class="border border-slate-700 rounded p-2 text-xs" id="prop-{pid}">'
+            f'<div class="flex items-start justify-between gap-2">'
+            f'<div class="flex-1 min-w-0">'
+            f'<div class="text-slate-200"><span class="{kind_c.get(kind, "text-slate-400")} font-bold mr-1">{_html_mod.escape(kind)}</span>{title}</div>'
+            f'<div class="text-slate-400 leading-relaxed mt-1 whitespace-pre-wrap">{body}</div>'
+            f'<div class="flex gap-3 mt-1 text-slate-600"><span>from: {source}</span><span>{created}</span></div>'
+            f'</div>'
+            f'<div class="flex gap-1 shrink-0">'
+            f'<button onclick="approveProposal({_js_arg(pid)})" class="btn btn-green text-xs">Approve</button>'
+            f'<button onclick="editProposal({_js_arg(pid)})" class="btn btn-slate text-xs">Edit</button>'
+            f'<button onclick="rejectProposal({_js_arg(pid)})" class="btn btn-red text-xs">Reject</button>'
+            f'</div></div></div>'
+        )
+    rows.append('</div>')
+    return HTMLResponse("\n".join(rows))
+
+
+@app.get("/api/proposals/{proposal_id}/body")
+async def proposal_body_proxy(proposal_id: str, request: Request):
+    """The full body of one pending proposal (the Edit button loads it)."""
+    _check_auth(request)
+    if not re.fullmatch(r"[0-9a-f]{32}", proposal_id):
+        raise HTTPException(status_code=400, detail="bad proposal id")
+    async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        r = await client.get(f"{BRAIN_URL}/proposals?status=pending&limit=200", headers=_brain_headers)
+    r.raise_for_status()
+    for p in r.json().get("proposals", []):
+        if p.get("id") == proposal_id:
+            return {"id": proposal_id, "body": p.get("body", ""), "title": p.get("title", "")}
+    raise HTTPException(status_code=404, detail="proposal not pending")
+
+
+@app.post("/api/proposals/{proposal_id}/approve")
+async def approve_proposal_proxy(proposal_id: str, request: Request):
+    """Approve (optionally with an edited body); proxies Brain /proposals/{id}/approve."""
+    _check_auth(request)
+    if not re.fullmatch(r"[0-9a-f]{32}", proposal_id):
+        raise HTTPException(status_code=400, detail="bad proposal id")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    async with _PeerClient(timeout=httpx.Timeout(20.0, connect=0.75)) as client:
+        r = await client.post(f"{BRAIN_URL}/proposals/{proposal_id}/approve", headers=_brain_headers,
+                              json=body if isinstance(body, dict) else {})
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail", r.text)
+        except Exception:
+            detail = r.text
+        raise HTTPException(status_code=r.status_code, detail=str(detail)[:400])
+    return r.json()
+
+
+@app.post("/api/proposals/{proposal_id}/reject")
+async def reject_proposal_proxy(proposal_id: str, request: Request):
+    _check_auth(request)
+    if not re.fullmatch(r"[0-9a-f]{32}", proposal_id):
+        raise HTTPException(status_code=400, detail="bad proposal id")
+    async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+        r = await client.post(f"{BRAIN_URL}/proposals/{proposal_id}/reject", headers=_brain_headers)
+    r.raise_for_status()
+    return r.json()
+
+
 @app.get("/api/pending-facts/count")
 async def pending_facts_count_proxy(request: Request):
     """Return {count} of pending facts -- used by Memory tab badge."""
@@ -3809,7 +3908,7 @@ def _run_powershell(cmd: str, timeout: float = 25.0) -> tuple[int, str]:
     try:
         p = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
         )
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except Exception as exc:
@@ -5683,6 +5782,17 @@ window.addEventListener("DOMContentLoaded",function(){{var miss=[];if(typeof htm
         <div class="text-slate-600 text-xs">loading...</div>
       </div>
     </div>
+    <div class="card shrink-0 overflow-y-auto" style="max-height:32%">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-xs font-bold text-slate-400">Proposals <span class="text-slate-600 font-normal">(weekly supervisor, reflexion; your click writes)</span></h2>
+        <button class="btn btn-slate text-xs"
+          hx-get="/api/proposals" hx-target="#proposals-list" hx-swap="innerHTML">Refresh</button>
+      </div>
+      <div id="proposals-list"
+        hx-get="/api/proposals" hx-trigger="tab-show" hx-swap="innerHTML">
+        <div class="text-slate-600 text-xs">loading...</div>
+      </div>
+    </div>
     <div class="card shrink-0 overflow-y-auto" style="max-height:25%">
       <div class="flex items-center justify-between mb-2">
         <h2 class="text-xs font-bold text-slate-400">Memory Gaps</h2>
@@ -6552,6 +6662,38 @@ async function retryAllFailed(){{
     st.textContent='submitted '+d.submitted+' of '+d.total_failed+' failed tasks';
     setTimeout(()=>{{st.textContent='';reloadTasks();}},3000);
   }}catch(e){{st.textContent='error: '+e.message;}}
+}}
+
+// ---- Proposals desk (ATL-073) ----
+async function approveProposal(id, body){{
+  try{{
+    const r=await fetch('/api/proposals/'+id+'/approve',{{method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify(body?{{body:body}}:{{}})}});
+    if(!r.ok){{let d='';try{{d=(await r.json()).detail||'';}}catch(e){{}}throw new Error(d||r.status);}}
+    const res=await r.json();
+    showToast('Approved: '+(res.lesson_id||res.ticket_id||res.file||res.kind||'done'),'done');
+    htmx.trigger('#proposals-list','load');
+  }}catch(e){{showToast('Approve failed: '+e.message,'failed');}}
+}}
+async function editProposal(id){{
+  try{{
+    const r=await fetch('/api/proposals/'+id+'/body');
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    const edited=prompt('Edit the proposal body, then OK to approve it as written (Cancel keeps it pending):', d.body||'');
+    if(edited===null)return;
+    if(!edited.trim()){{showToast('Empty body; nothing approved','failed');return;}}
+    await approveProposal(id, edited);
+  }}catch(e){{showToast('Edit failed: '+e.message,'failed');}}
+}}
+async function rejectProposal(id){{
+  try{{
+    const r=await fetch('/api/proposals/'+id+'/reject',{{method:'POST',headers:{{}}}});
+    if(!r.ok)throw new Error(r.status);
+    showToast('Rejected','done');
+    htmx.trigger('#proposals-list','load');
+  }}catch(e){{showToast('Reject failed: '+e.message,'failed');}}
 }}
 
 // ---- Pending facts approval/rejection ----

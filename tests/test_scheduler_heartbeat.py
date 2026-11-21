@@ -254,10 +254,11 @@ def test_every_scheduler_job_is_classified():
     # (P-1 outage recovery); classify by their base id.
     registered_set = {r[:-8] if r.endswith("-catchup") else r for r in registered}
     tracked = maintenance.maintenance_job_ids() | set(maintenance.OPERATIONAL_JOBS)
-    assert registered_set == tracked, (
-        f"unclassified scheduler jobs: {registered_set - tracked}; "
-        f"phantom (tracked but not registered): {tracked - registered_set}"
-    )
+    # Every registered job is classified; every maintenance lane is registered. Operational
+    # lanes are switch-gated since ATL-073 (ticket-dispatch, sla-check), so they may be absent.
+    assert registered_set <= tracked, f"unclassified scheduler jobs: {registered_set - tracked}"
+    phantom = maintenance.maintenance_job_ids() - registered_set
+    assert not phantom, f"phantom maintenance lanes (tracked but not registered): {phantom}"
     assert maintenance.maintenance_job_ids().isdisjoint(maintenance.OPERATIONAL_JOBS)
 
 

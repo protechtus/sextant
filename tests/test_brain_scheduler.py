@@ -202,14 +202,16 @@ async def test_start_scheduler_registers_expected_jobs():
         job_ids = {j.id for j in sched.get_jobs()}
         expected = {
             "temporal-build", "suggest-facts", "curation",
-            "research-batch", "patterns-rebuild", "gaps-report",
+            "session-digest", "patterns-rebuild", "gaps-report",
             "convergence-report", "unconfirmed-decay", "decay-report",
             "memory-agent", "narrative-weekly",
-            "zombie-cleanup", "sla-check", "db-backup",
+            "zombie-cleanup", "db-backup",
             "memory-trends", "research-quality", "suggest-tags", "weekly-digest",
-            "ticket-dispatch",
         }
         assert expected.issubset(job_ids), f"Missing jobs: {expected - job_ids}"
+        # ATL-073 (2026-11-20): the research batch lane is gone (research_runner.py has been a
+        # no-op since May); ticket-dispatch and sla-check register only when their switch is on.
+        assert "research-batch" not in job_ids
     finally:
         scheduler.stop_scheduler()
 
@@ -560,15 +562,15 @@ class TestStartScheduler:
 
         expected = {
             "db-backup", "temporal-build", "suggest-facts", "curation",
-            "research-batch", "patterns-rebuild", "gaps-report",
+            "session-digest", "patterns-rebuild", "gaps-report",
             "convergence-report", "unconfirmed-decay", "decay-report",
             "memory-agent", "claude-supervisor", "narrative-weekly",
             "memory-trends", "research-quality", "suggest-tags",
-            "weekly-digest", "auto-session-log",
-            "ticket-dispatch", "sla-check", "zombie-cleanup",
+            "weekly-digest", "auto-session-log", "zombie-cleanup",
         }
         missing = expected - set(registered_ids)
         assert not missing, f"Missing scheduler jobs: {missing}"
+        assert "research-batch" not in registered_ids
 
     def test_returns_running_scheduler_if_already_started(self):
         """start_scheduler is idempotent -- returns existing scheduler if running."""

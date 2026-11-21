@@ -182,12 +182,12 @@ class TestReviseAction:
         }])
 
         with patch("atlas_plus.curation.reflexion_loop._call_llm", return_value=llm_resp), \
-             patch("atlas_plus.tickets.store.create_ticket", return_value=_fake_ticket()):
+             patch("atlas_plus.brain.learning.add_proposal", return_value=_fake_ticket()):
             report = run_reflexion_loop(lookback_days=30, _provider=p)
 
         # No revision (no text), ticket created instead
         assert report["revised"] == 0
-        assert report["tickets_created"] == 1
+        assert report["proposals_created"] == 1
         # Old fact NOT invalidated
         assert p._facts["f-001"].invalid_at is None
 
@@ -212,7 +212,7 @@ class TestSkipAction:
         }])
 
         with patch("atlas_plus.curation.reflexion_loop._call_llm", return_value=llm_resp), \
-             patch("atlas_plus.tickets.store.create_ticket") as mock_t:
+             patch("atlas_plus.brain.learning.add_proposal") as mock_t:
             report = run_reflexion_loop(lookback_days=30, _provider=p)
 
         assert report["skipped"] == 1
@@ -241,10 +241,10 @@ class TestTicketAction:
         }])
 
         with patch("atlas_plus.curation.reflexion_loop._call_llm", return_value=llm_resp), \
-             patch("atlas_plus.tickets.store.create_ticket", return_value=_fake_ticket()):
+             patch("atlas_plus.brain.learning.add_proposal", return_value=_fake_ticket()):
             report = run_reflexion_loop(lookback_days=30, _provider=p)
 
-        assert report["tickets_created"] == 1
+        assert report["proposals_created"] == 1
         assert report["revised"] == 0
         assert p._facts["f-001"].invalid_at is None
 
@@ -269,12 +269,12 @@ class TestAutonomousOff:
         }])
 
         with patch("atlas_plus.curation.reflexion_loop._call_llm", return_value=llm_resp), \
-             patch("atlas_plus.tickets.store.create_ticket", return_value=_fake_ticket()):
+             patch("atlas_plus.brain.learning.add_proposal", return_value=_fake_ticket()):
             report = run_reflexion_loop(lookback_days=30, _provider=p)
 
         # No temporal changes -- autonomous=off
         assert report["revised"] == 0
-        assert report["tickets_created"] == 1
+        assert report["proposals_created"] == 1
         assert p._facts["f-001"].invalid_at is None
 
 
@@ -294,7 +294,7 @@ class TestDryRun:
         _recent_fact(p, "f-001", "A fact.")
 
         with patch("atlas_plus.curation.reflexion_loop._call_llm") as mock_llm, \
-             patch("atlas_plus.tickets.store.create_ticket") as mock_t:
+             patch("atlas_plus.brain.learning.add_proposal") as mock_t:
             report = run_reflexion_loop(lookback_days=30, dry_run=True, _provider=p)
 
         mock_llm.assert_not_called()

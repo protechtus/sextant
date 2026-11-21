@@ -81,11 +81,11 @@ def test_search_snippets_carry_no_provenance_comment(tmp_path, monkeypatch):
     from atlas_plus.mcp.memory_server.tools.remember import memory_remember
 
     memory_remember("reference:kettle", "Kettle brand is Zojirushi.", source="human-direct", interactive=True)
-    for q in ("Zojirushi", "human"):          # a hit beside the tag, and a hit INSIDE it
-        hits = fts.search(q, limit=5)
-        assert hits, q
-        for h in hits:
-            assert "<!--" not in h["snippet"] and "-->" not in h["snippet"], h["snippet"]
+    hits = fts.search("Zojirushi", limit=5)   # a hit beside the tag
+    assert hits
+    for h in hits:
+        assert "<!--" not in h["snippet"] and "-->" not in h["snippet"], h["snippet"]
+    assert fts.search("human", limit=5) == []  # the tag is not indexed at all since AG99 (sweep 26)
     assert "Zojirushi" in fts.search("Zojirushi", limit=1)[0]["snippet"]
 
 

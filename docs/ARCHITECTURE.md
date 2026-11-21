@@ -110,6 +110,9 @@ Epistemic provenance fields on every fact file (Angle 5, v0.3-C):
 - `confidence: high|medium|low`
 - `contradictions: [path1, path2]` -- detected by nightly contradiction check
 
+These fields and the `<!-- source:... -->` tag after each fact are metadata: the keyword index, the embedding
+text and `sextant context` matching leave them out, so a word that appears only there finds nothing.
+
 ---
 
 ## MCP Tool Inventory
@@ -255,7 +258,8 @@ reaping live long-running tasks.
 | `memory_agent` | `_memory_agent` | Stale project + decay scan + ticket creation |
 | `patterns_rebuild` | `_patterns_rebuild` | Session co-occurrence model rebuild |
 | `decay_report` | `_decay_report` | Memory files past their half_life: threshold |
-| `claude_supervisor` | `_claude_supervisor` | Weekly Claude Code review of failed/blocked tasks |
+| `claude_supervisor` | `_claude_supervisor` | Weekly Claude review (Sonnet) of failures + session digests; files proposals for the desk |
+| `session_digest` | `_session_digest` | Deterministic digest of the previous local day (sessions, commits, Brain ledger) -> `<state>/brain/digests/` |
 | `suggest_facts_auto` | `_suggest_facts_auto` | Nightly auto-mode fact extraction (writes only >= 0.95 confidence) |
 | `dream` | `_dream` | Nightly meta-cognitive synthesis over the corpus |
 | `reflexion_loop` | `_reflexion_loop` | Weekly self-review loop (ticket writes gated by ATLAS_AUTONOMOUS) |
@@ -308,7 +312,6 @@ execute them. A few run in-process (no task queued): see In-process column.
 | 03:05 | temporal-build | temporal_build | no |
 | 03:10 | suggest-facts | suggest_facts_auto | no |
 | 03:15 | curation | curation_report | no |
-| 03:20 | research-batch | research_runner | no |
 | 03:25 | patterns-rebuild | patterns_rebuild | no |
 | Sun 03:30 | gaps-report | gaps_report | no |
 | Sun 03:35 | convergence-report | convergence_report | no |
@@ -326,8 +329,9 @@ execute them. A few run in-process (no task queued): see In-process column.
 | 04:15 | suggest-tags | (direct) | yes -- inject tags into untagged .memory/ files |
 | Mon 09:00 | weekly-digest | (direct) | yes -- ntfy weekly stats summary |
 | 23:30 | auto-session-log | (direct) | yes -- write today's session log from git commits |
-| */10 | sla-check | (direct) | yes -- ntfy push for overdue tasks |
-| */10 | ticket-dispatch | (direct) | yes -- dispatch todo tickets (ATLAS_TICKET_DISPATCH=on) |
+| 11:00 | session-digest | session_digest | no |
+| */10 | sla-check | (direct) | yes -- ntfy push for overdue tasks; registered only when ATLAS_NTFY_URL is set and ATLAS_SLA_MINUTES > 0 |
+| */10 | ticket-dispatch | (direct) | yes -- dispatch todo tickets; registered only when ATLAS_TICKET_DISPATCH=on |
 | *:45 | zombie-cleanup | (direct) | yes -- mark stale running tasks failed |
 
 Job failures are re-emitted as WARNING via `_job_event_listener` -- APScheduler's

@@ -73,7 +73,7 @@ _TOKENIZER = "porter unicode61 remove_diacritics 2 tokenchars ''" + _TOKENCHARS 
 _TOKENIZER_FALLBACK = "porter unicode61 remove_diacritics 1 tokenchars ''" + _TOKENCHARS + "''"   # SQLite before 3.27
 # Index text format tag, stored with the tokenizer name in atlas_meta: a change here rebuilds
 # every existing index once (the format is baked into the stored text, like the tokenizer).
-_INDEX_TAG = " +cjk2"
+_INDEX_TAG = " +cjk2 +fmu"   # +fmu: the raw frontmatter_json column is stored, not tokenised (AG99: its KEYS matched `source`)
 _MAX_FM_CHARS = 262_144         # frontmatter larger than this is not parsed (AG22, sweep 12)
 _MAX_FM_INDEX_CHARS = 65_536    # at most this much frontmatter text is indexed per note
 
@@ -506,15 +506,38 @@ def _fm_values(obj) -> list[str]:
     return out
 
 
+# Provenance is metadata, not text (AG99, sweep 26): `human` and `source` matched every remembered note through
+# the `<!-- source:human-direct -->` tag a write appends and the frontmatter fields writers stamp. The tag and
+# the fields stay in the file (curation, prime, versions read them); only the text handed to the index drops them.
+_PROV_COMMENT_RE = re.compile(r"[ \t]*<!--[ \t]*(?:end[ \t]+)?(?:source|session|task):[^\n]*?-->")
+_PROV_KEYS = frozenset({"source_session", "source_task", "confidence", "first_observed", "updated", "last_confirmed",
+                        "imported_from", "imported_at", "imported_utc", "original_path", "import_vault", "imported_hash"})
+_PROV_SOURCE_RE = re.compile(r"[a-z0-9][a-z0-9._:-]*\Z")   # `source: human-direct` is a stamp; `source: Field notes, p. 4` is the writer's
+
+
+def strip_provenance(body: str) -> str:
+    """A note body without its provenance tags (`<!-- source:x session:y task:z -->`, `<!-- session:... -->`)."""
+    return _PROV_COMMENT_RE.sub(" ", body) if "<!--" in body else body
+
+
+def _fm_index_values(fm) -> list[str]:
+    """The frontmatter values search indexes: every value but the provenance stamps."""
+    if isinstance(fm, dict):
+        fm = {k: v for k, v in fm.items()
+              if k not in _PROV_KEYS and not (k == "source" and isinstance(v, str) and _PROV_SOURCE_RE.match(v.strip()))}
+    return _fm_values(fm)
+
+
 def _index_body(frontmatter_json: str, body: str) -> str:
     """The indexed body: the normalised note body followed by the frontmatter's values, so a
     CJK title or tag is searchable (MN16: `大阪城の歴史` in a title found nothing) while the
     stored frontmatter_json stays byte-for-byte parseable for the topics tool."""
     if _ALIAS_MARK in body:
         body = body.replace(_ALIAS_MARK, " ")   # only the alias tail holds the mark (AG96)
+    body = strip_provenance(body)
     text = _norm_index_text(body)
     try:
-        values = _fm_values(json.loads(frontmatter_json))
+        values = _fm_index_values(json.loads(frontmatter_json))
     except (ValueError, TypeError):
         values = []
     fm_text = "\n".join(values)[:_MAX_FM_INDEX_CHARS] if values else ""
@@ -647,9 +670,10 @@ def _original_text(rel: str, indexed: str) -> str:
         return ""
     frontmatter_json, body, _ = _parse_md(raw)
     try:
-        values = _fm_values(json.loads(frontmatter_json))
+        values = _fm_index_values(json.loads(frontmatter_json))
     except (ValueError, TypeError):
         values = []
+    body = strip_provenance(body)   # the text the row was built from (AG99)
     return body + ("\n" + "\n".join(values)[:_MAX_FM_INDEX_CHARS] if values else "")
 
 
@@ -823,6 +847,42 @@ def _bigram_fallback(raw: str) -> str:
     return " AND ".join(parts)
 
 
+_LOOSE_CAP = 0.35            # a loose match is 'low' confidence at most (MN25)
+_LOOSE_FILL_WORDS = 4        # a short strict result is topped up only for a sentence-like query
+_FTS_SYNTAX_RE = re.compile(r'["*^]|(?<!\S)(?:AND|OR|NOT|NEAR)(?!\S)')
+
+
+def _any_word_fallback(raw: str, min_words: int = 2) -> str:
+    """A looser query for a sentence whose words are not all in any one note: the words OR-ed, so
+    BM25 ranks the notes by how many of them they share and how rare those are. A question typed
+    the way a person asks it ("what was the first issue I had with my new car?") found nothing,
+    because every word had to match (LongMemEval run 2026-11-20: 406 of 470 questions came back
+    empty). Empty string when it does not apply: fewer than `min_words` distinct words, or a
+    query written in FTS5 syntax (a quoted phrase, a prefix star, AND/OR/NOT/NEAR), which means
+    what it says."""
+    if _FTS_SYNTAX_RE.search(raw):
+        return ""
+    q = _nordic_finish(_query_words(_fold_marks(_recompose(_nordic_mark(unicodedata.normalize("NFKC", raw)))).replace(_SENTINEL, " ")))
+    q = re.sub(r"[():]", " ", q)
+    tokens = list(dict.fromkeys(t for t in q.split() if any(c.isalnum() for c in t)))
+    if len(tokens) < min_words:
+        return ""
+    return " OR ".join(_quoted_term(t, cjk=True) for t in tokens)
+
+
+def _loose_results(raw: str, scope: str, limit: int, min_words: int, ceiling: float = _LOOSE_CAP) -> list[dict]:
+    """The any-word matches for `raw`, best first, scores scaled under `ceiling` and flagged."""
+    loose = _any_word_fallback(raw, min_words)
+    if not loose:
+        return []
+    found = search(loose, scope=scope, limit=limit, _fallback_stage=4, _raw=raw)
+    top = max((float(r.get("score", 0) or 0) for r in found), default=0.0)
+    for r in found:
+        r["score"] = round(ceiling * float(r.get("score", 0) or 0) / top, 4) if top > 0 else 0.0
+        r["loose_match"] = True
+    return found
+
+
 def _prepare_query(query: str) -> str:
     """NFKC-fold the query and turn every CJK run into a phrase of its characters; a run glued
     to Latin text becomes its own term (`2025年` -> `2025 "年"`)."""
@@ -833,7 +893,7 @@ def _prepare_query(query: str) -> str:
     return _alts_to_groups(q) if _ALT_OPEN in q else q
 _CREATE_FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
-USING fts5(path, frontmatter_json, body, tokenize='{tokenizer}');
+USING fts5(path, frontmatter_json UNINDEXED, body, tokenize='{tokenizer}');
 """
 
 _CREATE_FILES = """
@@ -906,6 +966,11 @@ def fts5_available() -> bool:
         return False
 
 
+# One lock wait for the connect and the PRAGMA: the PRAGMA silently replaced a shorter connect timeout
+# (AG101: a test that shrank the wait to 0.1 s still waited 30 s per locked search).
+_BUSY_TIMEOUT_S = 30.0
+
+
 def _connect() -> sqlite3.Connection:
     try:
         FTS_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -914,7 +979,7 @@ def _connect() -> sqlite3.Connection:
         # "not corruption" branch as one log line instead of a traceback.
         raise sqlite3.OperationalError(
             f"state directory {FTS_DB.parent} is a file, not a directory; move it aside")
-    conn = sqlite3.connect(str(FTS_DB), timeout=30)
+    conn = sqlite3.connect(str(FTS_DB), timeout=_BUSY_TIMEOUT_S)
     # If setup raises (a trashed file fails at the WAL pragma, which reads
     # the header), CLOSE before re-raising: sqlite3.connect() has already
     # opened the file, the caller never receives the object, and on Windows
@@ -923,7 +988,7 @@ def _connect() -> sqlite3.Connection:
     try:
         # busy_timeout FIRST so the journal_mode switch waits on a lock
         # instead of failing instantly with "database is locked".
-        conn.execute("PRAGMA busy_timeout=30000")  # embed-index bulk writes vs interactive search
+        conn.execute(f"PRAGMA busy_timeout={int(_BUSY_TIMEOUT_S * 1000)}")  # embed-index bulk writes vs interactive search
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(_CREATE_META)
         conn.execute(_CREATE_FILES)
@@ -1072,7 +1137,7 @@ def _walk_memory_stats():
                     yield rel, st0.st_mtime, st0.st_size   # the listing's stat, read once
 
 
-INDEX_FORMAT = "10"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89; 10 = digraph-alias tail for å/ø/ö/ä/ü words, AG96)
+INDEX_FORMAT = "11"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89; 10 = digraph-alias tail for å/ø/ö/ä/ü words, AG96; 11 = provenance tags and stamps left out, AG99)
 
 
 def _needs_rebuild() -> bool:
@@ -1224,76 +1289,107 @@ def update_incremental() -> int:
         conn.close()
     if empty:
         return _noticed_rebuild("the index is new")
-    if _fmt is not None and _fmt != INDEX_FORMAT:
+    resuming = _fmt == _BUILDING + INDEX_FORMAT
+    if _fmt is not None and _fmt != INDEX_FORMAT and not resuming:
         with _rebuild_lock:  # re-entrant: a concurrent search may have rebuilt while we waited (AG60: four searches made four full rebuilds)
-            if _index_format_tag() != INDEX_FORMAT:
+            _tag = _index_format_tag()
+            if _tag != INDEX_FORMAT and _tag != _BUILDING + INDEX_FORMAT:
                 return _noticed_rebuild("this version indexes text differently")  # a normalisation change re-indexes every note once; the tag was read by the rebuild command only (MN46)
-
+            resuming = _tag == _BUILDING + INDEX_FORMAT
     with _rebuild_lock:
-        conn = _connect()
-        try:
-            db_state = {}
-            rowids = {}
-            for row in conn.execute("SELECT path, mtime, size, fts_rowid FROM memory_files"):  # one scan, not two (AG92)
-                db_state[row[0]] = (row[1], row[2])
-                rowids[row[0]] = row[3]
-            now = time.time()
-            changed = 0
-            seen: set[str] = set()
-            # (mtime, size) pair: mtime alone misses a same-mtime rewrite
-            # on coarse-timestamp mounts (SMB, some Docker volumes) --
-            # expert review 2026-09-27. Size catches the common case;
-            # a same-size same-mtime rewrite remains theoretically
-            # invisible until the next real change.
-            todo = []
-            for rel, mtime, size in _walk_memory_stats():
-                seen.add(rel)
-                if db_state.get(rel) != (mtime, size):
-                    todo.append((rel, mtime, size))
-            _t0 = time.monotonic()
-            if len(todo) >= _NOTICE_MIN_NOTES:  # a pull, sync or restore re-indexes thousands of notes: say so before the wait (AG84)
+        return _index_pass(resuming)
+
+
+_BUILDING = "building:"   # index_format while a full build runs: every row present is right, the set is not yet complete (AG99)
+_BATCH_NOTES = 500        # a build commits every this many notes ...
+_BATCH_SECS = 2.0         # ... or this many seconds: a killed 20,000-note first index kept nothing and started over (MN87, AG99)
+
+
+def _index_pass(resuming: bool = False) -> int:
+    """Index every note whose (mtime, size) differs from memory_files and drop the rows of vanished notes.
+
+    Invariant (AG99): a note's FTS row and its memory_files row are committed in the same transaction, in
+    batches, so after a kill at any point every committed note is indexed exactly as its recorded version and
+    the next pass picks up the rest from where the kill left it. `last_indexed` and `index_format` advance only
+    when a pass completes; a full build carries `building:<format>` until then, which the next search resumes
+    (never restarts) and which `_needs_rebuild` reports as not built. Each note is re-checked under the write lock,
+    so two processes resuming the same build never index a note twice."""
+    conn = _connect()
+    try:
+        db_state = {}
+        rowids = {}
+        for row in conn.execute("SELECT path, mtime, size, fts_rowid FROM memory_files"):  # one scan, not two (AG92)
+            db_state[row[0]] = (row[1], row[2])
+            rowids[row[0]] = row[3]
+        now = time.time()
+        changed = 0
+        seen: set[str] = set()
+        # (mtime, size) pair: mtime alone misses a same-mtime rewrite on coarse-timestamp mounts (SMB, some
+        # Docker volumes) -- expert review 2026-09-27. Size catches the common case; a same-size same-mtime
+        # rewrite remains theoretically invisible until the next real change.
+        todo = []
+        for rel, mtime, size in _walk_memory_stats():
+            seen.add(rel)
+            if db_state.get(rel) != (mtime, size):
+                todo.append((rel, mtime, size))
+        _t0 = time.monotonic()
+        if len(todo) >= _NOTICE_MIN_NOTES:  # a pull, sync or restore re-indexes thousands of notes: say so before the wait (AG84)
+            if resuming and db_state:
+                _notice(f"Sextant: resuming the interrupted search index build: {len(db_state):,} notes kept, {len(todo):,} to go.")
+            elif not resuming:
                 _notice(f"Sextant: re-indexing {len(todo):,} changed notes for search; this runs once.")
-            # A note with no recorded rowid (a new note) made _fts_delete scan the whole FTS table once per note:
-            # 1,500 notes added beside an index of one took 22.9 s, 20,000 more than 22 minutes (MN87). The paths
-            # the table holds are read once, and a path it does not hold has no row to delete.
-            fts_paths = None
-            if any(rowids.get(rel) is None for rel, _m, _s in todo):
-                fts_paths = {r[0] for r in conn.execute("SELECT path FROM memory_fts")}
-            for rel, mtime, size in todo:
-                try:
-                    raw = (MEMORY_ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
-                except OSError:
-                    continue
-                frontmatter_json, body, confirmed_ts = _parse_md(raw)
-                if rowids.get(rel) is not None or fts_paths is None or rel in fts_paths:
-                    _fts_delete(conn, rel, rowids.get(rel))
-                cur = conn.execute(
-                    "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
-                    (rel, frontmatter_json, _index_body(frontmatter_json, body)),
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size, fts_rowid)"
-                    " VALUES (?,?,?,?,?,?)",
-                    (rel, mtime, now, confirmed_ts, size, cur.lastrowid),
-                )
-                changed += 1
-            for rel in set(db_state) - seen:
-                _fts_delete(conn, rel, rowids.get(rel))
-                conn.execute("DELETE FROM memory_files WHERE path=?", (rel,))
-                changed += 1
-            if changed:
-                conn.execute(
-                    "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?)",
-                    (str(now),),
-                )
-                conn.commit()
-                log.info("FTS incremental update: %d row(s) changed", changed)
-            if len(todo) >= _NOTICE_MIN_NOTES:
-                _LAST_INDEX_WORK.update(kind="update", reason="notes changed since the last search",
-                                        notes=len(todo), seconds=round(time.monotonic() - _t0, 1))
-            return changed
-        finally:
-            conn.close()
+        # A note with no recorded rowid (a new note) made _fts_delete scan the whole FTS table once per note:
+        # 1,500 notes added beside an index of one took 22.9 s, 20,000 more than 22 minutes (MN87). The paths
+        # the table holds are read once, and a path it does not hold has no row to delete.
+        fts_paths = None
+        if any(rowids.get(rel) is None for rel, _m, _s in todo):
+            fts_paths = {r[0] for r in conn.execute("SELECT path FROM memory_fts")}
+        batch, batch_t0 = 0, time.monotonic()
+        for rel, mtime, size in todo:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")   # the write lock before the re-check below
+            cur_row = conn.execute("SELECT mtime, size, fts_rowid FROM memory_files WHERE path=?", (rel,)).fetchone()
+            if cur_row is not None and (cur_row[0], cur_row[1]) == (mtime, size):
+                continue   # another process indexed this version since the scan above
+            rid = cur_row[2] if cur_row is not None else None
+            try:
+                raw = (MEMORY_ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            frontmatter_json, body, confirmed_ts = _parse_md(raw)
+            if rid is not None or fts_paths is None or rel in fts_paths:
+                _fts_delete(conn, rel, rid)
+            cur = conn.execute(
+                "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
+                (rel, frontmatter_json, _index_body(frontmatter_json, body)),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size, fts_rowid)"
+                " VALUES (?,?,?,?,?,?)",
+                (rel, mtime, now, confirmed_ts, size, cur.lastrowid),
+            )
+            changed += 1
+            batch += 1
+            if batch >= _BATCH_NOTES or time.monotonic() - batch_t0 >= _BATCH_SECS:
+                conn.commit()   # durable progress: a kill from here on keeps these notes (AG99)
+                batch, batch_t0 = 0, time.monotonic()
+        for rel in set(db_state) - seen:
+            _fts_delete(conn, rel, rowids.get(rel))
+            conn.execute("DELETE FROM memory_files WHERE path=?", (rel,))
+            changed += 1
+        if changed or resuming or conn.in_transaction:
+            conn.execute(
+                "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?)",
+                (str(now),),
+            )
+            conn.commit()
+            log.info("FTS incremental update: %d row(s) changed", changed)
+        if len(todo) >= _NOTICE_MIN_NOTES:
+            _LAST_INDEX_WORK.update(kind="update", reason="notes changed since the last search",
+                                    notes=len(todo), seconds=round(time.monotonic() - _t0, 1))
+        return changed
+    finally:
+        conn.close()
 
 
 # Messages sqlite emits for a damaged FTS5 index or file, across versions: 3.42 reports
@@ -1374,39 +1470,28 @@ def rebuild(force: bool = False) -> int:
 
         conn = _connect()
         try:
-            conn.execute("DELETE FROM memory_fts")
-            conn.execute("DELETE FROM memory_files")
-            count = 0
-            now = time.time()
-            for rel, abs_path in _walk_memory():
-                try:
-                    raw = abs_path.read_text(encoding="utf-8-sig", errors="replace")
-                except OSError:
-                    continue
-
-                frontmatter_json, body, confirmed_ts = _parse_md(raw)
-
-                cur = conn.execute(
-                    "INSERT INTO memory_fts(path, frontmatter_json, body) VALUES (?,?,?)",
-                    (rel, frontmatter_json, _index_body(frontmatter_json, body)),
-                )
-                st = abs_path.stat()
-                conn.execute(
-                    "INSERT OR REPLACE INTO memory_files(path, mtime, indexed, last_confirmed, size, fts_rowid)"
-                    " VALUES (?,?,?,?,?,?)",
-                    (rel, st.st_mtime, now, confirmed_ts, st.st_size, cur.lastrowid),
-                )
-                count += 1
-
-            conn.execute(
-                "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?)",
-                (str(now),),
-            )
-            conn.commit()
-            log.info("FTS index rebuilt: %d files indexed into %s", count, FTS_DB)
-            return count
+            row = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+            if not row or row[0] != _BUILDING + INDEX_FORMAT:
+                # A fresh build: clear and mark it unfinished in one transaction. An interrupted build of
+                # this format resumes instead (its rows are right; AG99), here and on the search path.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                conn.execute("DELETE FROM memory_fts")
+                conn.execute("DELETE FROM memory_files")
+                conn.execute("DELETE FROM atlas_meta WHERE key='last_indexed'")
+                conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format',?)",
+                             (_BUILDING + INDEX_FORMAT,))
+                conn.commit()
         finally:
             conn.close()
+        _index_pass(resuming=True)
+        conn = _connect()
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM memory_files").fetchone()[0]
+        finally:
+            conn.close()
+        log.info("FTS index rebuilt: %d files indexed into %s", count, FTS_DB)
+        return count
 
 
 def main() -> None:
@@ -1516,6 +1601,8 @@ def search(query: str, scope: str = "", limit: int = 10,
             _swept_gen = gen_before
         except sqlite3.OperationalError as exc:
             log.warning("freshness update skipped (db busy): %s -- serving current index", exc)
+            if (_index_format_tag() or "").startswith(_BUILDING):   # never a silent half-index (AG99)
+                _notice("Sextant: the search index is still being built by another process; results may miss notes.")
         except sqlite3.DatabaseError as exc:
             # Malformed index: let the query below trigger the self-heal.
             log.error("freshness update hit a corrupt index: %s", exc)
@@ -1611,7 +1698,11 @@ def search(query: str, scope: str = "", limit: int = 10,
                         # OR-ed bigrams match on a shared particle alone; the band is 'low' at most (MN25)
                         r["score"] = min(float(r.get("score", 0) or 0), 0.35)
                         r["loose_match"] = True
-                    return loose_results
+                    if loose_results:
+                        return loose_results
+            if _fallback_stage in (0, 1, 2) and _raw is not None:
+                # every word was required and no note holds them all: rank by the words shared
+                return _loose_results(_raw, scope, limit, 2)
             return results
         # NOTE: a single result MUST still go through the blend below.
         # The old `<= 1` early-return left a lone hit carrying its raw
@@ -1660,6 +1751,14 @@ def search(query: str, scope: str = "", limit: int = 10,
             r["score"] = combined
 
         results.sort(key=lambda x: x["score"], reverse=True)
+        if _fallback_stage in (0, 1, 2) and _raw is not None and len(results) < limit:
+            # a sentence-like query that few notes satisfy in full: the full matches stay on top,
+            # the any-word matches follow, scored below the weakest of them
+            floor = min(float(r["score"]) for r in results)
+            have = {r["path"] for r in results}
+            extra = [r for r in _loose_results(_raw, scope, limit, _LOOSE_FILL_WORDS, min(_LOOSE_CAP, floor * 0.99))
+                     if r["path"] not in have]
+            results.extend(extra[: limit - len(results)])
         return results
     except sqlite3.OperationalError as exc:
         msg = str(exc)

@@ -1045,6 +1045,8 @@ _SCHEDULER_JOB_MAP = {
     "embed-index":          lambda: brain_scheduler._embed_index_nightly(),
     "claude-supervisor":    lambda: brain_scheduler._claude_supervisor_weekly(),
     "auto-session-log":     lambda: brain_scheduler._auto_session_log(),
+    "session-digest":       lambda: brain_scheduler._session_digest(),
+    "research-batch-manual": lambda: brain_scheduler._research_batch(),  # lane unscheduled 2026-11-20; by hand only
 }
 
 
@@ -1078,6 +1080,46 @@ async def reject_pending_fact(fact_id: str):
     from .task_facts import reject_fact
     result = await asyncio.to_thread(reject_fact, fact_id=fact_id)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Proposals desk (ATL-073): the loop's only write path, under the operator's click
+# ---------------------------------------------------------------------------
+
+@app.get("/proposals")
+async def list_proposals_endpoint(status: str = "pending", limit: int = 50):
+    """Proposals from the weekly supervisor and the reflexion loop, newest first."""
+    from .learning import list_proposals
+    rows = await asyncio.to_thread(list_proposals, status, min(max(limit, 1), 200))
+    return {"proposals": rows, "count": len(rows)}
+
+
+@app.post("/proposals/{proposal_id}/approve")
+async def approve_proposal_endpoint(proposal_id: str, request: Request):
+    """Apply a proposal: lesson row, ticket or memory fact. Body may carry an edited `body`."""
+    from .learning import approve_proposal
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    edited = body.get("body") if isinstance(body, dict) else None
+    result = await asyncio.to_thread(approve_proposal, proposal_id, edited_body=edited if isinstance(edited, str) else None)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "approval failed"))
+    return result
+
+
+@app.post("/proposals/{proposal_id}/reject")
+async def reject_proposal_endpoint(proposal_id: str):
+    from .learning import reject_proposal
+    return await asyncio.to_thread(reject_proposal, proposal_id)
+
+
+@app.get("/proposals/count")
+async def proposals_count_endpoint():
+    from .learning import pending_proposal_count
+    return {"pending": await asyncio.to_thread(pending_proposal_count)}
 
 
 @app.get("/pending-facts/count")

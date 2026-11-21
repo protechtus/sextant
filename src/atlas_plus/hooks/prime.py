@@ -60,8 +60,9 @@ def _tokenize(text: str) -> set[str]:
         # all, so `sextant context` never named a matching note for it. CJK runs give bigrams (no word spaces).
         import unicodedata as _ud
         from atlas_plus.mcp.memory_server.fts import (
-            _CJK_RE, _WORD_RE, _alias_of, _fold_marks, _recompose,
+            _CJK_RE, _WORD_RE, _alias_of, _fold_marks, _recompose, strip_provenance,
         )
+        text = strip_provenance(text)   # `direct` matched every remembered note through its source tag (AG99)
         s = _fold_marks(_recompose(_ud.normalize("NFKC", text))).casefold()
         out: set[str] = set()
         for w in _WORD_RE.findall(s):

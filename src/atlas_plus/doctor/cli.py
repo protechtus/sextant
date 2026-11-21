@@ -83,7 +83,7 @@ def _powershell_json(script: str, timeout: float = 8.0):
         completed = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

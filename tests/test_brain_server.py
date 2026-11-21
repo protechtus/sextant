@@ -14,9 +14,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Set API key before importing server so module-level _API_KEY is populated.
-_TEST_KEY = "test-brain-key-xyz"
-os.environ.setdefault("ATLAS_BRAIN_API_KEY", _TEST_KEY)
-os.environ.setdefault("ATLAS_BRAIN_OLLAMA_URL", "http://127.0.0.1:11434")
+_TEST_KEY = os.environ.setdefault("ATLAS_BRAIN_API_KEY", "brain-key")  # the session's key (tests/conftest.py)
+os.environ.setdefault("ATLAS_BRAIN_OLLAMA_URL", "http://127.0.0.1:9")  # never the contributor's live Ollama
 
 from fastapi.testclient import TestClient
 

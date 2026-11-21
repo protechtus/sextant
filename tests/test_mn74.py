@@ -12,8 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-_TEST_KEY = "mn74-test-key"
-os.environ.setdefault("ATLAS_WEB_API_KEY", _TEST_KEY)
+_TEST_KEY = os.environ.setdefault("ATLAS_WEB_API_KEY", "test-key-abc")  # the session's key (tests/conftest.py)
 os.environ.setdefault("ATLAS_BRAIN_URL", "http://127.0.0.1:9")
 
 from fastapi.testclient import TestClient  # noqa: E402

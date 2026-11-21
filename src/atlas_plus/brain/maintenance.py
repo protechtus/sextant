@@ -34,7 +34,7 @@ MAINTENANCE_JOBS: list[dict] = [
     {"job_id": "temporal-build",     "label": "Temporal graph build", "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "suggest-facts",      "label": "Fact suggestions",     "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "curation",           "label": "Curation report",      "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
-    {"job_id": "research-batch",     "label": "Research batch",       "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
+    {"job_id": "session-digest",     "label": "Session digest",       "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "patterns-rebuild",   "label": "Patterns rebuild",     "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "embed-index",        "label": "Semantic embed index", "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "memory-trends",      "label": "Memory trends",        "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
@@ -56,7 +56,9 @@ MAINTENANCE_JOBS: list[dict] = [
 
 # Operational lanes deliberately NOT surfaced as "maintenance" -- they fire every
 # few minutes and tell you nothing about whether memory upkeep happened. Named
-# here so the drift-guard test can assert they are excluded on purpose.
+# here so the drift-guard test can assert they are excluded on purpose. Since
+# ATL-073 (2026-11-20) ticket-dispatch and sla-check are registered only when
+# their switch is on, so an operational job may be absent from a live scheduler.
 OPERATIONAL_JOBS = frozenset({"ticket-dispatch", "sla-check", "zombie-cleanup"})
 
 

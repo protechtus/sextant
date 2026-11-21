@@ -42,7 +42,7 @@ def _git_out(args, cwd, timeout=5) -> str:
     from atlas_plus import gitsafe
     import subprocess as _sp
     return _sp.check_output(gitsafe.argv(args, cwd, timeout=timeout), cwd=str(cwd),
-                            stderr=_sp.DEVNULL, text=True, timeout=timeout, env=gitsafe._env())
+                            stderr=_sp.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=gitsafe._env())
 
 
 def _capture_fsdiffs() -> None:

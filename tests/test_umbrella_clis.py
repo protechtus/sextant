@@ -32,6 +32,17 @@ class TestAtlasPlusCli:
         assert result.exit_code == 0
         assert "no corpus yet" in result.output
 
+    def test_overview_gives_a_new_user_the_three_next_commands(self, tmp_path, monkeypatch):
+        """pip prints nothing after an install: the bare command is where a first-timer
+        learns what to type next, in order, and each named command exists."""
+        from atlas_plus.cli import app
+        monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "nowhere"))
+        out = runner.invoke(app, []).output
+        steps = [line.split()[1:3] for line in out.splitlines() if line.strip()[:2] in ("1.", "2.", "3.")]
+        assert [s[1] for s in steps] == ["init", "setup", "verify"]
+        for _umbrella, sub in steps:
+            assert runner.invoke(app, [sub, "--help"]).exit_code == 0
+
     def test_overview_quiet_when_corpus_exists(self, tmp_path, monkeypatch):
         from atlas_plus.cli import app
         corpus = tmp_path / "mem"
@@ -41,6 +52,7 @@ class TestAtlasPlusCli:
         result = runner.invoke(app, [])
         assert result.exit_code == 0
         assert "no corpus yet" not in result.output
+        assert "First time here" not in result.output
 
     def test_version_flag(self):
         from atlas_plus import __version__

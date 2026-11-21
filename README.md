@@ -24,6 +24,12 @@ sextant verify                                        # proves the round-trip; y
 One command per line (no `&&`: PowerShell 5.1 has none), about ten minutes, Python 3.11 or newer. The full walk-through is in
 [Quickstart](#quickstart) below. Not on PyPI yet: the first release ships when `v0.1.0` is tagged.
 
+**New to GitHub, or stuck on an error?** [New to GitHub? Start here](https://github.com/protechtus/sextant/blob/main/docs/NEW-TO-GITHUB.md)
+explains what Git, Python, pip and PATH are, checks each one with you, and lists the common error messages with their fix.
+The `pip install git+...` line above needs Git (`git --version`; "Cannot find command 'git'" means it is missing or the
+window is older than the install). No Git? This line installs the same thing without it:
+`pip install https://github.com/protechtus/sextant/archive/refs/heads/main.zip`
+
 Sextant is a self-hosted AI memory and orchestration platform (engine codename: Keel).
 MCP -- the Model Context Protocol -- is the plug-in standard AI clients like Claude Code,
 Claude Desktop, and Cursor use to reach external tools; Sextant speaks it natively.
@@ -70,6 +76,10 @@ machines; if that has never bothered you, the built-in is the right call.
 | Good web-chat threads are trapped in the browser | **Sextant Clip** ([extensions/sextant-clip](https://github.com/protechtus/sextant/blob/main/extensions/sextant-clip/README.md)): one click sends the claude.ai / ChatGPT / Gemini chat you are reading into your memory -- no more begging the model for a markdown export |
 
 ## Quickstart
+
+> **First time installing from GitHub, or something is not working?** Read
+> [New to GitHub? Start here](https://github.com/protechtus/sextant/blob/main/docs/NEW-TO-GITHUB.md) first.
+> It explains what each piece is, checks your computer with you, and lists the common errors with their fix.
 
 > **Installing with an AI agent?** Tell it: *"Read https://usesextant.com/agent-install.md and
 > follow it."* The same runbook ships here as [docs/AGENT-INSTALL.md](https://github.com/protechtus/sextant/blob/main/docs/AGENT-INSTALL.md): numbered
@@ -133,17 +143,31 @@ py -3 -m venv .venv   # needs Python 3.11+ (check: py --list; install: winget in
 .\.venv\Scripts\sextant.exe --version
 .\.venv\Scripts\sextant.exe commands
 
-# Choose where your memory lives BEFORE the next step (skip this block to accept
-# ~\.memory, ~\.atlas and ~\projects; persist with setx so hooks and clients agree):
+# Scaffold your memory corpus (safe to re-run; lands in ~\.memory and ~\.atlas):
+.\.venv\Scripts\sextant-init.exe
+```
+
+The block above is safe to copy and paste whole. PowerShell runs each line as it
+arrives and waits at the last one: press Enter once more to run it.
+
+Optional, and NOT part of the paste: to keep your memory somewhere other than your
+user folder, run these BEFORE `sextant-init`. A `$env:` line lasts only until the
+window closes, so save the same four values with `setx` too (for example
+`setx ATLAS_WORKSPACE_ROOT C:\sextant-data`), or the next window, the hooks and your
+client will look in the default place and find nothing.
+
+```powershell
 $env:ATLAS_WORKSPACE_ROOT = "C:\sextant-data"        # re-roots the three below
 $env:ATLAS_MEMORY_ROOT    = "$env:ATLAS_WORKSPACE_ROOT\.memory"
 $env:ATLAS_STATE_DIR      = "$env:ATLAS_WORKSPACE_ROOT\.atlas"
 $env:ATLAS_PROJECTS_ROOT  = "$env:ATLAS_WORKSPACE_ROOT\projects"
+```
 
-# Scaffold your memory corpus there (safe to re-run):
-.\.venv\Scripts\sextant-init.exe
+Optional, for contributors: the full test suite (thousands of tests, about 7 to 10
+minutes; long rows of dots are progress, not a hang; the telegram and summarizer tests
+skip unless those extras are installed). You do not need it to use Sextant.
 
-# Optional: run the full test suite (thousands of tests, about 3-5 minutes; the telegram and summarizer tests skip unless those extras are installed):
+```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
@@ -171,17 +195,28 @@ python3 -m venv .venv        # needs 3.11+ (check: python3 --version)
 .venv/bin/sextant --version
 .venv/bin/sextant commands   # discover the whole CLI family
 
-# Choose where your memory lives BEFORE the next step (skip this block to accept
-# ~/.memory, ~/.atlas and ~/projects; put the exports in your shell profile to persist):
+# Scaffold your memory corpus (safe to re-run; lands in ~/.memory and ~/.atlas):
+.venv/bin/sextant-init
+```
+
+The block above is safe to copy and paste whole.
+
+Optional, and NOT part of the paste: to keep your memory somewhere other than your
+home folder, run these BEFORE `sextant-init`, and put the same exports in your shell
+profile so the next terminal, the hooks and your client agree.
+
+```bash
 export ATLAS_WORKSPACE_ROOT="$HOME/sextant-data"     # re-roots the three below
 export ATLAS_MEMORY_ROOT="$ATLAS_WORKSPACE_ROOT/.memory"
 export ATLAS_STATE_DIR="$ATLAS_WORKSPACE_ROOT/.atlas"
 export ATLAS_PROJECTS_ROOT="$ATLAS_WORKSPACE_ROOT/projects"
+```
 
-# Scaffold your memory corpus there (safe to re-run):
-.venv/bin/sextant-init
+Optional, for contributors: the full test suite (thousands of tests, about 7 to 10
+minutes; long rows of dots are progress, not a hang; the telegram and summarizer tests
+skip unless those extras are installed). You do not need it to use Sextant.
 
-# Optional: run the full test suite (thousands of tests, about 3-5 minutes; the telegram and summarizer tests skip unless those extras are installed):
+```bash
 .venv/bin/python -m pytest tests -q
 ```
 

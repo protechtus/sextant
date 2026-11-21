@@ -109,6 +109,14 @@ def _overview() -> None:
     if corpus_missing:
         init_cmd = "sextant-init" if prefix == "sextant" else "atlas-init"
         console.print(f"  [yellow]no corpus yet -- run: {init_cmd}[/yellow]")
+        # pip cannot print anything after an install, so the first thing a new user types
+        # is where "it installed, now what" has to be answered (operator's by-hand install,
+        # 2026-11-21). soft_wrap: one step per line whatever the terminal width.
+        _u = prefix if prefix == "sextant" else "atlas-plus"
+        console.print("  [bold]Installed and working. First time here? Three steps, in order:[/bold]")
+        console.print(f"    1. {_u} init     creates the folder your notes live in", soft_wrap=True)
+        console.print(f"    2. {_u} setup    prints the line that connects your AI client; copy it, paste it, press Enter", soft_wrap=True)
+        console.print(f"    3. {_u} verify   proves it works (the last line says ROUND-TRIP: OK)", soft_wrap=True)
     console.print(f"  state dir   : {state_dir}")
     ports = service_ports()
     console.print(f"  services    : MCP :{ports['mcp']} | Web UI (Helm) :{ports['web']} | Brain :{ports['brain']} | Sync :{ports['sync']}")

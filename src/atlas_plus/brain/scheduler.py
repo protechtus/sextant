@@ -8,7 +8,6 @@ Scheduled jobs (UTC):
   03:05  temporal-build    -- ingest recent sessions into temporal graph
   03:10  suggest-facts     -- dry-run fact candidate review
   03:15  curation          -- write duplicate/stale cleanup report
-  03:20  research-batch    -- run queued P3 research jobs (local Ollama)
   03:25  patterns-rebuild  -- rebuild session co-occurrence model
   Sunday 03:30 gaps-report           -- write weekly memory miss report
   Sunday 03:35 convergence-report    -- write weekly contradiction divergence report
@@ -22,11 +21,17 @@ Scheduled jobs (UTC):
   04:15  suggest-tags      -- auto-apply tags to untagged .memory/ files (in-process)
   04:40  embed-index       -- refresh the semantic embedding index (in-process, needs Ollama)
   Monday 09:00 weekly-digest   -- ntfy push with weekly Atlas stats summary (in-process)
-  */10   ticket-dispatch  -- auto-create Brain tasks from eligible todo tickets (in-process)
-  05:00  research-api-batch-1 -- 20 P2 API research reports (nightly)
-  09:00  research-api-batch-2 -- 20 P2 API research reports (second wave)
-  */10   sla-check         -- ntfy push when a task runs past ATLAS_SLA_MINUTES (default 15)
+  11:00  session-digest    -- deterministic digest of the previous local day (sessions, commits, Brain
+                              ledger, close notes) -> .atlas/brain/digests/<date>.json (ATL-073)
   *:45   zombie-cleanup    -- mark stale running tasks as failed (every hour)
+
+Registered only when their switch is on (ATL-073, 2026-11-20: they fired every 10 minutes for
+months doing nothing):
+  */10   ticket-dispatch  -- ATLAS_TICKET_DISPATCH=on (and ATLAS_AUTONOMOUS not off)
+  */10   sla-check         -- ATLAS_NTFY_URL set and ATLAS_SLA_MINUTES > 0
+Unscheduled, still triggerable by hand (POST /scheduler/run/<job>):
+  research-batch          -- research_runner.py has been a no-op since 2026-05 (lane removed 2026-11-20)
+  research-api-batch-1/2  -- paid API research (needs RESEARCH_API_KEY)
 
 Each job creates a task in brain_tasks. Deterministic worker jobs are left
 pending for atlas-brain-worker. The db-backup and unconfirmed-decay jobs run
@@ -197,6 +202,21 @@ async def _curation() -> None:
         session_id="scheduler-curation",
         kind="curation_report",
         priority=4,
+    )
+
+
+async def _session_digest() -> None:
+    """Nightly session digest (ATL-073 P1): what the operator's sessions and Brain did yesterday.
+
+    Deterministic, no LLM: session-log and updates entries, session-close notes, commits per
+    repository, Brain jobs by kind and outcome, scheduler heartbeats. The dream and the Monday
+    supervisor read the last seven; the SessionStart hook shows the newest.
+    """
+    await _queue_worker_task(
+        instruction="Write the session digest for the previous local day (brain.learning.write_session_digest).",
+        session_id="scheduler-session-digest",
+        kind="session_digest",
+        priority=3,
     )
 
 
@@ -890,7 +910,7 @@ _CATCHUP_CADENCE_HOURS: dict[str, float] = {
     "temporal-build": _DAY,
     "suggest-facts": _DAY,
     "curation": _DAY,
-    "research-batch": _DAY,
+    "session-digest": _DAY,
     "patterns-rebuild": _DAY,
     "dream": _DAY,
     "memory-trends": _DAY,
@@ -979,6 +999,22 @@ def _schedule_catchup(scheduler, job_funcs: dict[str, object]) -> list[str]:
     return overdue
 
 
+def _ticket_dispatch_registered() -> bool:
+    try:
+        from .dispatcher import is_dispatch_enabled
+        return bool(is_dispatch_enabled())
+    except Exception:  # pragma: no cover - a broken dispatcher must not stop the scheduler
+        return False
+
+
+def _sla_check_registered() -> bool:
+    try:
+        minutes = int(os.environ.get("ATLAS_SLA_MINUTES", "15"))
+    except ValueError:
+        minutes = 15
+    return minutes > 0 and bool(os.environ.get("ATLAS_NTFY_URL", "").strip())
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Create and start the APScheduler instance with all registered Brain jobs. Idempotent."""
     global _scheduler
@@ -990,7 +1026,6 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.add_job(_temporal_build, "cron", hour=3, minute=5,  id="temporal-build")
     _scheduler.add_job(_suggest_facts,  "cron", hour=3, minute=10, id="suggest-facts")
     _scheduler.add_job(_curation,       "cron", hour=3, minute=15, id="curation")
-    _scheduler.add_job(_research_batch,      "cron", hour=3, minute=20,                    id="research-batch")
     _scheduler.add_job(_patterns_rebuild,    "cron", hour=3, minute=25,                    id="patterns-rebuild")
     _scheduler.add_job(_gaps_report,          "cron", day_of_week="sun", hour=3, minute=30, id="gaps-report")
     _scheduler.add_job(_convergence_report,   "cron", day_of_week="sun", hour=3, minute=35, id="convergence-report")
@@ -1011,8 +1046,13 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.add_job(_suggest_tags_daily,     "cron", hour=4, minute=15, id="suggest-tags")
     _scheduler.add_job(_weekly_digest_push,     "cron", day_of_week="mon", hour=9, minute=0, id="weekly-digest")
     _scheduler.add_job(_auto_session_log,        "cron", hour=23, minute=30,                   id="auto-session-log")
-    _scheduler.add_job(_ticket_dispatch,         "cron", minute="*/10",                        id="ticket-dispatch")
-    _scheduler.add_job(_sla_check,           "cron", minute="*/10",                        id="sla-check")
+    _scheduler.add_job(_session_digest,          "cron", hour=11, minute=0,                    id="session-digest")
+    # Switch-gated lanes (ATL-073): a lane nobody turned on is not registered, so the ledger and
+    # the maintenance panel show only jobs that can do something.
+    if _ticket_dispatch_registered():
+        _scheduler.add_job(_ticket_dispatch,     "cron", minute="*/10",                        id="ticket-dispatch")
+    if _sla_check_registered():
+        _scheduler.add_job(_sla_check,           "cron", minute="*/10",                        id="sla-check")
     _scheduler.add_job(_zombie_cleanup,      "cron", minute=45,                            id="zombie-cleanup")
 
     _scheduler.add_listener(_job_event_listener, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
@@ -1028,7 +1068,7 @@ def start_scheduler() -> AsyncIOScheduler:
         "temporal-build": _temporal_build,
         "suggest-facts": _suggest_facts,
         "curation": _curation,
-        "research-batch": _research_batch,
+        "session-digest": _session_digest,
         "patterns-rebuild": _patterns_rebuild,
         "dream": _dream_nightly,
         "memory-trends": _memory_trends_daily,

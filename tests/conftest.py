@@ -25,9 +25,32 @@ import tempfile as _tempfile
 from pathlib import Path as _Path
 
 _SUITE_ISOLATION_ROOT = _Path(_tempfile.mkdtemp(prefix="sextant-tests-"))
+# The suite runs in the CI environment whatever the contributor's shell holds (AG101, sweep 26): README tells a
+# new user to set (and setx) the ATLAS_* roots, then run pytest in the same shell, and `setdefault` let those win,
+# so a run wrote ticket events, reports and version copies into the contributor's own Sextant; a set
+# ATLAS_WEB_API_KEY failed 182 dashboard tests. Every ATLAS_* variable is dropped, the roots are forced.
+for _var in [_k for _k in _os.environ if _k.upper().startswith("ATLAS_")]:
+    del _os.environ[_var]
 for _var, _sub in (("ATLAS_WORKSPACE_ROOT", ""), ("ATLAS_MEMORY_ROOT", ".memory"),
                    ("ATLAS_STATE_DIR", ".atlas"), ("ATLAS_PROJECTS_ROOT", "projects")):
-    _os.environ.setdefault(_var, str(_SUITE_ISOLATION_ROOT / _sub) if _sub else str(_SUITE_ISOLATION_ROOT))
+    _os.environ[_var] = str(_SUITE_ISOLATION_ROOT / _sub) if _sub else str(_SUITE_ISOLATION_ROOT)
+# One key per service for the whole session: the dashboard and the Brain freeze their key when first imported, and
+# whichever test module was collected first used to decide it (`pytest tests/test_mn74.py tests/test_web_app.py`:
+# 182 failed; `pytest tests/test_clip_inbox.py tests/test_brain_server.py`: 67 failed). Modules read these back.
+_os.environ["ATLAS_WEB_API_KEY"] = "test-key-abc"
+_os.environ["ATLAS_BRAIN_API_KEY"] = "brain-key"
+# Unit tests never reach the contributor's own Ollama: the Brain's smart router POSTed /api/chat (qwen3:1.7b) to
+# localhost:11434 from tests/test_brain_agents.py (7 s per test on a machine whose Ollama answers). Every Ollama
+# reader goes through atlas_plus.llm.ollama_url, which takes this first; the embedder has its own variable.
+# tests/integration (marked `ollama`) dial their own URL on purpose.
+_os.environ["ATLAS_BRAIN_OLLAMA_URL"] = "http://127.0.0.1:9"
+_os.environ["ATLAS_EMBED_URL"] = "http://127.0.0.1:9"
+# The suite reads and writes UTF-8 whatever terminal it runs in. In a real Windows console (code page 437 or 1252)
+# the CLI entry points re-encode stdout to the console's code page, which is right for a pipe a shell decodes and
+# wrong for pytest's capture buffer, which pytest always decodes as UTF-8: the first test that printed a non-ASCII
+# path died in capsys and every test after it errored at setup and teardown (operator's laptop, 2026-11-21:
+# 1 failed, 352 passed, 12,133 errors). CI has no console and agent shells export this variable, so neither saw it.
+_os.environ["PYTHONIOENCODING"] = "utf-8"
 (_SUITE_ISOLATION_ROOT / ".memory").mkdir(parents=True, exist_ok=True)
 (_SUITE_ISOLATION_ROOT / ".atlas").mkdir(parents=True, exist_ok=True)
 (_SUITE_ISOLATION_ROOT / ".atlas" / ".sextant-state").write_text("test suite\n", encoding="utf-8")

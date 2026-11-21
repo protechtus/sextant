@@ -152,7 +152,7 @@ def _rclone(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
         return subprocess.run(
             cmd,
             capture_output=capture,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=_RCLONE_TIMEOUT_SECS,
         )
     except subprocess.TimeoutExpired:
@@ -461,7 +461,7 @@ def install(
                 "-File", str(PS_INSTALL),
                 "-RunTime", time,
             ],
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=300,  # LES-G2: schtasks registration is seconds; a hung elevation prompt is not
         )
     except subprocess.TimeoutExpired:

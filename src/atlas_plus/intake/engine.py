@@ -252,7 +252,7 @@ def _action_brand_import(record: store.Record) -> str:
     if validator.is_file():
         try:
             proc = subprocess.run([sys.executable, "-I", str(validator), str(target)],
-                                  capture_output=True, text=True, timeout=120, cwd=str(workspace))
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, cwd=str(workspace))
             store.atomic_write_text(target / "VALIDATION.txt",
                                     f"exit={proc.returncode}\n\n{proc.stdout}\n{proc.stderr}")
             verdict = f"validator exit {proc.returncode}"

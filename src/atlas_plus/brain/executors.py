@@ -377,6 +377,19 @@ def _pytest_python(project_root: Path) -> Path | str:
     return sys.executable
 
 
+def _utf8_env() -> dict[str, str]:
+    """Environment for python child processes: UTF-8 stdio regardless of the console code page.
+
+    The worker runs under a cp1252 console on Windows; a child that prints a right arrow (Rich
+    tables, curation report) died with UnicodeEncodeError after producing its whole report, every
+    night from 2026-11-13. The weekly supervisor named the fix on 2026-11-15 (Brain review 2026-11-20).
+    """
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
 # Non-ATLAS live-deployment keys that change src/ behavior when set (the same
 # failure class as ATLAS_WEB_API_KEY: a verify run must look like clean CI).
 _LIVE_ENV_KEYS = frozenset({"RESEARCH_API_KEY", "TELEGRAM_BOT_TOKEN"})
@@ -528,6 +541,7 @@ def _gaps_report(ctx: ExecutorContext) -> ExecutionResult:
     ]
     completed = subprocess.run(
         cmd,
+        env=_utf8_env(),
         cwd=str(_PROJECT_ROOT),
         capture_output=True,
         text=True,
@@ -592,6 +606,7 @@ def _convergence_report(ctx: ExecutorContext) -> ExecutionResult:
     ]
     completed = subprocess.run(
         cmd,
+        env=_utf8_env(),
         cwd=str(_PROJECT_ROOT),
         capture_output=True,
         text=True,
@@ -639,6 +654,7 @@ def _curation_report(ctx: ExecutorContext) -> ExecutionResult:
     try:
         completed = subprocess.run(
             cmd,
+            env=_utf8_env(),
             cwd=str(_PROJECT_ROOT),
             capture_output=True,
             text=True,
@@ -707,6 +723,7 @@ def _suggest_facts_review(ctx: ExecutorContext) -> ExecutionResult:
     ]
     completed = subprocess.run(
         cmd,
+        env=_utf8_env(),
         cwd=str(_PROJECT_ROOT),
         capture_output=True,
         text=True,
@@ -771,6 +788,7 @@ def _run_reporting_subprocess(
     try:
         completed = subprocess.run(
             cmd,
+            env=_utf8_env(),
             cwd=str(_PROJECT_ROOT),
             capture_output=True,
             text=True,
@@ -910,6 +928,7 @@ def _research_runner(ctx: ExecutorContext) -> ExecutionResult:
 
     completed = subprocess.run(
         cmd,
+        env=_utf8_env(),
         capture_output=True,
         text=True,
         timeout=_PYTEST_TIMEOUT_SECONDS,
@@ -987,6 +1006,7 @@ def _research_runner_api(ctx: ExecutorContext) -> ExecutionResult:
 
     completed = subprocess.run(
         cmd,
+        env=_utf8_env(),
         capture_output=True,
         text=True,
         timeout=api_timeout,
@@ -1169,85 +1189,164 @@ def _reverify_scan(ctx: ExecutorContext) -> ExecutionResult:
     return ExecutionResult(status="done", text=text, artifact_path=artifact)
 
 
-def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
-    """Weekly supervisor pass: Claude Code reviews failed/blocked tasks and low-quality results.
+def _session_digest(ctx: ExecutorContext) -> ExecutionResult:
+    """Nightly deterministic digest of the previous local day (ATL-073 P1; brain.learning).
 
-    Builds a structured context pack from the past 7 days of Brain activity and
-    dispatches to claude-code with a supervisor prompt. Claude's analysis is written
-    as a .atlas/reports/supervisor-YYYY-MM-DD.md artifact.
-
-    This is Phase 4 of the Claude escalation layer -- the weekly supervisory review
-    that catches systemic issues the per-task escalation might miss.
+    The instruction may name a day (YYYY-MM-DD); otherwise yesterday, local time. Reruns for the
+    same day overwrite. The artifact is the markdown rendering.
     """
-    from datetime import datetime, timezone, timedelta
-    import json as _json
+    from . import learning
+
+    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", ctx.task.instruction or "")
+    day = m.group(1) if m else None
+    try:
+        json_path, md_path, digest = learning.write_session_digest(day)
+    except Exception as exc:  # noqa: BLE001 - a failed digest is a failed task, never a worker crash
+        msg = f"session digest failed: {exc.__class__.__name__}: {exc}"
+        artifact = _write_text_artifact(ctx, "session-digest.md", msg)
+        return ExecutionResult(status="failed", text=msg, artifact_path=artifact)
+    artifact = _write_text_artifact(ctx, "session-digest.md", md_path.read_text(encoding="utf-8"))
+    c = digest["counts"]
+    text = (f"Session digest {digest['date']}: {c['session_entries']} session entries, {c['notes']} close notes, "
+            f"{c['commits']} commits in {c['repos_touched']} repos, {c['brain_jobs']} Brain jobs "
+            f"({c['brain_failed']} failed) -> {json_path}")
+    return ExecutionResult(status="done", text=text, artifact_path=artifact)
+
+
+def _supervisor_model() -> str:
+    """Sonnet by default (operator decision 2026-11-20: the weekly synthesis does not cheap out)."""
+    return os.environ.get("ATLAS_SUPERVISOR_MODEL", "claude-sonnet-5-5").strip() or "claude-sonnet-5-5"
+
+
+def _run_supervisor_model(prompt: str, model: str, timeout: int) -> tuple[str, str]:
+    """Run the supervisor prompt headless. Returns (report_text, how).
+
+    `claude --print` with the prompt on stdin (no argv clipping, no `<>` stripping), a single turn,
+    no tools: the context pack is in the prompt. Falls back to the agent registry when the CLI is
+    missing so the lane still produces a report on a machine without Claude Code.
+    """
+    import shutil as _shutil
+
+    claude_bin = _shutil.which("claude")
+    if claude_bin:
+        try:
+            completed = subprocess.run(
+                [claude_bin, "--print", "--model", model, "--max-turns", "1"],
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                encoding="utf-8",
+                errors="replace",
+                cwd=str(_PROJECT_ROOT),
+                env=_utf8_env(),
+            )
+        except subprocess.TimeoutExpired:
+            return "", f"claude --print timed out after {timeout}s"
+        except OSError as exc:
+            return "", f"claude --print failed to launch: {exc}"
+        out = (completed.stdout or "").strip()
+        if completed.returncode == 0 and out:
+            return out, f"claude --print --model {model}"
+        err = (completed.stderr or "").strip()[:400]
+        return "", f"claude --print exited {completed.returncode}: {err}"
+    from .agents import route as agent_route, dispatch as agent_dispatch
+    agent = agent_route(prompt, "claude-code")
+    return agent_dispatch(agent, prompt, "scheduler-claude-supervisor"), f"agent registry ({agent.name})"
+
+
+def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
+    """Weekly supervisor pass (ATL-073 P2): Claude reads the week and proposes what to keep.
+
+    Context pack: failed and blocked Brain tasks (7 days), the pending-fact count, the last seven
+    session digests (what the operator's sessions did), the lessons ledger ids and the proposals
+    already made. Output: a report with fixed headings written to .atlas/reports/supervisor-<date>.md
+    (the SessionStart hook primes section 3) and a fenced JSON block of proposals filed to
+    brain_proposals for the Helm desk. Nothing is written to .memory/, the ledger or the ticket
+    store here: approval is the operator's click.
+    """
+    from datetime import date, datetime, timezone, timedelta
+    from . import learning
 
     now = datetime.now(timezone.utc)
     week_start = (now - timedelta(days=7)).isoformat()
 
-    # Gather failed/blocked tasks from the last 7 days
     failed_tasks = task_store.list_tasks(status="failed", limit=50)
     blocked_tasks = task_store.list_tasks(status="blocked", limit=50)
     recent_failed = [t for t in failed_tasks if (t.finished_at or "") >= week_start]
     recent_blocked = [t for t in blocked_tasks if (t.finished_at or "") >= week_start]
 
-    # Get pending facts awaiting review
     pending_count = 0
     try:
-        from .task_facts import list_pending
-        pending_count = len(list_pending())
+        from .task_facts import pending_count as _pending_count
+        pending_count = _pending_count()
     except Exception:
         pass
 
-    # Build the supervisor prompt
     lines = [
-        "You are acting as a supervisor reviewing the Atlas Brain AI system's activity.",
-        "The Brain uses local Qwen3 models for most tasks. You are the senior reviewer.",
+        "You are the weekly supervisor of Atlas Brain, the local automation layer of a personal memory system.",
+        "Brain runs scheduled lanes on a local model and measures what happens; Claude Code sessions do the real",
+        "work. Your job is to read the week and turn it into what the system should keep: a short diagnosis and",
+        "a handful of proposals the operator approves with one click. You are the senior reviewer.",
         "",
         f"Review period: last 7 days (since {week_start[:10]})",
         "",
-        f"FAILED TASKS ({len(recent_failed)}):",
+        f"FAILED BRAIN TASKS ({len(recent_failed)}):",
     ]
     for t in recent_failed[:15]:
-        lines.append(f"  - [{t.agent or 'auto'}] {t.instruction[:80]}")
+        lines.append(f"  - [{t.kind or 'agent'} / {t.agent or 'auto'}] {t.instruction[:100]}")
         if t.error:
-            lines.append(f"    Error: {t.error[:120]}")
+            lines.append(f"    Error: {t.error[:160]}")
     if len(recent_failed) > 15:
         lines.append(f"  (+{len(recent_failed) - 15} more)")
-
-    lines += ["", f"BLOCKED TASKS ({len(recent_blocked)}):"]
+    lines += ["", f"BLOCKED BRAIN TASKS ({len(recent_blocked)}):"]
     for t in recent_blocked[:10]:
-        lines.append(f"  - [{t.agent or 'auto'}] {t.instruction[:80]}")
+        lines.append(f"  - [{t.kind or 'agent'} / {t.agent or 'auto'}] {t.instruction[:100]}")
     if len(recent_blocked) > 10:
         lines.append(f"  (+{len(recent_blocked) - 10} more)")
-
+    lines += ["", f"PENDING FACTS AWAITING REVIEW: {pending_count}", ""]
+    try:
+        lines.append(learning.supervisor_context())
+    except Exception as exc:  # noqa: BLE001 - a missing digest never cancels the review
+        lines.append(f"(session digests unavailable: {exc})")
     lines += [
         "",
-        f"PENDING FACTS AWAITING REVIEW: {pending_count}",
-        "",
-        "Please provide:",
-        "1. PATTERNS: What recurring failure patterns do you see? (2-4 bullets)",
-        "2. ROOT CAUSES: What are the likely root causes? (local model capability limits, ambiguous instructions, missing context?)",
-        "3. ACTIONS: Specific recommended actions (improve prompts, add memory, rotate a model, etc.)",
-        "4. FACT REVIEW NOTE: Is the pending fact count concerning? Recommend action if >10.",
-        "5. HEALTH RATING: Rate the Brain system health this week: Excellent / Good / Fair / Poor",
-        "",
-        "Be specific and actionable. Reference task instructions by name where relevant.",
+        "Write the report with exactly these headings, in this order:",
+        "## 1. Patterns",
+        "## 2. Root causes",
+        "## 3. Recommendations",
+        "## 4. Lessons for the ledger",
+        "## 5. Health",
+        "Section 3 is a numbered list, most valuable first, one sentence each, naming the lane, file or rule.",
+        "Section 4 says what repeated, what contradicted a rule, what was relearned, in prose.",
+        "Section 5 is one of Excellent / Good / Fair / Poor with one sentence.",
+        "Then end with ONE fenced json block and nothing after it:",
+        '```json',
+        '{"proposals": [{"kind": "lesson", "title": "...", "body": "...", "scope": "..."},',
+        '               {"kind": "ticket", "title": "...", "body": "...", "project": "atlas-memory+", "priority": "normal"},',
+        '               {"kind": "fact", "title": "...", "body": "...", "scope": "reference:<topic>"}]}',
+        '```',
+        "Rules for proposals: at most 6. A lesson is a rule a check could enforce or a habit worth keeping, with",
+        "the rule in the body. A ticket is one bounded job. A fact is a durable truth about the operator's work.",
+        "Never repeat a ledger row or a rejected proposal. An empty list is a valid answer when nothing earned one.",
+        "Plain prose, no em-dashes, no emojis, ISO 8601 dates.",
     ]
-
     supervisor_prompt = "\n".join(lines)
 
-    # Dispatch to Claude Code
-    try:
-        from .agents import route as agent_route, dispatch as agent_dispatch
-        agent = agent_route(supervisor_prompt, "claude-code")
-        result_text = agent_dispatch(agent, supervisor_prompt, ctx.task.session_id)
-    except Exception as exc:
-        return ExecutionResult(status="failed", text=f"Supervisor dispatch failed: {exc}")
+    model = _supervisor_model()
+    timeout = int(os.environ.get("ATLAS_SUPERVISOR_TIMEOUT_S", "900"))
+    result_text, how = _run_supervisor_model(supervisor_prompt, model, timeout)
+    if not result_text:
+        return ExecutionResult(status="failed", text=f"Supervisor run produced no report ({how})")
 
-    # Write report artifact
-    from datetime import date
     today = date.today().isoformat()
+    filed: list[dict] = []
+    try:
+        filed = learning.file_proposals(learning.parse_proposals(result_text), source=f"supervisor-{today}")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("supervisor: filing proposals failed: %s", exc)
+    new_filed = [f for f in filed if not f.get("deduplicated")]
+
     report_lines = [
         "---",
         f"id: supervisor-{today}",
@@ -1259,8 +1358,9 @@ def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
         "",
         f"# Weekly Claude Supervisor Report: {today}",
         "",
-        f"Generated by: claude-code  |  Task: {ctx.task.task_id}",
+        f"Generated by: {how}  |  Task: {ctx.task.task_id}",
         f"Failed tasks reviewed: {len(recent_failed)}  |  Blocked: {len(recent_blocked)}  |  Pending facts: {pending_count}",
+        f"Proposals filed: {len(new_filed)} new, {len(filed) - len(new_filed)} already on the desk (Helm > Memory > Proposals)",
         "",
         "---",
         "",
@@ -1268,11 +1368,7 @@ def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
         "",
     ]
     report = "\n".join(report_lines)
-
-    # Write to .atlas/reports/ as well
     try:
-        import os as _os
-        from pathlib import Path as _Path
         reports_dir = atlas_paths.state_dir() / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
         (reports_dir / f"supervisor-{today}.md").write_text(report, encoding="utf-8")
@@ -1281,9 +1377,8 @@ def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
 
     artifact = _write_text_artifact(ctx, f"supervisor-{today}.md", report)
     text = (
-        f"Supervisor report complete. "
-        f"Reviewed {len(recent_failed)} failed + {len(recent_blocked)} blocked tasks. "
-        f"Artifact: {artifact}"
+        f"Supervisor report complete ({how}). Reviewed {len(recent_failed)} failed + {len(recent_blocked)} blocked "
+        f"tasks; {len(new_filed)} proposal(s) filed for the desk. Artifact: {artifact}"
     )
     return ExecutionResult(status="done", text=text, artifact_path=artifact)
 
@@ -1971,6 +2066,7 @@ _EXECUTORS: dict[str, Executor] = {
     "decay_report": _decay_report,
     "reverify": _reverify_scan,           # decay-as-behavior: re-verify stale memories + act
     "claude_supervisor": _claude_supervisor,
+    "session_digest": _session_digest,     # ATL-073 P1: nightly deterministic digest of the previous day
     "ticket_sync": _ticket_sync,          # auto-close tickets from git commits
     "ticket_health_check": _ticket_health_check,  # staleness audit + orphan reset
     "claude_task": _claude_task,          # headless claude --print session (zero loop context)

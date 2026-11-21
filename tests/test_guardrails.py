@@ -282,6 +282,89 @@ def test_g6_session_override_is_read_only_by_autonomous_py():
 
 
 # ----------------------------------------------------------------------------------------------
+# LES-G7  text I/O names its encoding
+#   LES-016 (86 raw rows: AG17, AG22, AG46 ...): the default text encoding is the machine's locale
+#   (cp1252, cp932, ASCII under LC_ALL=C), so a note, a config or a child's output that is UTF-8
+#   turns into mojibake or a UnicodeDecodeError on someone else's machine. `git` writes UTF-8
+#   whatever the console says; a hook that decoded it with the locale died on the first commit
+#   message with a byte cp1252 does not define. Every text open/read/write and every subprocess
+#   call that decodes output passes encoding=; the subprocess ones also pass errors=, because a
+#   child's bytes are never ours to trust.
+# ----------------------------------------------------------------------------------------------
+
+_SUBPROCESS_ROOTS = ("subprocess", "_subprocess", "_sp", "sp")
+_NOT_FILE_OPENERS = ("os", "webbrowser", "tarfile", "zipfile", "gzip", "bz2", "lzma", "wave", "shelve", "dbm",
+                     "socket", "sqlite3", "urllib", "Image")
+ALLOW_G7: list[Allow] = []
+
+
+def _open_mode(call: ast.Call, pos: int):
+    for kw in call.keywords:
+        if kw.arg == "mode":
+            return kw.value.value if isinstance(kw.value, ast.Constant) else None
+    if len(call.args) > pos:
+        arg = call.args[pos]
+        return arg.value if isinstance(arg, ast.Constant) else None
+    return "r"
+
+
+def _g7_problem(node: ast.Call) -> str:
+    name = _dotted(node.func)
+    root, short = name.split(".")[0], name.split(".")[-1]
+    if short in ("read_text", "write_text") and isinstance(node.func, ast.Attribute):
+        positional = 2 if short == "write_text" else 1          # Path.write_text(data, encoding)
+        if not _has_kw(node, "encoding") and len(node.args) < positional:
+            return f"{short}(...) without encoding="
+        return ""
+    if root in _SUBPROCESS_ROOTS and short in ("run", "check_output", "check_call", "call", "Popen"):
+        decodes = any(kw.arg in ("text", "universal_newlines")
+                      and not (isinstance(kw.value, ast.Constant) and kw.value.value is False)
+                      for kw in node.keywords)
+        if decodes and not (_has_kw(node, "encoding") and _has_kw(node, "errors")):
+            return f"{name}(text=True) without encoding= and errors="
+        return ""
+    if name in ("open", "io.open", "codecs.open") or (
+            short == "open" and isinstance(node.func, ast.Attribute) and root not in _NOT_FILE_OPENERS):
+        mode = _open_mode(node, 1 if name in ("open", "io.open", "codecs.open") else 0)
+        if isinstance(mode, str) and "b" not in mode and not _has_kw(node, "encoding"):
+            return f"{name}(..., {mode!r}) without encoding="
+    return ""
+
+
+def test_g7_text_io_names_its_encoding():
+    offenders = []
+    for p in _py_files(SRC):
+        rel = _rel(p)
+        for node in ast.walk(_parse(p)):
+            if not isinstance(node, ast.Call):
+                continue
+            problem = _g7_problem(node)
+            if problem and not _allowed(rel, _line(p, node.lineno), ALLOW_G7):
+                offenders.append(f"{rel}:{node.lineno}: {problem}")
+    _report(offenders, "LES-G7", "text open/read_text/write_text pass encoding=; subprocess text capture passes "
+                                 "encoding= and errors=")
+
+
+def test_the_g7_scan_sees_each_shape():
+    """The scan itself is exercised: one offender and one clean call per shape."""
+    bad = [
+        "p.read_text()", "p.write_text(data)", "open(p)", "open(p, 'w')", "p.open('a')",
+        "subprocess.run(cmd, text=True, timeout=5)", "_sp.check_output(cmd, universal_newlines=True)",
+        "subprocess.run(cmd, text=True, encoding='utf-8')",
+    ]
+    good = [
+        "p.read_text(encoding='utf-8')", "p.write_text(data, 'utf-8')", "open(p, 'rb')", "p.open('wb')",
+        "open(p, 'w', encoding='utf-8')", "os.open(p, flags)", "zipfile.open(name)",
+        "subprocess.run(cmd, capture_output=True, timeout=5)",
+        "subprocess.run(cmd, text=True, encoding='utf-8', errors='replace')", "subprocess.run(cmd, **kw)",
+    ]
+    for src in bad:
+        assert _g7_problem(ast.parse(src).body[0].value), src
+    for src in good:
+        assert not _g7_problem(ast.parse(src).body[0].value), src
+
+
+# ----------------------------------------------------------------------------------------------
 # the allowlists themselves stay honest
 # ----------------------------------------------------------------------------------------------
 
@@ -294,7 +377,8 @@ def test_allowlist_entries_point_at_real_lines():
     # treats a missing path as stale.
     full_checkout = (REPO / "scripts" / "public_exclude.txt").exists()
     stale = []
-    for name, allow in (("G1", ALLOW_G1), ("G2", ALLOW_G2), ("G3", ALLOW_G3), ("G4", ALLOW_G4), ("G6", ALLOW_G6)):
+    for name, allow in (("G1", ALLOW_G1), ("G2", ALLOW_G2), ("G3", ALLOW_G3), ("G4", ALLOW_G4), ("G6", ALLOW_G6),
+                        ("G7", ALLOW_G7)):
         for path, snippet, _reason in allow:
             f = REPO / path
             if not f.exists():

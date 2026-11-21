@@ -31,7 +31,7 @@ def _git_out(args, cwd, timeout=10) -> str:
     """Hardened git read: repo config may not execute anything (round-B 2026-11-09, N-B)."""
     from atlas_plus import gitsafe
     return subprocess.check_output(gitsafe.argv(args, cwd, timeout=timeout), cwd=str(cwd),
-                                   stderr=subprocess.DEVNULL, text=True, timeout=timeout, env=gitsafe._env())
+                                   stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=gitsafe._env())
 
 STATE_DIR = atlas_paths.state_dir()
 PROJECTS_ROOT = atlas_paths.projects_root()

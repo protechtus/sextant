@@ -32,7 +32,7 @@ def _git_out(args, cwd, timeout=10) -> str:
     """Hardened git read: repo config may not execute anything (round-B 2026-11-09, N-B)."""
     from atlas_plus import gitsafe
     return subprocess.check_output(gitsafe.argv(args, cwd, timeout=timeout), cwd=str(cwd),
-                                   stderr=subprocess.DEVNULL, text=True, timeout=timeout, env=gitsafe._env())
+                                   stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=gitsafe._env())
 
 MEMORY_ROOT = atlas_paths.memory_root()
 STATE_DIR = atlas_paths.state_dir()
@@ -345,6 +345,83 @@ def _open_tickets(project_name: str, tickets: list | None = None) -> str:
         return "(ticket system unavailable)"
 
 
+def _brain_notes() -> str:
+    """What the Brain's nightly and weekly jobs produced, in a few lines.
+
+    Until 2026-11-20 those jobs wrote artifacts no session ever primed: the weekly supervisor
+    diagnosed the nightly curation crash on 11-15 and the crash continued for a week. The failed-job
+    tally, the pending-fact queue, the supervisor's recommendations and the newest dream now reach
+    every session here. Read-only, bounded, silent on any error.
+    """
+    out: list[str] = []
+    try:
+        import sqlite3
+        db = STATE_DIR / "state.sqlite"
+        if db.exists():
+            con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=1.0)
+            try:
+                # each query on its own: a table one lane has not created yet must not hide the others
+                try:
+                    from datetime import timedelta
+                    since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+                    rows = con.execute(
+                        "select kind, count(*) from brain_tasks where status in ('failed','blocked') "
+                        "and created_at >= ? group by kind order by 2 desc limit 6", (since,)).fetchall()
+                    if rows:
+                        out.append("Failed or blocked jobs, last 7 days: " + ", ".join(f"{k} x{n}" for k, n in rows))
+                except Exception:
+                    pass
+                try:
+                    n_pending = con.execute("select count(*) from pending_facts where status='pending'").fetchone()[0]
+                    if n_pending:
+                        out.append(f"Pending facts awaiting review: {n_pending} (Helm pending-facts page)")
+                except Exception:
+                    pass
+                try:
+                    props = con.execute(
+                        "select kind, title from brain_proposals where status='pending' "
+                        "order by created_at desc, rowid desc limit 3").fetchall()
+                    n_props = con.execute("select count(*) from brain_proposals where status='pending'").fetchone()[0]
+                except Exception:
+                    props, n_props = [], 0
+                if n_props:
+                    out.append(f"Proposals awaiting your click: {n_props} (Helm > Memory > Proposals)")
+                    out += [f"  - {k}: {_ol(t)[:140]}" for k, t in props]
+            finally:
+                con.close()
+    except Exception:
+        pass
+    try:
+        digests = sorted((STATE_DIR / "brain" / "digests").glob("????-??-??.json"))
+        if digests:
+            import json as _json
+            d = _json.loads(digests[-1].read_text(encoding="utf-8"))
+            c = d.get("counts", {})
+            out.append(
+                f"Digest {d.get('date')}: {c.get('session_entries', 0)} session entries, {c.get('commits', 0)} commits in "
+                f"{c.get('repos_touched', 0)} repos, {c.get('brain_jobs', 0)} Brain jobs ({c.get('brain_failed', 0)} failed)")
+    except Exception:
+        pass
+    try:
+        reports = sorted((STATE_DIR / "reports").glob("supervisor-*.md"))
+        if reports:
+            text = reports[-1].read_text(encoding="utf-8", errors="replace")
+            m = re.search(r"(?ms)^## 3\. Recommendations\s*\n(.*?)(?:\n## |\Z)", text)
+            recs = [ln.strip() for ln in (m.group(1) if m else "").splitlines() if re.match(r"^\s*\d+\.", ln)][:3]
+            if recs:
+                out.append(f"Weekly supervisor {reports[-1].stem.replace('supervisor-', '')} recommends:")
+                out += ["  " + _ol(r)[:180] for r in recs]
+    except Exception:
+        pass
+    try:
+        dreams = sorted(STATE_DIR.glob("_dream-*.md")) or sorted((MEMORY_ROOT / "sessions").glob("_dream-*.md"))
+        if dreams:
+            out.append(f"Latest dream: {dreams[-1].name}")
+    except Exception:
+        pass
+    return "\n".join(out)
+
+
 def main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
@@ -488,6 +565,11 @@ def main() -> None:
             lines += ["## Resumed after compaction", f"Compacted at: {_one(ts)}", _q(str(summary)), ""]
         except Exception:
             pass
+
+    # --- Brain notes: what the nightly and weekly jobs produced (review 2026-11-20) ---
+    brain = _brain_notes()
+    if brain:
+        lines += ["## Brain", _q(brain), ""]
 
     # --- Last session entry ---
     history_file = MEMORY_ROOT / "sessions" / "_history.md"

@@ -37,6 +37,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - name: Private term list (private repository only; the gate fails closed without it)
+        if: github.repository != 'protechtus/sextant'
+        shell: bash
+        env:
+          RELEASE_TERMS: ${{ secrets.RELEASE_TERMS_LOCAL_JSON }}
+        run: |
+          if [ -n "$RELEASE_TERMS" ]; then printf '%s' "$RELEASE_TERMS" > scripts/release_terms.local.json; fi
       - name: Install
         run: |
           python -m pip install -U pip setuptools
@@ -112,6 +119,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Private term list (private repository only; the gate fails closed without it)
+        if: github.repository != 'protechtus/sextant'
+        shell: bash
+        env:
+          RELEASE_TERMS: ${{ secrets.RELEASE_TERMS_LOCAL_JSON }}
+        run: |
+          if [ -n "$RELEASE_TERMS" ]; then printf '%s' "$RELEASE_TERMS" > scripts/release_terms.local.json; fi
       - name: Install build tooling
         run: python -m pip install build twine
       # In the PRIVATE repo the builder exists and produces the public tree (with its

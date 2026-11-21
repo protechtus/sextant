@@ -19,6 +19,88 @@ public tree.
 
 ## [Unreleased]
 
+### Search: questions as people type them, and find-and-read in one call (2026-11-20)
+
+Both changes came out of measuring Sextant on LongMemEval (500 questions over long chat histories).
+
+- **Fixed: a question typed as a sentence returned nothing.** Keyword search required every word of
+  the query to appear in a note, so "What was the first issue I had with my new car after its first
+  service?" matched no note at all (406 of 470 benchmark questions came back empty). When no note
+  holds every word, search now ranks notes by the words they share; a sentence-like query with only a
+  few full matches lists partial matches after them. Partial matches carry `loose_match: true` and
+  stay in the low confidence band. Queries in search syntax (quotes, `AND`/`OR`/`NOT`, `*`) keep their
+  exact meaning. On the benchmark the evidence note is in the top 5 for 96.4% of questions, up from
+  12.6%, with no model or embedding involved.
+- **Added: `memory_search_tool(..., full=N)`.** Returns the whole note for the top N results (0 to 5,
+  24,000 characters each, `body_truncated` when cut) in a `body` field. An agent shown only snippets
+  tends to answer from them; in the benchmark most of one model's misses were answers given with the
+  evidence note found and never opened. `full=3` removed most of those. The default (`full=0`) is
+  unchanged.
+
+### Brain learning loop (ATL-073, 2026-11-20)
+
+Brain watches and measures, Claude synthesizes weekly, every session reads the result, a desk approves
+writes. The autonomous write gate stays off.
+
+- New `brain.learning`: a nightly `session_digest` lane (11:00 UTC, worker kind `session_digest`) writes a
+  deterministic digest of the previous local day (session-log and updates entries, session-close notes,
+  commits per repository, Brain jobs by kind and outcome, scheduler heartbeats) to
+  `<state>/brain/digests/<date>.json` and `.md`. No LLM. `python -m atlas_plus.brain.learning digest|note|proposals`.
+- Proposals desk: `brain_proposals` rows (lesson / ticket / fact) with Brain endpoints `/proposals`,
+  `/proposals/{id}/approve` (optional edited body), `/proposals/{id}/reject`, `/proposals/count`, and a
+  Helm Memory-tab panel with Approve / Edit / Reject. Approval is the loop's only write path: a lesson
+  appends a `proposed` row to `docs/lessons/LESSONS.md`, a ticket goes through the ticket store, a fact
+  through memory_remember.
+- The weekly Claude supervisor runs headless (`claude --print`, prompt on stdin, one turn, no tools) on
+  `ATLAS_SUPERVISOR_MODEL` (default `claude-sonnet-5-5`), reads the last seven digests, the lessons ledger
+  and past proposals, writes the report with fixed headings (1 Patterns, 2 Root causes, 3 Recommendations,
+  4 Lessons for the ledger, 5 Health) and files the proposals from its fenced JSON block.
+- The dream prompt carries a RECENT WORK section built from the digests ahead of the memory corpus.
+- The reflexion loop files proposals (kind `ticket`) instead of writing human tickets; report key
+  `proposals_created` replaces `tickets_created`.
+- SessionStart `## Brain` adds the pending proposals (top 3 titles) and the newest digest's counts.
+- Scheduler: `research-batch` unscheduled (the runner has been a no-op since 2026-05; manual trigger
+  `research-batch-manual`); `ticket-dispatch` registers only with `ATLAS_TICKET_DISPATCH=on`, `sla-check`
+  only with `ATLAS_NTFY_URL` set and `ATLAS_SLA_MINUTES` > 0. Maintenance surface tracks `session-digest`.
+- GitHub intake: bot-authored items (`dependabot[bot]`, `github-actions[bot]`) classify as `normal`
+  whatever their body says (release notes quote CVE wording by nature), so they run on Sonnet and do not
+  page; a bot pull request is investigated once, not on every rebase. The Dependabot alert source keeps
+  GitHub's severity and still pages.
+- Retired the orphaned nightly-curation Task Scheduler script (archived with a MANIFEST); the service
+  registration script no longer defines it.
+- Tests: `tests/test_brain_learning_loop_atl073.py` (30 functional tests: digest from fixtures incl. a
+  real git commit and Brain ledger rows, proposals lifecycle and each approval path, scheduler registry
+  with and without switches, executors through run_executor, dream prompt, intake bot rule, SessionStart).
+
+### Brain lanes reach the session (Brain review, 2026-11-20)
+
+- SessionStart primes a `## Brain` section: failed or blocked Brain jobs in the last 7 days by kind, the
+  pending-fact count, the newest weekly supervisor report's top three recommendations and the newest dream
+  file. Until now those artifacts had no reader: the supervisor diagnosed the nightly curation crash on
+  2026-11-15 and the crash repeated for a week. Read-only, bounded, silent when the state dir is absent.
+- Fixed: Brain's python child processes (curation report, suggest-facts, dream, reflexion, research runners)
+  inherited the console code page; on Windows a right arrow in Rich output killed the curation report after it
+  had produced the whole report. Every such `subprocess.run` now passes `PYTHONIOENCODING=utf-8`,
+  `PYTHONUTF8=1` (`_utf8_env`).
+- Fixed: session co-occurrence patterns read zero sessions for months. The history parser accepted only
+  `## YYYY-MM-DD - title`; `_history.md` entries carry a time and two dashes. Both shapes parse now.
+- Fixed: the reflexion loop stops after three consecutive LLM errors and records `aborted` in its report
+  instead of retrying every batch against an unreachable provider until the worker's time limit.
+- Tests: `tests/test_brain_learning_loop.py` (functional: a child printing U+2192 succeeds through the fixed
+  helper; the abort path; the primed section from a synthetic state dir).
+
+### Sweep 26 (AG99): index truth
+
+- Provenance is metadata, not text: `human`, `direct`, `source` and `high` matched every remembered or imported note
+  through the `<!-- source:... -->` tag and the frontmatter stamps (the raw frontmatter column was tokenised, keys
+  included). The tag and the stamps (`source` when it is a bare label, `confidence`, `updated`, `first_observed`,
+  `last_confirmed`, `source_session`, `source_task`, `imported_*`, `original_path`, `import_vault`) stay in the file and
+  are no longer indexed; the embedding text and `sextant context` matching drop the tag too. A body word `source`, a
+  writer's own `source:` sentence and the title are still found. INDEX_FORMAT 11: every index is rebuilt once.
+- An interrupted index build keeps its progress: notes are committed in batches (500 notes or 2 s) with their
+  bookkeeping rows, the index reads `building:11` until complete, and the next search or `sextant-fts-rebuild` resumes
+  where the kill left off instead of starting over (first build, format-change rebuild, and a pull that lands many notes).
+
 ### Lessons become tree-wide checks (sweep lessons, 2026-11-20)
 
 - `tests/test_guardrails.py`: six rules learned in the sweeps now run over the whole source tree with `ast`, each

@@ -26,6 +26,8 @@ PATTERNS_FILE = STATE_DIR / "session-patterns.json"
 _MIN_COOCCURRENCE = 2
 # Minimum confidence (0-1) to include in predictions.
 _MIN_CONFIDENCE = 0.30
+# A history entry heading: date, optional HH:MM, then one or two dashes, then the title.
+_ENTRY_RE = r"^## (\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2})?\s+-{1,2}\s+(.+)$"
 
 
 def _extract_project_from_title(title: str) -> str | None:
@@ -53,8 +55,9 @@ def _parse_session_history(history_file: Path) -> list[tuple[str, str]]:
         return []
     raw = history_file.read_text(encoding="utf-8", errors="replace")
     results: list[tuple[str, str]] = []
-    # Each entry starts with "## YYYY-MM-DD - Title"
-    for match in re.finditer(r"^## (\d{4}-\d{2}-\d{2}) - (.+)$", raw, re.MULTILINE):
+    # Each entry starts with "## YYYY-MM-DD - Title" or, since mid-2026, "## YYYY-MM-DD HH:MM -- Title".
+    # The old single-dash-only pattern matched nothing for months (0 sessions analysed nightly, found 2026-11-20).
+    for match in re.finditer(_ENTRY_RE, raw, re.MULTILINE):
         date_str = match.group(1)
         title = match.group(2).strip()
         project = _extract_project_from_title(title)

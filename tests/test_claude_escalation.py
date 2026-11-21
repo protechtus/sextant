@@ -234,8 +234,11 @@ class TestClaudeSupervisorExecutor:
                 worker_id="test-worker",
             )
 
+            # ATL-073: the supervisor runs through _run_supervisor_model (claude --print on stdin,
+            # Sonnet); an empty report is a failed task, never a worker crash.
             with patch("atlas_plus.brain.tasks.list_tasks", return_value=[]), \
-                 patch("atlas_plus.brain.agents.route", side_effect=RuntimeError("claude offline")):
+                 patch("atlas_plus.brain.executors._run_supervisor_model",
+                       return_value=("", "claude --print exited 1: claude offline")):
                 result = run_executor(mock_task, ctx)
 
             assert result.status == "failed"

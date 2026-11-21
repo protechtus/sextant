@@ -171,6 +171,10 @@ Read the files below and answer each of the five questions in 3-6 sentences of
 plain prose. No lists, no em-dashes, no emojis. Be specific about names, tools,
 and projects. Use ISO 8601 dates when referring to time.
 
+When a RECENT WORK section is present it lists what the operator's sessions, commits and Brain
+jobs did in the last seven days; weigh it in questions 2, 3 and 5 (what the corpus says versus
+what the week shows, what repeated, what the next session should ask).
+
 Questions:
 1. HIGH CONFIDENCE: What does this knowledge base know with confidence?
 2. UNCERTAIN: What seems stale, ambiguous, or possibly wrong?
@@ -182,6 +186,16 @@ KNOWLEDGE BASE:
 {corpus}
 
 REFLECTION:"""
+
+
+def _recent_work_block(max_chars: int = 5000) -> str:
+    """The last seven session digests (ATL-073 P2), or "" when the lane has not run yet."""
+    try:
+        from atlas_plus.brain import learning
+        block = learning.digest_block(learning.load_recent_digests(7, state_dir=STATE_DIR), max_chars=max_chars)
+    except Exception:
+        return ""
+    return f"=== RECENT WORK (session digests, oldest first) ===\n\n{block}" if block else ""
 
 
 def _call_llm(prompt: str) -> str:
@@ -243,6 +257,10 @@ def run_dream(
     date = _date_str()
 
     corpus, stats = build_corpus(root, scopes)
+    recent = _recent_work_block()
+    if recent and corpus.strip():
+        corpus = recent + "\n\n" + corpus
+        stats["recent_work_chars"] = len(recent)
 
     result: dict = {
         "date": date,

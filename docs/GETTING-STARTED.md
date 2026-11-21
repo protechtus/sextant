@@ -1,5 +1,9 @@
 # Getting started with Sextant
 
+> **First time installing from GitHub, or something is not working?** Read
+> [New to GitHub? Start here](NEW-TO-GITHUB.md) first: what each piece is, how to
+> check your computer, and the common errors with their fix.
+
 About ten minutes from clone to a memory your sessions actually use on a
 machine that already has Python 3.11+, git and Claude Code (the README
 quickstart's prerequisite notes cover getting those); budget half an hour the

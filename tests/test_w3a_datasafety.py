@@ -82,7 +82,7 @@ def test_locked_fts_db_is_not_healed(tmp_path, monkeypatch):
 
     # second connection holding an exclusive lock; shrink wait so test is fast
     real = sqlite3.connect
-    monkeypatch.setattr(fts.sqlite3, "connect", lambda p, **kw: real(p, **{**kw, "timeout": 0.1}))
+    monkeypatch.setattr(fts, "_BUSY_TIMEOUT_S", 0.1)  # the connect timeout alone was overridden by the PRAGMA (30 s)
     blocker = real(str(db), isolation_level=None)
     blocker.execute("BEGIN EXCLUSIVE")
     try:

@@ -279,15 +279,22 @@ def memory_frontmatter_tool(path: str) -> dict:
 
 
 @mcp.tool()
-def memory_search_tool(query: str, scope: str = "", limit: int = 10) -> dict:
+def memory_search_tool(query: str, scope: str = "", limit: int = 10, full: int = 0) -> dict:
     """Full-text search over .memory/ using FTS5.
 
     Args:
         query: Search query (e.g. 'dark mode', 'WDAC policy').
         scope: Optional subdirectory prefix to narrow results (e.g. 'feedback').
         limit: Max results (capped at 50).
+        full: Return the whole note for the top N results (0 to 5) in a `body` field,
+            so one call both finds and reads. Use 3 when the answer depends on a detail
+            (a date, a number, a name, an order of events).
 
-    Returns {confidence, results: list of {path, snippet, score}}.
+    Returns {confidence, results: list of {path, snippet, score[, body, body_truncated]}}.
+
+    A snippet is a short extract around the matching words, not the note. Do not answer
+    a detail question from snippets alone: pass full=3, or open the note with
+    memory_read_tool. A question that spans several notes usually needs each of them read.
 
     confidence bands (based on re-ranked 0-1 score):
       high    -- top score >= 0.7  (answer directly from results)
@@ -322,6 +329,8 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10) -> dict:
     # Silently skipped when the temporal graph is empty or unavailable.
     temporal_context: list[dict] = _temporal_context_for_query(query)
 
+    _attach_full_bodies(results, full)
+
     response: dict = {"confidence": confidence, "results": results, "retrieval": retrieval}
     try:
         from .fts import last_index_work as _liw
@@ -343,6 +352,36 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10) -> dict:
     if temporal_context:
         response["temporal_context"] = temporal_context
     return response
+
+
+_FULL_MAX_RESULTS = 5
+_FULL_MAX_CHARS = 24_000
+
+
+def _attach_full_bodies(results: list[dict], full: int) -> None:
+    """Put the whole note on the top `full` results (search option `full`).
+
+    Measured on LongMemEval (benchmarks/longmemeval, 2026-11-20): an agent given snippets
+    answered from them and left evidence notes unopened; 15 of 19 misses on one model were
+    of that kind. Returning the top notes with the search removed most of them. Capped in
+    count and length so one call cannot flood a context window; a cut note says so and
+    memory_read_tool returns the rest.
+    """
+    try:
+        count = max(0, min(_FULL_MAX_RESULTS, int(full)))
+    except (TypeError, ValueError):
+        count = 0
+    for result in results[:count]:
+        try:
+            note = memory_read(path=str(result.get("path") or ""))
+        except Exception:  # noqa: BLE001 - a note that cannot be read keeps its snippet
+            continue
+        if note.get("error"):
+            continue
+        body = str(note.get("body") or "")
+        cut = len(body) > _FULL_MAX_CHARS or bool(note.get("truncated"))
+        result["body"] = body[:_FULL_MAX_CHARS]
+        result["body_truncated"] = cut
 
 
 def _normalize_search_scope(scope: str) -> str:

@@ -135,7 +135,8 @@ def _body_of(path: Path) -> str:
         end = text.find("\n---", 3)
         if end != -1:
             text = text[end + 4:]
-    return text.strip()
+    from .fts import strip_provenance
+    return strip_provenance(text).strip()   # the `<!-- source:... -->` tag is not meaning: keyword search drops it too (AG99)
 
 
 def index_status() -> dict:
