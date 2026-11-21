@@ -43,6 +43,33 @@ class TestAtlasPlusCli:
         for _umbrella, sub in steps:
             assert runner.invoke(app, [sub, "--help"]).exit_code == 0
 
+    def test_next_commands_are_typed_the_way_this_install_needs(self, tmp_path, monkeypatch):
+        """A venv that is not activated: plain `sextant` is "not recognized", so the three steps
+        show the script's path from the current folder; with the script on PATH they stay bare."""
+        import os
+        import shutil
+        import sys
+        from atlas_plus.cli import app
+        scripts = tmp_path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        scripts.mkdir(parents=True)
+        ext = ".exe" if os.name == "nt" else ""
+        names = ("sextant", "atlas-plus")  # the public build says sextant, the private one atlas-plus
+        for n in names:
+            (scripts / (n + ext)).write_bytes(b"")
+        monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "nowhere"))
+        monkeypatch.setattr(sys, "executable", str(scripts / ("python.exe" if os.name == "nt" else "python")))
+        monkeypatch.chdir(tmp_path)
+
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None)
+        out = runner.invoke(app, []).output
+        assert any(f"1. {os.path.join('.', '.venv', scripts.name, n + ext)} init" in out for n in names)
+        assert "not on your PATH" in out
+
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: str(scripts / (name + ext)))
+        out = runner.invoke(app, []).output
+        assert any(f"1. {n} init" in out for n in names)
+        assert "not on your PATH" not in out
+
     def test_overview_quiet_when_corpus_exists(self, tmp_path, monkeypatch):
         from atlas_plus.cli import app
         corpus = tmp_path / "mem"

@@ -90,6 +90,33 @@ def _brand() -> tuple[str, str]:
     return "Keel", "atlas"
 
 
+def _how_to_run(name: str) -> str:
+    """The command as THIS user has to type it. Bare `sextant` only works when the venv is
+    activated or its Scripts folder is on PATH; a first-timer who ran `.\\.venv\\Scripts\\sextant.exe`
+    and was told to type `sextant init` got "not recognized" (operator's by-hand install,
+    2026-11-21). So: the bare name when the shell would find this install's script, else the
+    script's path, relative to the current folder when it is inside it."""
+    import shutil
+    import sys
+    from pathlib import Path
+
+    script = Path(sys.executable).parent / (name + (".exe" if os.name == "nt" else ""))
+    try:
+        found = shutil.which(name)
+        if not script.exists() or (found and Path(found).resolve() == script.resolve()):
+            return name
+        try:
+            rel = script.resolve().relative_to(Path.cwd().resolve())
+            shown = f".{os.sep}{rel}"
+        except ValueError:
+            shown = str(script)
+    except OSError:
+        return name
+    if " " in shown:
+        return f'& "{shown}"' if os.name == "nt" else f'"{shown}"'
+    return shown
+
+
 def _overview() -> None:
     """Print the at-a-glance overview (default action)."""
     name, prefix = _brand()
@@ -112,11 +139,14 @@ def _overview() -> None:
         # pip cannot print anything after an install, so the first thing a new user types
         # is where "it installed, now what" has to be answered (operator's by-hand install,
         # 2026-11-21). soft_wrap: one step per line whatever the terminal width.
-        _u = prefix if prefix == "sextant" else "atlas-plus"
+        _name = prefix if prefix == "sextant" else "atlas-plus"
+        _u = _how_to_run(_name)
         console.print("  [bold]Installed and working. First time here? Three steps, in order:[/bold]")
-        console.print(f"    1. {_u} init     creates the folder your notes live in", soft_wrap=True)
-        console.print(f"    2. {_u} setup    prints the line that connects your AI client; copy it, paste it, press Enter", soft_wrap=True)
-        console.print(f"    3. {_u} verify   proves it works (the last line says ROUND-TRIP: OK)", soft_wrap=True)
+        if _u != _name:
+            console.print(f"  (type them exactly as shown, from this folder: plain `{_name}` is not on your PATH)", soft_wrap=True, markup=False)
+        console.print(f"    1. {_u} init     creates the folder your notes live in", soft_wrap=True, markup=False, highlight=False)
+        console.print(f"    2. {_u} setup    prints the line that connects your AI client; copy it, paste it, press Enter", soft_wrap=True, markup=False, highlight=False)
+        console.print(f"    3. {_u} verify   proves it works (the last line says ROUND-TRIP: OK)", soft_wrap=True, markup=False, highlight=False)
     console.print(f"  state dir   : {state_dir}")
     ports = service_ports()
     console.print(f"  services    : MCP :{ports['mcp']} | Web UI (Helm) :{ports['web']} | Brain :{ports['brain']} | Sync :{ports['sync']}")
