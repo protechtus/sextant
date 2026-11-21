@@ -448,6 +448,7 @@ class TestReaders:
         assert "RECENT WORK (session digests" not in prompts[0]
 
     def test_bot_authored_items_are_normal_whatever_the_body_says(self):
+        pytest.importorskip("atlas_plus.github_intake")  # not part of the public build
         from atlas_plus.github_intake import classify
         body = "Bumps cryptography. Fixes CVE-2026-1234, a security vulnerability allowing an auth bypass."
         assert classify.classify_issue("Bump cryptography", body, ["dependencies"])[0] == "critical"
@@ -456,6 +457,7 @@ class TestReaders:
         assert classify.is_bot_author("github-actions[bot]") and not classify.is_bot_author("someone") and not classify.is_bot_author(None)
 
     def test_bot_pull_request_is_investigated_once(self):
+        pytest.importorskip("atlas_plus.github_intake")  # not part of the public build
         from atlas_plus.github_intake import poller
 
         def raw(n, user, updated, pr=True, state="open"):

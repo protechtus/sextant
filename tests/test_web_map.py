@@ -31,8 +31,13 @@ def probes_stubbed(monkeypatch):
     # Key on the module's own BRAIN_URL, not a port literal: test_web_app.py
     # sets ATLAS_BRAIN_URL before the app module is first imported, so the
     # frozen URL depends on module import order across the suite.
+    # Ollama gets its own origin here: the suite pins it to a dead port, and a BRAIN_URL frozen
+    # on the same dead port made "starts with BRAIN_URL" true for Ollama too (full runs only).
+    monkeypatch.setenv("ATLAS_BRAIN_OLLAMA_URL", "http://127.0.0.1:11434")
+    brain = webapp.BRAIN_URL.rstrip("/") + "/"
+
     async def fake_probe(client_, url):
-        return "up" if url.startswith(webapp.BRAIN_URL) else "down"
+        return "up" if url.startswith(brain) else "down"
     monkeypatch.setattr(webapp, "_probe_health", fake_probe)
 
 
