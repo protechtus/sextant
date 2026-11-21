@@ -236,6 +236,42 @@ takes. Do this section only if a NEW window still says `git` is not recognized.
 
 The same three steps work for any program that is installed but "not recognized".
 
+### You added it and it is STILL not recognized
+
+This happens on real machines, most often ones that have been used for years. The
+entry is in the list, the program is on the disk, and Windows still cannot find it. The
+usual cause is something you cannot see: a space or a line break stuck to the end of
+the entry, often from a paste. Windows then looks for a folder whose name ends in that
+invisible character, and no such folder exists. (An entry that ends in a space or a
+line break fails in both PowerShell and the old Command Prompt. An extra `;` at the end
+is harmless.)
+
+First, look. This writes a short report to your Desktop without changing anything:
+
+```powershell
+& { "GIT.EXE FOUND AT:"; Get-ChildItem "C:\Program Files\Git","C:\Program Files (x86)\Git","$env:LOCALAPPDATA\Programs\Git" -Filter git.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName; "--- PATH IN THIS WINDOW:"; $env:Path -split ';' | ForEach-Object { "[$_]" }; "--- SAVED USER PATH:"; [Environment]::GetEnvironmentVariable('Path','User') -split ';' | ForEach-Object { "[$_]" } } *> "$HOME\Desktop\path-check.txt"
+```
+
+Open `path-check.txt`. Every entry is shown inside square brackets, so anything extra
+shows up: `[C:\Program Files\Git\cmd ]` has a space before the closing bracket, and an
+entry with a line break is split across two lines. A healthy entry looks like
+`[C:\Program Files\Git\cmd]`.
+
+Then, fix. This line rewrites your own PATH list with every entry trimmed and the
+empty ones dropped. It changes nothing else, and it does not need administrator rights:
+
+```powershell
+[Environment]::SetEnvironmentVariable("Path", (([Environment]::GetEnvironmentVariable("Path", "User") -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ';'), "User")
+```
+
+Open a new window and try `git --version`. If the report shows the broken entry under
+"PATH IN THIS WINDOW" but not under "SAVED USER PATH", it lives in the system-wide list,
+which needs an administrator to edit: in the Environment Variables window, fix it in
+the lower list ("System variables") by deleting the entry and typing it again by hand.
+
+When you add an entry yourself, type it or paste it, then check there is nothing after
+the last letter.
+
 ## When you see an error
 
 Find your message in the left column. The words do not have to match exactly.
