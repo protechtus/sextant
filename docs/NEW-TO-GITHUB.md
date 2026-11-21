@@ -56,6 +56,14 @@ A PowerShell window only knows about the programs that existed when it was opene
 you install Git and then type `git` in the same window, Windows still says it cannot
 find it. That is not a failed install. Open a new window and try again.
 
+If you would rather not close the window, this one line makes the current window
+re-read the list of installed programs. Paste it, press Enter, then try your command
+again:
+
+```powershell
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+```
+
 ## Step 1: check the three things Sextant needs
 
 Open PowerShell (Start menu, type `powershell`, press Enter). Type each line and press
@@ -95,6 +103,21 @@ the "without Git" line in step 3, or install it and open a new window:
 ```powershell
 winget install Git.Git
 ```
+
+What you may see, and what it means:
+
+- A download bar, then `Successfully installed`: Git is installed. Open a new window
+  and type `git --version`.
+- `Found an existing package already installed` or `No available upgrade found`: Git
+  is ALREADY on this computer, and winget has nothing to do. The install is not the
+  problem. This window just cannot find Git. Open a new window and try
+  `git --version`.
+- A new window still says "not recognized": Git is installed but its folder is not on
+  the PATH. Go to [Putting Git on the PATH](#putting-git-on-the-path) further down.
+  It is three short steps.
+
+Git worked before and stopped? The cause is the same: this window cannot find it.
+The same three answers apply.
 
 If `winget` itself is "not recognized", download the installers from
 https://www.python.org/downloads/ and https://git-scm.com/download/win instead. In the
@@ -211,6 +234,7 @@ Find your message in the left column. The words do not have to match exactly.
 | --- | --- | --- |
 | `ERROR: [WinError 2] The system cannot find the file specified while executing command git version` or `Cannot find command 'git' - do you have 'git' installed and in your PATH?` | The install line you used needs Git, and this window cannot find Git. | Use the "without Git" line in step 3. Or install Git (step 1), **open a new PowerShell window**, `cd $HOME\sextant-install`, and run the line again. |
 | You installed Git and it still says it cannot find `git` | The window is older than the install. | Close PowerShell, open a new one, type `git --version`. If a new window still fails, see "Putting Git on the PATH" above. |
+| `winget install` says `Found an existing package already installed` or `No available upgrade found`, and the program is still "not recognized" | The program is installed. The window cannot find it. | Open a new window. If that fails too, add its folder to the PATH: see "Putting Git on the PATH" above. |
 | `[notice] A new release of pip is available` | Not an error. pip is telling you about its own update. | Nothing. You can ignore it, or run the command it shows. Either way, the install you asked for still has to be run. |
 | `py : The term 'py' is not recognized` | Python is not installed, or the window is older than the install. | Step 1, Python. Then a new window. |
 | `No suitable Python runtime found` | Python is installed, but not the version the line asked for. | Use `py -3 -m venv .venv` (any version), after `py --list` shows 3.11 or newer. |
