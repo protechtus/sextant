@@ -76,11 +76,17 @@ py --list
 ```
 
 Good: a list that includes 3.11, 3.12, 3.13 or newer.
-Not good: "not recognized", or only older numbers. Install it, then open a new window:
+Not good: "not recognized", or only older numbers. Install it one of two ways, then
+open a new window. Both give the same result. Pick whichever feels more familiar.
 
-```powershell
-winget install Python.Python.3.12
-```
+- **With an installer (download and click).** Go to https://www.python.org/downloads/,
+  press the big download button, and open the file it downloads. If the first screen
+  shows a box named "Add python.exe to PATH", tick it. Then click Install Now.
+- **With one command.**
+
+  ```powershell
+  winget install Python.Python.3.12
+  ```
 
 **An AI client that Sextant can connect to** (this page uses Claude Code)
 
@@ -98,13 +104,20 @@ git --version
 ```
 
 Good: `git version 2.something`. Not good: "not recognized". Either skip Git and use
-the "without Git" line in step 3, or install it and open a new window:
+the "without Git" line in step 3, or install it one of two ways and open a new window:
 
-```powershell
-winget install Git.Git
-```
+- **With an installer (download and click).** Go to https://git-scm.com/download/win
+  and open the file it downloads. It asks many questions. Keep clicking Next: every
+  default answer is fine. One screen is titled "Adjusting your PATH environment". Leave
+  it on the recommended middle choice, "Git from the command line and also from
+  3rd-party software". That choice is what puts Git on the PATH.
+- **With one command.**
 
-What you may see, and what it means:
+  ```powershell
+  winget install Git.Git
+  ```
+
+What you may see from the command, and what it means:
 
 - A download bar, then `Successfully installed`: Git is installed. Open a new window
   and type `git --version`.
@@ -119,10 +132,7 @@ What you may see, and what it means:
 Git worked before and stopped? The cause is the same: this window cannot find it.
 The same three answers apply.
 
-If `winget` itself is "not recognized", download the installers from
-https://www.python.org/downloads/ and https://git-scm.com/download/win instead. In the
-Python installer, tick "Add python.exe to PATH". In the Git installer, the default
-answers are fine.
+If `winget` itself is "not recognized", use the installer way for each one.
 
 ## Step 2: make a folder and a private Python for Sextant
 
