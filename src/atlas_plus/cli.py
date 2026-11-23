@@ -532,7 +532,7 @@ def cmd_search(
         raise typer.Exit(1)
     if limit > 50:
         console.print(f"[dim]--limit {limit} is capped at 50 results.[/dim]")  # it silently returned 50 (MN66)
-    results, mode = memory_search_hybrid(query=query, scope=effective, limit=limit)
+    results, mode = memory_search_hybrid(query=query, scope=effective, limit=limit, loose=True)
     if not results:
         from atlas_plus.mcp.memory_server import fts as _fts
         _why = _fts.last_connect_error()

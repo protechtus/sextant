@@ -22,12 +22,17 @@ def memory_search(query: str, scope: str = "", limit: int = 10) -> list[dict]:
 MAX_QUERY_CHARS = 2_000
 
 
-def memory_search_hybrid(query: str, scope: str = "", limit: int = 10) -> tuple[list[dict], str]:
+def memory_search_hybrid(query: str, scope: str = "", limit: int = 10,
+                         loose: bool = False) -> tuple[list[dict], str]:
     """Hybrid (FTS + local-embedding) search. Returns (results, retrieval_mode).
 
     retrieval_mode is "hybrid" when the semantic index contributed, else
     "fts-only" (no index, Ollama down, or kill switch) -- in which case the
     results are byte-identical to memory_search's.
+
+    `loose=True` (the search tool and the CLI): a question whose words are not all in one
+    note also returns notes sharing some of them, flagged `loose_match`. Off for every
+    other caller, so priming and bots never present a partial match as a finding.
     """
     limit = min(limit, 50)
     if not query.strip():
@@ -37,7 +42,7 @@ def memory_search_hybrid(query: str, scope: str = "", limit: int = 10) -> tuple[
     query = query[:MAX_QUERY_CHARS]
     from .. import embeddings as _emb
 
-    return _emb.hybrid_search(query, scope=scope, limit=limit)
+    return _emb.hybrid_search(query, scope=scope, limit=limit, loose=loose)
 
 
 def normalize_search_scope(scope: str) -> str:

@@ -115,7 +115,7 @@ def test_search_query_is_capped(monkeypatch):
     from atlas_plus.mcp.memory_server.tools import search as st
     seen = {}
 
-    def fake_hybrid(query, scope="", limit=10):
+    def fake_hybrid(query, scope="", limit=10, loose=False):
         seen["len"] = len(query)
         return [], "fts-only"
 

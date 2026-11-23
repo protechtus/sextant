@@ -31,8 +31,14 @@ Both changes came out of measuring Sextant on LongMemEval (500 questions over lo
   stay in the low confidence band. Queries in search syntax (quotes, `AND`/`OR`/`NOT`, `*`) keep their
   exact meaning. On the benchmark the evidence note is in the top 5 for 96.4% of questions, up from
   12.6%, with no model or embedding involved.
+- **Tightened after a code review (2026-11-23).** The partial-match fallback is requested only by the
+  search tool and `sextant search`; duplicate checks, session priming and the bots keep strict
+  matching. A partial match counts as low confidence only when it holds at least two of the question's
+  content words and 40% of them; fewer, and the search reports `starved` as it should for a question
+  memory cannot answer. Notes sharing only stopwords are not returned. A search answered only by
+  partial matches is logged as a miss, so the gap reports still see it. Results carry `coverage`.
 - **Added: `memory_search_tool(..., full=N)`.** Returns the whole note for the top N results (0 to 5,
-  24,000 characters each, `body_truncated` when cut) in a `body` field. An agent shown only snippets
+  24,000 characters each, `body_truncated` when cut) in a `body` field, with its `frontmatter`. An agent shown only snippets
   tends to answer from them; in the benchmark most of one model's misses were answers given with the
   evidence note found and never opened. `full=3` removed most of those. The default (`full=0`) is
   unchanged.

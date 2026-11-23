@@ -870,16 +870,91 @@ def _any_word_fallback(raw: str, min_words: int = 2) -> str:
     return " OR ".join(_quoted_term(t, cjk=True) for t in tokens)
 
 
+# Words that say nothing about what a question is about. A note that shares only these with a
+# query is not a match for it (code review 2026-11-23: "what is my dentist's name" matched any
+# note holding "what", "is" or "my", and reported low confidence instead of starved).
+_LOOSE_STOPWORDS = frozenset("""
+a about after again all also am an and any are as at be because been before being both but by can
+could did do does doing down during each for from further had has have having he her here hers him
+his how i if in into is it its just me more most my no nor not now of off on once only or other our
+ours out over own same she should so some such than that the their theirs them then there these they
+this those through to too under until up very was we were what when where which while who whom why
+will with would you your yours
+""".split())
+_LOOSE_MAX_TERMS = 24
+_LOOSE_MIN_COVERAGE = 0.4    # share of the question's content words a partial match must hold to be 'low'
+_STARVED_BELOW = 0.2         # the confidence bands' starved threshold (tools/search.confidence_band)
+
+
+def _content_terms(raw: str) -> list[str]:
+    """The query's words that carry meaning, as FTS terms: no stopwords, no bare punctuation."""
+    q = _nordic_finish(_query_words(_fold_marks(_recompose(_nordic_mark(unicodedata.normalize("NFKC", raw)))).replace(_SENTINEL, " ")))
+    q = re.sub(r"[():]", " ", q)
+    seen: dict[str, None] = {}
+    for t in q.split():
+        word = t.strip("'’.,;!?").lower()
+        if word.endswith(("'s", "’s")):
+            word = word[:-2]
+        if any(c.isalnum() for c in t) and word not in _LOOSE_STOPWORDS:
+            seen.setdefault(t)
+    return list(seen)[:_LOOSE_MAX_TERMS]
+
+
+def _coverage(terms: list[str], rows: dict[int, str]) -> dict[str, float]:
+    """For each note (`rows`: index rowid -> path), the share of the query's content terms it
+    holds: an absolute measure of how much of the question a loose match answers, where the BM25
+    score is only relative to the other matches. Asked by rowid, which the index answers without
+    reading a note's text (filtering on `path` read every candidate and doubled search time)."""
+    paths = list(rows.values())
+    if not terms or not rows:
+        return {p: 0.0 for p in paths}
+    held = dict.fromkeys(rows, 0)
+    marks = ",".join("?" * len(rows))
+    try:
+        conn = _connect()
+    except sqlite3.DatabaseError:
+        return {p: 0.0 for p in paths}
+    try:
+        for term in terms:
+            try:
+                found = conn.execute(
+                    # bandit B608 justification: `marks` is a literal "?,?,..." string; every value is bound
+                    f"SELECT rowid FROM memory_fts WHERE memory_fts MATCH ? AND rowid IN ({marks})",  # nosec B608
+                    [_quoted_term(term, cjk=True), *rows]).fetchall()
+            except sqlite3.DatabaseError:
+                continue
+            for (rowid,) in found:
+                if rowid in held:
+                    held[rowid] += 1
+    finally:
+        conn.close()
+    return {rows[i]: held[i] / len(terms) for i in rows}
+
+
 def _loose_results(raw: str, scope: str, limit: int, min_words: int, ceiling: float = _LOOSE_CAP) -> list[dict]:
-    """The any-word matches for `raw`, best first, scores scaled under `ceiling` and flagged."""
+    """The any-word matches for `raw`, best first and flagged. Order is BM25's. The size of the
+    score is the share of the query's content words the best match holds, under `ceiling`: a note
+    holding most of the question lands in the low band, one that shares a word or two stays
+    starved, and a query made only of stopwords matches nothing."""
     loose = _any_word_fallback(raw, min_words)
-    if not loose:
+    terms = _content_terms(raw)
+    if not loose or not terms:
         return []
     found = search(loose, scope=scope, limit=limit, _fallback_stage=4, _raw=raw)
+    covered = _coverage(terms, {r.pop("_rowid"): r["path"] for r in found if "_rowid" in r})
+    found = [r for r in found if covered.get(r["path"], 0.0) > 0]      # shares only stopwords: not a match
     top = max((float(r.get("score", 0) or 0) for r in found), default=0.0)
+    best = max((covered[r["path"]] for r in found), default=0.0)
+    # Low band: some note shares at least two of the question's content words and 40% of them.
+    # One shared word is never enough ("dentist's name" against a note that holds "name").
+    if best * len(terms) >= 1.999 and best >= _LOOSE_MIN_COVERAGE:
+        size = ceiling * min(1.0, 0.6 + best)          # 0.4 -> the full ceiling
+    else:
+        size = min(ceiling, _STARVED_BELOW * 0.95) * best
     for r in found:
-        r["score"] = round(ceiling * float(r.get("score", 0) or 0) / top, 4) if top > 0 else 0.0
+        r["score"] = round(size * float(r.get("score", 0) or 0) / top, 4) if top > 0 else 0.0
         r["loose_match"] = True
+        r["coverage"] = round(covered[r["path"]], 3)
     return found
 
 
@@ -1571,8 +1646,14 @@ def mark_dirty() -> None:
 
 
 def search(query: str, scope: str = "", limit: int = 10,
-           _healed: bool = False, _fallback_stage: int = 0, _raw: str | None = None) -> list[dict]:
-    """FTS search. Returns list of {path, snippet, score}."""
+           _healed: bool = False, _fallback_stage: int = 0, _raw: str | None = None,
+           loose: bool = False) -> list[dict]:
+    """FTS search. Returns list of {path, snippet, score}.
+
+    `loose=True` is for a caller answering a person's or an agent's question (the search tool,
+    the CLI): when no note holds every word of the query, notes sharing some of its content words
+    are returned, flagged `loose_match`, low band at most. Every other caller (duplicate checks,
+    session priming, bots) gets strict matching, as before, and none of the extra work."""
     if _raw is None:
         if _ALIAS_MARK in query:   # every query path, the literal-phrase fallback included: the mark matched every aliased note (AG96)
             query = query.replace(_ALIAS_MARK, " ")
@@ -1627,7 +1708,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             return []
         if not _healed and _heal_malformed():
             log.error("FTS DB was corrupt at connect (%s) -- self-healed; retrying query once", exc)
-            return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw)
+            return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw, loose=loose)
         log.error("FTS connect failed on a corrupt DB and self-heal did not recover: %s", exc)
         return []
     _LAST_CONNECT_ERROR["text"] = ""
@@ -1687,6 +1768,8 @@ def search(query: str, scope: str = "", limit: int = 10,
             snip = strip_snippet_comments(snip)   # the provenance tag is metadata, not text (AG97)
             if p not in seen or sc < seen[p]["score"]:  # FTS5 rank is negative; lower = better
                 seen[p] = {"path": p, "snippet": snip, "score": sc}
+                if _fallback_stage == 4:
+                    seen[p]["_rowid"] = r[3]     # for _loose_results' coverage count; removed there
 
         results = list(seen.values())
         if not results:
@@ -1700,7 +1783,7 @@ def search(query: str, scope: str = "", limit: int = 10,
                         r["loose_match"] = True
                     if loose_results:
                         return loose_results
-            if _fallback_stage in (0, 1, 2) and _raw is not None:
+            if loose and _fallback_stage in (0, 1, 2) and _raw is not None:
                 # every word was required and no note holds them all: rank by the words shared
                 return _loose_results(_raw, scope, limit, 2)
             return results
@@ -1751,7 +1834,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             r["score"] = combined
 
         results.sort(key=lambda x: x["score"], reverse=True)
-        if _fallback_stage in (0, 1, 2) and _raw is not None and len(results) < limit:
+        if loose and _fallback_stage in (0, 1, 2) and _raw is not None and len(results) < limit:
             # a sentence-like query that few notes satisfy in full: the full matches stay on top,
             # the any-word matches follow, scored below the weakest of them
             floor = min(float(r["score"]) for r in results)
@@ -1780,13 +1863,13 @@ def search(query: str, scope: str = "", limit: int = 10,
                 tokenized = (" AND " if _ALT_OPEN in folded else " ").join(terms)
                 log.info("FTS query was not valid FTS5 syntax; retrying with each token quoted")
                 conn.close()
-                return search(tokenized, scope=scope, limit=limit, _fallback_stage=1, _raw=_raw)
+                return search(tokenized, scope=scope, limit=limit, _fallback_stage=1, _raw=_raw, loose=loose)
             _fallback_stage = 1  # single token: go straight to the phrase form
         if syntax and _fallback_stage == 1:
             phrase = '"' + _cjk_split(_affix_split(_emoji_split(_fold_marks(_recompose(unicodedata.normalize("NFKC", _raw)))))).replace('"', '""') + '"'
             log.info("FTS query still not valid FTS5 syntax; retrying as one literal phrase")
             conn.close()
-            return search(phrase, scope=scope, limit=limit, _fallback_stage=2, _raw=_raw)
+            return search(phrase, scope=scope, limit=limit, _fallback_stage=2, _raw=_raw, loose=loose)
         # Genuinely unexpected: table missing or corrupted DB.
         log.warning("FTS search failed (index missing or corrupt): %s -- returning empty results", exc)
         return []
@@ -1805,7 +1888,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             return []
         if not _healed and _heal_malformed():
             log.error("FTS index was corrupt (%s) -- self-healed by rebuild; retrying query once", exc)
-            return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw)
+            return search(query, scope=scope, limit=limit, _healed=True, _raw=_raw, loose=loose)
         log.error("FTS search failed on a corrupt index and self-heal did not recover: %s", exc)
         return []
     finally:

@@ -331,16 +331,18 @@ def _snippet_for(rel: str, length: int = 150) -> str:
 
 
 def hybrid_search(query: str, scope: str = "", limit: int = 10,
-                  embedder=None) -> tuple[list[dict], str]:
+                  embedder=None, loose: bool = False) -> tuple[list[dict], str]:
     """Fuse FTS and vector retrieval by RRF. Returns (results, mode).
 
     Result contract preserved for confidence bands: `score` stays a 0..1
     quality signal (the best of the two retrievers' normalized scores for
     that file); ORDERING comes from RRF. Each result lists its sources.
+    `loose` is passed to the keyword search (see fts.search); a result that
+    is only a partial keyword match keeps its `loose_match` flag.
     """
     from .fts import search as fts_search
 
-    fts_results = fts_search(query, scope=scope, limit=limit)
+    fts_results = fts_search(query, scope=scope, limit=limit, loose=loose)
     if not enabled():
         return fts_results, "fts-only"
     vec_results = vector_search(query, scope=scope, limit=limit, embedder=embedder)
@@ -356,6 +358,8 @@ def hybrid_search(query: str, scope: str = "", limit: int = 10,
         entry["score"] = max(entry["score"], float(r.get("score", 0.0)))
         entry["snippet"] = r.get("snippet", "")
         entry["sources"].append("fts")
+        if r.get("loose_match"):
+            entry["loose_match"] = True
     for rank, r in enumerate(vec_results):
         entry = fused.setdefault(r["path"], {
             "path": r["path"], "score": 0.0, "rrf": 0.0, "sources": [],
@@ -363,6 +367,7 @@ def hybrid_search(query: str, scope: str = "", limit: int = 10,
         entry["rrf"] += 1.0 / (RRF_K + rank + 1)
         entry["score"] = max(entry["score"], float(r.get("score", 0.0)))
         entry["sources"].append("vector")
+        entry.pop("loose_match", None)      # found by meaning as well: no longer only a partial keyword match
 
     merged = sorted(fused.values(), key=lambda e: e["rrf"], reverse=True)[:limit]
     for entry in merged:

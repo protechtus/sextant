@@ -158,7 +158,7 @@ def test_cli_search_accepts_the_write_scope_grammar(corpus, monkeypatch):
                side_effect=lambda query, scope, limit: ([{"path": "projects/budget-app.md", "score": 0.9,
                                                           "snippet": "ruff"}] if scope == "projects/budget-app.md" else ([], "fts-only"))) as m:
         # the patched searcher returns a tuple only on the miss branch; emulate the real shape
-        def fake(query, scope, limit):
+        def fake(query, scope, limit, loose=False):
             if scope == "projects/budget-app.md":
                 return [{"path": "projects/budget-app.md", "score": 0.9, "snippet": "ruff"}], "fts-only"
             return [], "fts-only"

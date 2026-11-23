@@ -308,7 +308,7 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10, full: int =
     from .tools.search import memory_search_hybrid
 
     scope = _normalize_search_scope(scope)
-    results, retrieval = memory_search_hybrid(query=query, scope=scope, limit=limit)
+    results, retrieval = memory_search_hybrid(query=query, scope=scope, limit=limit, loose=True)
     for _r in results:
         _r["snippet"] = " ".join(_SNIPPET_COMMENT.sub(" ", str(_r.get("snippet") or "")).split())
     top_score: float = max((float(r.get("score", 0)) for r in results), default=0.0)
@@ -322,7 +322,12 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10, full: int =
         confidence = "high"
     # Log for miss analysis (ATL-R01)
     from .tools.search_log import log_search
-    log_search(query=query, scope=scope, top_score=top_score, result_count=len(results))
+    # A search answered only by partial matches is still a miss for the gap reports: logging
+    # its 0.35 as a hit hid every multi-word miss from them (code review 2026-11-23).
+    _firm = [r for r in results if not r.get("loose_match")]
+    log_search(query=query, scope=scope,
+               top_score=max((float(r.get("score", 0)) for r in _firm), default=0.0),
+               result_count=len(_firm))
 
     # Temporal context: pull up to 3 current temporal graph facts matching the query.
     # This bridges the gap between static .memory/ snapshots and live project state.
@@ -382,6 +387,9 @@ def _attach_full_bodies(results: list[dict], full: int) -> None:
         cut = len(body) > _FULL_MAX_CHARS or bool(note.get("truncated"))
         result["body"] = body[:_FULL_MAX_CHARS]
         result["body_truncated"] = cut
+        if note.get("frontmatter"):
+            # a note's date, title and status live here; a date question needs them (code review 2026-11-23)
+            result["frontmatter"] = note["frontmatter"]
 
 
 def _normalize_search_scope(scope: str) -> str:

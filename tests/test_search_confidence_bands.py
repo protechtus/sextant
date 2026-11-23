@@ -115,7 +115,8 @@ class TestSearchToolPassThrough:
     def test_query_scope_and_limit_are_forwarded(self):
         with _search_returning(_hits(0.5)) as (server, hybrid, _):
             server.memory_search_tool("dark mode", scope="feedback", limit=3)
-        hybrid.assert_called_once_with(query="dark mode", scope="feedback", limit=3)
+        # the search tool asks for partial matches when no note holds every word (loose=True)
+        hybrid.assert_called_once_with(query="dark mode", scope="feedback", limit=3, loose=True)
 
     def test_top_score_and_count_are_logged_for_miss_analysis(self):
         with _search_returning(_hits(0.42, 0.61)) as (server, _, logged):

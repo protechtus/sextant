@@ -54,6 +54,7 @@ def test_full_returns_the_detail_a_snippet_leaves_out(server):
     assert "412 dollars" not in top["snippet"]          # the snippet alone cannot answer it
     assert "412 dollars" in top["body"]
     assert top["body_truncated"] is False
+    assert top["frontmatter"]["title"] == "car"           # a date or title question needs the note's header too
     assert all("body" not in r for r in out["results"][1:])
 
 
