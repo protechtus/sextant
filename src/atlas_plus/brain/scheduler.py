@@ -23,6 +23,9 @@ Scheduled jobs (UTC):
   Monday 09:00 weekly-digest   -- ntfy push with weekly Atlas stats summary (in-process)
   11:00  session-digest    -- deterministic digest of the previous local day (sessions, commits, Brain
                               ledger, close notes) -> .atlas/brain/digests/<date>.json (ATL-073)
+  11:10  ticket-sync       -- close tickets that commits name (closes X / fix: ... X), archive tickets
+                              done for ATLAS_TICKET_ARCHIVE_DAYS (worker task, 2026-11-21)
+  Monday 05:00 ticket-health  -- stale/blocked/orphan report, orphans back to todo (worker task)
   *:45   zombie-cleanup    -- mark stale running tasks as failed (every hour)
 
 Registered only when their switch is on (ATL-073, 2026-11-20: they fired every 10 minutes for
@@ -203,6 +206,33 @@ async def _curation() -> None:
         kind="curation_report",
         priority=4,
     )
+
+
+async def _ticket_sync() -> None:
+    """Nightly: tickets named in recent commits go done; done tickets past their archive age go to _archive.
+    2026-11-21: 37 tickets sat open, many finished weeks earlier, because nothing ran this executor."""
+    from .tasks import create_task
+    await asyncio.to_thread(
+        create_task,
+        instruction="Close tickets referenced in recent commits and archive stale done tickets (executors._ticket_sync).",
+        session_id="scheduler-ticket-sync",
+        kind="ticket_sync",
+        priority=3,
+    )
+    log.info("Scheduler queued ticket-sync task")
+
+
+async def _ticket_health() -> None:
+    """Weekly: stale in-progress, long-blocked and orphaned tickets reported; orphans reset to todo."""
+    from .tasks import create_task
+    await asyncio.to_thread(
+        create_task,
+        instruction="Ticket staleness audit and orphan reset (executors._ticket_health_check).",
+        session_id="scheduler-ticket-health",
+        kind="ticket_health_check",
+        priority=4,
+    )
+    log.info("Scheduler queued ticket-health task")
 
 
 async def _session_digest() -> None:
@@ -911,6 +941,8 @@ _CATCHUP_CADENCE_HOURS: dict[str, float] = {
     "suggest-facts": _DAY,
     "curation": _DAY,
     "session-digest": _DAY,
+    "ticket-sync": _DAY,
+    "ticket-health": _WEEK,
     "patterns-rebuild": _DAY,
     "dream": _DAY,
     "memory-trends": _DAY,
@@ -1047,6 +1079,8 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.add_job(_weekly_digest_push,     "cron", day_of_week="mon", hour=9, minute=0, id="weekly-digest")
     _scheduler.add_job(_auto_session_log,        "cron", hour=23, minute=30,                   id="auto-session-log")
     _scheduler.add_job(_session_digest,          "cron", hour=11, minute=0,                    id="session-digest")
+    _scheduler.add_job(_ticket_sync,             "cron", hour=11, minute=10,                   id="ticket-sync")
+    _scheduler.add_job(_ticket_health,           "cron", day_of_week="mon", hour=5, minute=0,  id="ticket-health")
     # Switch-gated lanes (ATL-073): a lane nobody turned on is not registered, so the ledger and
     # the maintenance panel show only jobs that can do something.
     if _ticket_dispatch_registered():
@@ -1069,6 +1103,8 @@ def start_scheduler() -> AsyncIOScheduler:
         "suggest-facts": _suggest_facts,
         "curation": _curation,
         "session-digest": _session_digest,
+        "ticket-sync": _ticket_sync,
+        "ticket-health": _ticket_health,
         "patterns-rebuild": _patterns_rebuild,
         "dream": _dream_nightly,
         "memory-trends": _memory_trends_daily,

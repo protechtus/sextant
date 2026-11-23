@@ -210,6 +210,7 @@ Defaults live in code and are deliberate; unset means a sensible value.
 | `ATLAS_BRAIN_INLINE_TASKS` | Run tasks inline in the API process (dev mode). |
 | `ATLAS_WORKER_HEARTBEAT_INTERVAL` | Worker heartbeat cadence. |
 | `ATLAS_SLA_MINUTES` | Task SLA before it counts as late (the sla-check lane registers only when this is > 0 and `ATLAS_NTFY_URL` is set). |
+| `ATLAS_TICKET_ARCHIVE_DAYS` | Days a `done` ticket stays in place before the nightly ticket-sync lane moves it to `_archive/<YYYY-MM>-auto/<project>/` with status archived (default 14; negative disables). |
 | `ATLAS_SUPERVISOR_MODEL` | Model for the weekly Claude supervisor (headless `claude --print`); default `claude-sonnet-5-5`. |
 | `ATLAS_SUPERVISOR_TIMEOUT_S` | Seconds the weekly supervisor run may take (default 900). |
 | `ATLAS_LESSONS_LEDGER` | Path of the lessons ledger an approved `lesson` proposal appends to (default: the checkout's `docs/lessons/LESSONS.md`, else `<state>/brain/LESSONS.md`). |

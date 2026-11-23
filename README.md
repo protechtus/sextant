@@ -378,6 +378,21 @@ If a freshly released dependency ever breaks the install, fall back to
 the known-good exact pins: append `-c constraints.txt` to the pip
 command above.
 
+## Measured
+
+Sextant was run on [LongMemEval](https://github.com/xiaowu0162/LongMemEval), a public benchmark of 500
+questions over long chat histories, against the plainest alternative: paste the whole history into the model.
+On 251 questions held out before tuning, an agent using Sextant's search answered 93.6% correctly on both
+reader models (Claude Haiku 5.5 and Claude Sonnet 5.5); the whole history scored 93.2% and 95.6%, at 2.5 to 6
+times the tokens. On the 476-session version of the test, which does not fit in a model's window, Sextant
+scored 81 to 86%. The first run of the shipped build scored 16%: the two defects that caused it are fixed and
+described in the write-up.
+
+The judge was Claude Opus 5.5 with the benchmark's own grading prompts, not the model its authors used, so
+these figures are not comparable with scores published elsewhere. Harness, cost ledger and every result file:
+[benchmarks/longmemeval](https://github.com/protechtus/sextant/tree/main/benchmarks/longmemeval). The search
+half reproduces on a laptop with no API key. Write-up: [usesextant.com/longmemeval](https://usesextant.com/longmemeval/).
+
 ## How it compares
 
 **Claude Code built-in memory**: the honest first comparison, covered in "Who

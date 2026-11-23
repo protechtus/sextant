@@ -1,0 +1,112 @@
+{"event": "dispatch", "job": "ans.oracle.haiku.r1.pilot", "route": "sync", "requests": 12, "est_usd": 0.0116, "ts": "2026-11-20T19:16:36+00:00"}
+{"event": "settle", "job": "ans.oracle.haiku.r1.pilot", "route": "sync", "requests": 12, "failed": 12, "est_usd": 0.0116, "actual_usd": 0.0, "input_tokens": 0, "output_tokens": 0, "ts": "2026-11-20T19:16:37+00:00"}
+{"event": "dispatch", "job": "ans.oracle.haiku.r1.pilot", "route": "sync", "requests": 12, "est_usd": 0.0116, "ts": "2026-11-20T19:28:30+00:00"}
+{"event": "settle", "job": "ans.oracle.haiku.r1.pilot", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.0116, "actual_usd": 0.0121, "input_tokens": 94260, "output_tokens": 5300, "ts": "2026-11-20T19:29:00+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.oracle.haiku.r1.pilot", "route": "sync", "requests": 12, "est_usd": 0.0562, "ts": "2026-11-20T19:29:19+00:00"}
+{"event": "settle", "job": "judge-opus.ans.oracle.haiku.r1.pilot", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.0562, "actual_usd": 0.0201, "input_tokens": 4649, "output_tokens": 73, "ts": "2026-11-20T19:29:30+00:00"}
+{"event": "dispatch", "job": "ans.full.haiku.r1.pilot", "route": "batch", "requests": 12, "est_usd": 0.5436, "ts": "2026-11-20T19:29:37+00:00"}
+{"event": "dispatch", "job": "ans.sextant-fts-v1-k5.sonnet.r1.pilot", "route": "batch", "requests": 12, "est_usd": 0.3084, "ts": "2026-11-20T19:29:44+00:00"}
+{"event": "settle", "job": "ans.full.haiku.r1.pilot", "route": "batch", "requests": 12, "failed": 0, "est_usd": 0.5436, "actual_usd": 0.5113, "input_tokens": 2016785, "output_tokens": 5703, "ts": "2026-11-20T19:32:50+00:00"}
+{"event": "settle", "job": "ans.sextant-fts-v1-k5.sonnet.r1.pilot", "route": "batch", "requests": 12, "failed": 0, "est_usd": 0.3084, "actual_usd": 0.282, "input_tokens": 268096, "output_tokens": 2776, "ts": "2026-11-20T19:32:51+00:00"}
+{"event": "dispatch", "job": "ans.none.haiku.r1", "route": "batch", "requests": 500, "est_usd": 0.0639, "ts": "2026-11-20T19:33:13+00:00"}
+{"event": "dispatch", "job": "ans.oracle.haiku.r1", "route": "batch", "requests": 500, "est_usd": 0.3044, "ts": "2026-11-20T19:33:18+00:00"}
+{"event": "dispatch", "job": "ans.sextant-fts-v0-k10.haiku.r1", "route": "batch", "requests": 500, "est_usd": 0.0903, "ts": "2026-11-20T19:33:23+00:00"}
+{"event": "dispatch", "job": "ans.sextant-fts-v1-k5.haiku.r1", "route": "batch", "requests": 500, "est_usd": 0.6418, "ts": "2026-11-20T19:33:29+00:00"}
+{"event": "dispatch", "job": "ans.sextant-fts-v1-k10.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1778, "ts": "2026-11-20T19:33:37+00:00"}
+{"event": "dispatch", "job": "ans.sextant-hybrid-v1-k5.haiku.r1", "route": "batch", "requests": 500, "est_usd": 0.6236, "ts": "2026-11-20T19:33:47+00:00"}
+{"event": "dispatch", "job": "ans.sextant-hybrid-v1-k10.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1062, "ts": "2026-11-20T19:33:55+00:00"}
+{"event": "dispatch", "job": "ans.none.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.2788, "ts": "2026-11-20T19:34:06+00:00"}
+{"event": "dispatch", "job": "ans.oracle.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 6.0886, "ts": "2026-11-20T19:34:10+00:00"}
+{"event": "dispatch", "job": "ans.sextant-fts-v0-k10.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.8065, "ts": "2026-11-20T19:34:16+00:00"}
+{"event": "dispatch", "job": "ans.sextant-fts-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 12.8367, "ts": "2026-11-20T19:34:21+00:00"}
+{"event": "dispatch", "job": "ans.sextant-hybrid-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 12.4719, "ts": "2026-11-20T19:34:29+00:00"}
+{"event": "dispatch", "job": "ans.full.haiku.r1", "route": "batch", "requests": 500, "est_usd": 22.5546, "ts": "2026-11-20T19:34:40+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.full.haiku.r1.pilot", "route": "batch", "requests": 12, "est_usd": 0.0283, "ts": "2026-11-20T19:35:26+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-fts-v1-k5.sonnet.r1.pilot", "route": "batch", "requests": 12, "est_usd": 0.0294, "ts": "2026-11-20T19:35:26+00:00"}
+{"event": "settle", "job": "ans.none.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.0639, "actual_usd": 0.0438, "input_tokens": 32819, "output_tokens": 168593, "ts": "2026-11-20T19:36:58+00:00"}
+{"event": "settle", "job": "ans.oracle.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.3044, "actual_usd": 0.2776, "input_tokens": 4646299, "output_tokens": 181245, "ts": "2026-11-20T19:37:00+00:00"}
+{"event": "settle", "job": "ans.oracle.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 6.0886, "actual_usd": 5.0465, "input_tokens": 4646299, "output_tokens": 80046, "ts": "2026-11-20T19:37:00+00:00"}
+{"event": "settle", "job": "ans.sextant-fts-v0-k10.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.0903, "actual_usd": 0.0511, "input_tokens": 526057, "output_tokens": 99281, "ts": "2026-11-20T19:37:01+00:00"}
+{"event": "settle", "job": "ans.sextant-fts-v0-k10.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.8065, "actual_usd": 0.9398, "input_tokens": 526057, "output_tokens": 82745, "ts": "2026-11-20T19:37:02+00:00"}
+{"event": "settle", "job": "ans.sextant-fts-v1-k10.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1778, "actual_usd": 1.1028, "input_tokens": 21094174, "output_tokens": 192335, "ts": "2026-11-20T19:37:03+00:00"}
+{"event": "settle", "job": "ans.sextant-fts-v1-k5.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.6418, "actual_usd": 0.5977, "input_tokens": 11018565, "output_tokens": 187241, "ts": "2026-11-20T19:37:04+00:00"}
+{"event": "settle", "job": "ans.sextant-fts-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 12.8367, "actual_usd": 11.4416, "input_tokens": 11018565, "output_tokens": 84610, "ts": "2026-11-20T19:37:06+00:00"}
+{"event": "settle", "job": "ans.sextant-hybrid-v1-k10.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1062, "actual_usd": 1.0378, "input_tokens": 19777924, "output_tokens": 195490, "ts": "2026-11-20T19:37:07+00:00"}
+{"event": "settle", "job": "ans.sextant-hybrid-v1-k5.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.6236, "actual_usd": 0.5819, "input_tokens": 10698145, "output_tokens": 188057, "ts": "2026-11-20T19:37:08+00:00"}
+{"event": "settle", "job": "ans.sextant-hybrid-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 12.4719, "actual_usd": 11.1267, "input_tokens": 10698145, "output_tokens": 85708, "ts": "2026-11-20T19:37:09+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.none.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.2328, "ts": "2026-11-20T19:37:12+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.oracle.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1345, "ts": "2026-11-20T19:37:15+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.oracle.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.1616, "ts": "2026-11-20T19:37:18+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-fts-v0-k10.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1563, "ts": "2026-11-20T19:37:21+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-fts-v0-k10.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.1871, "ts": "2026-11-20T19:37:24+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-fts-v1-k10.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.137, "ts": "2026-11-20T19:37:26+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-fts-v1-k5.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1358, "ts": "2026-11-20T19:37:28+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-fts-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.1736, "ts": "2026-11-20T19:37:31+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-hybrid-v1-k10.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1373, "ts": "2026-11-20T19:37:33+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-hybrid-v1-k5.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1346, "ts": "2026-11-20T19:37:36+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.sextant-hybrid-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.175, "ts": "2026-11-20T19:37:38+00:00"}
+{"event": "settle", "job": "ans.full.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 22.5546, "actual_usd": 21.212, "input_tokens": 83850946, "output_tokens": 199394, "ts": "2026-11-20T19:39:12+00:00"}
+{"event": "settle", "job": "ans.none.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.2788, "actual_usd": 0.7481, "input_tokens": 32819, "output_tokens": 143048, "ts": "2026-11-20T19:39:13+00:00"}
+{"event": "settle", "job": "judge-opus.ans.full.haiku.r1.pilot", "route": "batch", "requests": 12, "failed": 0, "est_usd": 0.0283, "actual_usd": 0.0099, "input_tokens": 4684, "output_tokens": 49, "ts": "2026-11-20T19:39:14+00:00"}
+{"event": "settle", "job": "judge-opus.ans.none.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.2328, "actual_usd": 0.4696, "input_tokens": 210903, "output_tokens": 4775, "ts": "2026-11-20T19:39:15+00:00"}
+{"event": "settle", "job": "judge-opus.ans.oracle.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1345, "actual_usd": 0.4314, "input_tokens": 171319, "output_tokens": 8877, "ts": "2026-11-20T19:39:15+00:00"}
+{"event": "settle", "job": "judge-opus.ans.oracle.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1616, "actual_usd": 0.4301, "input_tokens": 186401, "output_tokens": 5730, "ts": "2026-11-20T19:39:16+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-fts-v0-k10.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1563, "actual_usd": 0.4021, "input_tokens": 173711, "output_tokens": 5468, "ts": "2026-11-20T19:39:17+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-fts-v1-k5.sonnet.r1.pilot", "route": "batch", "requests": 12, "failed": 0, "est_usd": 0.0294, "actual_usd": 0.0117, "input_tokens": 5346, "output_tokens": 104, "ts": "2026-11-20T19:39:18+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.full.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1396, "ts": "2026-11-20T19:39:21+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.none.sonnet.r1", "route": "batch", "requests": 500, "est_usd": 1.3114, "ts": "2026-11-20T19:39:23+00:00"}
+{"event": "dispatch", "job": "ans.full.sonnet.r1.half", "route": "batch", "requests": 251, "est_usd": 45.2603, "ts": "2026-11-20T19:40:44+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-fts-v0-k10.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1871, "actual_usd": 0.4305, "input_tokens": 189099, "output_tokens": 5231, "ts": "2026-11-20T19:40:55+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-fts-v1-k10.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.137, "actual_usd": 0.4179, "input_tokens": 171646, "output_tokens": 7464, "ts": "2026-11-20T19:40:56+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-fts-v1-k5.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1358, "actual_usd": 0.4202, "input_tokens": 171465, "output_tokens": 7724, "ts": "2026-11-20T19:40:57+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-fts-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1736, "actual_usd": 0.4453, "input_tokens": 190965, "output_tokens": 6332, "ts": "2026-11-20T19:40:57+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-hybrid-v1-k10.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1373, "actual_usd": 0.4253, "input_tokens": 172458, "output_tokens": 8041, "ts": "2026-11-20T19:40:58+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-hybrid-v1-k5.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1346, "actual_usd": 0.4061, "input_tokens": 170798, "output_tokens": 6446, "ts": "2026-11-20T19:40:59+00:00"}
+{"event": "settle", "job": "judge-opus.ans.sextant-hybrid-v1-k5.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.175, "actual_usd": 0.4461, "input_tokens": 192063, "output_tokens": 6196, "ts": "2026-11-20T19:41:00+00:00"}
+{"event": "settle", "job": "judge-opus.ans.full.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1396, "actual_usd": 0.4204, "input_tokens": 173592, "output_tokens": 7321, "ts": "2026-11-20T19:42:31+00:00"}
+{"event": "settle", "job": "judge-opus.ans.none.sonnet.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.3114, "actual_usd": 0.55, "input_tokens": 249401, "output_tokens": 5118, "ts": "2026-11-20T19:42:32+00:00"}
+{"event": "settle", "job": "ans.full.sonnet.r1.half", "route": "batch", "requests": 251, "failed": 0, "est_usd": 45.2603, "actual_usd": 42.2943, "input_tokens": 42075700, "output_tokens": 43714, "ts": "2026-11-20T19:44:04+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.full.sonnet.r1.half", "route": "batch", "requests": 250, "est_usd": 0.5885, "ts": "2026-11-20T19:44:04+00:00"}
+{"event": "settle", "job": "judge-opus.ans.full.sonnet.r1.half", "route": "batch", "requests": 250, "failed": 0, "est_usd": 0.5885, "actual_usd": 0.2342, "input_tokens": 96707, "output_tokens": 4075, "ts": "2026-11-20T19:47:06+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.pilot.round1", "route": "sync", "requests": 12, "est_usd": 0.0036, "ts": "2026-11-20T19:57:02+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.pilot.round1", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.0036, "actual_usd": 0.0018, "input_tokens": 9094, "output_tokens": 1874, "ts": "2026-11-20T19:57:14+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.pilot.round2", "route": "sync", "requests": 12, "est_usd": 0.0054, "ts": "2026-11-20T19:57:33+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.pilot.round2", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.0054, "actual_usd": 0.0038, "input_tokens": 30613, "output_tokens": 1477, "ts": "2026-11-20T19:57:44+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.pilot.round3", "route": "sync", "requests": 12, "est_usd": 0.0172, "ts": "2026-11-20T19:57:44+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.pilot.round3", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.0172, "actual_usd": 0.0163, "input_tokens": 141529, "output_tokens": 4384, "ts": "2026-11-20T19:58:10+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.pilot.round4", "route": "sync", "requests": 1, "est_usd": 0.0019, "ts": "2026-11-20T19:58:12+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.pilot.round4", "route": "sync", "requests": 1, "failed": 0, "est_usd": 0.0019, "actual_usd": 0.0022, "input_tokens": 16190, "output_tokens": 1245, "ts": "2026-11-20T19:58:19+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.round1", "route": "batch", "requests": 500, "est_usd": 0.0755, "ts": "2026-11-20T19:58:44+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.sonnet.r1.round1", "route": "batch", "requests": 500, "est_usd": 1.5107, "ts": "2026-11-20T19:58:44+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.sonnet.r1.round1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.5107, "actual_usd": 0.5879, "input_tokens": 376819, "output_tokens": 42208, "ts": "2026-11-20T20:01:01+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.round1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.0755, "actual_usd": 0.0368, "input_tokens": 376819, "output_tokens": 71871, "ts": "2026-11-20T20:02:32+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.sonnet.r1.round2", "route": "batch", "requests": 500, "est_usd": 1.8625, "ts": "2026-11-20T20:09:44+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.round2", "route": "batch", "requests": 500, "est_usd": 0.1087, "ts": "2026-11-20T20:09:44+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.sonnet.r1.round2", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.8625, "actual_usd": 1.0308, "input_tokens": 807058, "output_tokens": 44752, "ts": "2026-11-20T20:12:01+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.sonnet.r1.round3", "route": "batch", "requests": 423, "est_usd": 4.9785, "ts": "2026-11-20T20:12:36+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.round2", "route": "batch", "requests": 500, "failed": 0, "est_usd": 0.1087, "actual_usd": 0.0753, "input_tokens": 1157470, "output_tokens": 69544, "ts": "2026-11-20T20:12:47+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.round3", "route": "batch", "requests": 496, "est_usd": 0.341, "ts": "2026-11-20T20:13:41+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.sonnet.r1.round3", "route": "batch", "requests": 423, "failed": 0, "est_usd": 4.9785, "actual_usd": 4.2514, "input_tokens": 3913297, "output_tokens": 67628, "ts": "2026-11-20T20:14:54+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.sonnet.r1.round4", "route": "batch", "requests": 84, "est_usd": 1.2216, "ts": "2026-11-20T20:15:38+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.round3", "route": "batch", "requests": 496, "failed": 0, "est_usd": 0.341, "actual_usd": 0.3149, "input_tokens": 5513748, "output_tokens": 156728, "ts": "2026-11-20T20:15:59+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.round4", "route": "batch", "requests": 164, "est_usd": 0.1486, "ts": "2026-11-20T20:17:22+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.sonnet.r1.round4", "route": "batch", "requests": 84, "failed": 0, "est_usd": 1.2216, "actual_usd": 1.0511, "input_tokens": 991225, "output_tokens": 11968, "ts": "2026-11-20T20:17:56+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.sonnet.r1.round5", "route": "batch", "requests": 38, "est_usd": 0.6882, "ts": "2026-11-20T20:18:08+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.sonnet.r1.round5", "route": "batch", "requests": 38, "failed": 0, "est_usd": 0.6882, "actual_usd": 0.603, "input_tokens": 577376, "output_tokens": 5125, "ts": "2026-11-20T20:19:39+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.round4", "route": "batch", "requests": 164, "failed": 0, "est_usd": 0.1486, "actual_usd": 0.1371, "input_tokens": 2509100, "output_tokens": 46445, "ts": "2026-11-20T20:19:40+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.round5", "route": "batch", "requests": 50, "est_usd": 0.0589, "ts": "2026-11-20T20:19:56+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.round5", "route": "batch", "requests": 50, "failed": 0, "est_usd": 0.0589, "actual_usd": 0.0558, "input_tokens": 1018193, "output_tokens": 19384, "ts": "2026-11-20T20:22:14+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.agent-hybrid-v1.haiku.r1", "route": "batch", "requests": 488, "est_usd": 1.1568, "ts": "2026-11-20T20:22:25+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.agent-hybrid-v1.haiku.r1.pilot", "route": "batch", "requests": 12, "est_usd": 0.0288, "ts": "2026-11-20T20:22:26+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.agent-hybrid-v1.sonnet.r1", "route": "batch", "requests": 488, "est_usd": 1.1118, "ts": "2026-11-20T20:22:28+00:00"}
+{"event": "settle", "job": "judge-opus.ans.agent-hybrid-v1.haiku.r1", "route": "batch", "requests": 488, "failed": 0, "est_usd": 1.1568, "actual_usd": 0.461, "input_tokens": 190396, "output_tokens": 8024, "ts": "2026-11-20T20:24:46+00:00"}
+{"event": "settle", "job": "judge-opus.ans.agent-hybrid-v1.haiku.r1.pilot", "route": "batch", "requests": 12, "failed": 0, "est_usd": 0.0288, "actual_usd": 0.0107, "input_tokens": 5086, "output_tokens": 49, "ts": "2026-11-20T20:24:46+00:00"}
+{"event": "settle", "job": "judge-opus.ans.agent-hybrid-v1.sonnet.r1", "route": "batch", "requests": 488, "failed": 0, "est_usd": 1.1118, "actual_usd": 0.3969, "input_tokens": 169841, "output_tokens": 5720, "ts": "2026-11-20T20:24:47+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.haiku.r1.round6", "route": "sync", "requests": 12, "est_usd": 0.0263, "ts": "2026-11-20T20:25:50+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.haiku.r1.round6", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.0263, "actual_usd": 0.025, "input_tokens": 223201, "output_tokens": 5436, "ts": "2026-11-20T20:26:22+00:00"}
+{"event": "dispatch", "job": "agt.hybrid-v1.sonnet.r1.round6", "route": "sync", "requests": 12, "est_usd": 0.4463, "ts": "2026-11-20T20:26:27+00:00"}
+{"event": "settle", "job": "agt.hybrid-v1.sonnet.r1.round6", "route": "sync", "requests": 12, "failed": 0, "est_usd": 0.4463, "actual_usd": 0.402, "input_tokens": 188647, "output_tokens": 2467, "ts": "2026-11-20T20:26:58+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.agent-hybrid-v1.haiku.r1", "route": "batch", "requests": 500, "est_usd": 1.1863, "ts": "2026-11-20T20:27:04+00:00"}
+{"event": "dispatch", "job": "judge-opus.ans.agent-hybrid-v1.sonnet.r1", "route": "batch", "requests": 499, "est_usd": 1.1392, "ts": "2026-11-20T20:27:07+00:00"}
+{"event": "settle", "job": "judge-opus.ans.agent-hybrid-v1.haiku.r1", "route": "batch", "requests": 500, "failed": 0, "est_usd": 1.1863, "actual_usd": 0.4741, "input_tokens": 195479, "output_tokens": 8310, "ts": "2026-11-20T20:29:40+00:00"}
+{"event": "settle", "job": "judge-opus.ans.agent-hybrid-v1.sonnet.r1", "route": "batch", "requests": 499, "failed": 0, "est_usd": 1.1392, "actual_usd": 0.4104, "input_tokens": 174635, "output_tokens": 6109, "ts": "2026-11-20T20:29:41+00:00"}

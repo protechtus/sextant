@@ -223,6 +223,52 @@ def _brain_ledger(day: str, db_path: Path) -> dict:
     return result
 
 
+def tickets_snapshot(memory_root: Optional[Path] = None, *, stale_days: int = 7) -> dict:
+    """Open tickets right now: counts by assignee, agent tickets untouched for ``stale_days``, done but not
+    archived. Read-only; an unreadable store yields zeros. 2026-11-21: the digest counted everything but the
+    tickets nobody was closing."""
+    out: dict = {"open": 0, "by_assignee": {}, "stale": [], "done_unarchived": 0, "stale_days": stale_days}
+    try:
+        from atlas_plus.tickets.store import list_tickets
+        root = (memory_root or atlas_paths.memory_root()) / "tickets"
+        if not root.exists():
+            return out
+        rows = list_tickets(tickets_root=root)
+    except Exception:  # noqa: BLE001 - the digest never fails on the ticket store
+        return out
+    today = datetime.now().date()
+    for t in rows:
+        status = str(getattr(t, "status", ""))
+        if status == "done":
+            out["done_unarchived"] += 1
+            continue
+        if status not in ("todo", "in-progress", "in_progress", "blocked"):
+            continue
+        out["open"] += 1
+        who = str(getattr(t, "assignee", "") or "unassigned")
+        out["by_assignee"][who] = out["by_assignee"].get(who, 0) + 1
+        try:
+            age = (today - datetime.fromisoformat(str(getattr(t, "updated", ""))[:10]).date()).days
+        except ValueError:
+            age = -1
+        if who != "human" and age > stale_days:
+            out["stale"].append({"id": t.id, "title": str(getattr(t, "title", ""))[:90], "assignee": who,
+                                 "status": status, "days": age})
+    out["stale"].sort(key=lambda r: -r["days"])
+    out["stale"] = out["stale"][:15]
+    return out
+
+
+def tickets_block(snap: dict) -> str:
+    if not snap or (not snap.get("open") and not snap.get("done_unarchived")):
+        return "  (no open tickets)"
+    who = ", ".join(f"{k} {v}" for k, v in sorted(snap.get("by_assignee", {}).items()))
+    lines = [f"  open {snap.get('open', 0)} ({who}); done but not archived {snap.get('done_unarchived', 0)}"]
+    for r in snap.get("stale", []):
+        lines.append(f"  - {r['id']} [{r['assignee']}, {r['status']}, {r['days']}d]: {r['title']}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Digest build / write / read
 # ---------------------------------------------------------------------------
@@ -264,6 +310,7 @@ def build_session_digest(day: Optional[str] = None, *, memory_root: Optional[Pat
         "notes": notes,
         "commits": commits,
         "brain": ledger,
+        "tickets": tickets_snapshot(memory_root),
         "counts": {
             "session_entries": len(titles | {e["title"] for e in updates}),
             "notes": len(notes),
@@ -316,6 +363,8 @@ def render_digest_md(d: dict) -> str:
         lines.append(f"- {repo}: {len(subjects)}")
         for s in subjects[:6]:
             lines.append(f"  - {s}")
+    if d.get("tickets"):
+        lines += ["", "## Tickets", "", tickets_block(d["tickets"])]
     lines += ["", "## Brain", ""]
     if not d["brain"]["jobs"]:
         lines.append("(no Brain jobs finished)")
@@ -511,6 +560,19 @@ def _append_lesson_row(lessons_path: Path, title: str, rule: str, scope: str, so
     return les
 
 
+_ASSIGNEE_ALIASES = {"": "claude-code", "agent": "claude-code", "brain": "local", "operator": "human"}
+_STORE_ASSIGNEES = {"any", "claude-code", "codex", "human", "local"}
+
+
+def _ticket_assignee(value) -> str:
+    """The ticket store's assignee vocabulary (any, claude-code, codex, human, local); proposal payloads
+    say "agent" and the supervisor may say "operator" (2026-11-21: Approve failed on 'agent')."""
+    v = str(value or "").strip().lower()
+    v = _ASSIGNEE_ALIASES.get(v, v)
+    # anything else is a person's name (the supervisor sometimes writes the operator's): a human
+    return v if v in _STORE_ASSIGNEES else "human"
+
+
 def approve_proposal(proposal_id: str, *, edited_body: Optional[str] = None, db_path: Optional[Path] = None,
                      lessons_path: Optional[Path] = None, tickets_root: Optional[Path] = None,
                      remember: Optional[Callable[..., dict]] = None) -> dict:
@@ -535,8 +597,10 @@ def approve_proposal(proposal_id: str, *, edited_body: Optional[str] = None, db_
             from atlas_plus.tickets.store import create_ticket
             kwargs = dict(
                 title=p["title"], project=str(payload.get("project") or "atlas-memory+"),
-                assignee=str(payload.get("assignee") or "agent"), priority=str(payload.get("priority") or "normal"),
+                assignee=_ticket_assignee(payload.get("assignee")), priority=str(payload.get("priority") or "normal"),
                 effort=str(payload.get("effort") or "M"), body=body,
+                interactive=True,  # the desk click IS the consent (2026-11-21): the background gate
+                # (ATLAS_AUTONOMOUS) is for unattended writers, and Approve on Helm is a person
             )
             if tickets_root is not None:
                 kwargs["tickets_root"] = tickets_root
@@ -632,6 +696,8 @@ def supervisor_context(days: int = 7, *, state_dir: Optional[Path] = None, db_pa
     parts.append("RECENT WORK (nightly session digests, oldest first):\n" + (block or "  (no digests yet: the session_digest lane has not run)"))
     lessons = lessons_summary(lessons_path)
     parts.append("LESSONS LEDGER (ids and patterns already recorded; do not propose these again):\n" + (lessons or "  (empty)"))
+    parts.append("OPEN TICKETS NOW (agent tickets untouched for a week are the ones to ask about):\n"
+                 + tickets_block(tickets_snapshot()))
     hist = proposals_history(db_path=db_path)
     parts.append("PROPOSALS ALREADY MADE in the last 30 days (status is the operator's decision; "
                  "do not repeat a rejected one):\n" + (hist or "  (none)"))

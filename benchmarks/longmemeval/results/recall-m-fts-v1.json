@@ -1,0 +1,98 @@
+{
+ "mode": "fts",
+ "tag": "v1",
+ "questions": 470,
+ "by_type": {
+  "all": {
+   "n": 470,
+   "any@1": 0.6745,
+   "all@1": 0.2468,
+   "any@3": 0.8213,
+   "all@3": 0.5979,
+   "any@5": 0.8702,
+   "all@5": 0.6851,
+   "any@10": 0.9106,
+   "all@10": 0.7553,
+   "empty": 0,
+   "search_ms_median": 281.0
+  },
+  "single-session-user": {
+   "n": 64,
+   "any@1": 0.6562,
+   "all@1": 0.6562,
+   "any@3": 0.8125,
+   "all@3": 0.8125,
+   "any@5": 0.8281,
+   "all@5": 0.8281,
+   "any@10": 0.8906,
+   "all@10": 0.8906,
+   "empty": 0,
+   "search_ms_median": 326.4
+  },
+  "single-session-assistant": {
+   "n": 56,
+   "any@1": 0.9643,
+   "all@1": 0.9643,
+   "any@3": 1.0,
+   "all@3": 1.0,
+   "any@5": 1.0,
+   "all@5": 1.0,
+   "any@10": 1.0,
+   "all@10": 1.0,
+   "empty": 0,
+   "search_ms_median": 400.2
+  },
+  "single-session-preference": {
+   "n": 30,
+   "any@1": 0.3,
+   "all@1": 0.3,
+   "any@3": 0.3333,
+   "all@3": 0.3333,
+   "any@5": 0.5,
+   "all@5": 0.5,
+   "any@10": 0.6,
+   "all@10": 0.6,
+   "empty": 0,
+   "search_ms_median": 360.9
+  },
+  "multi-session": {
+   "n": 121,
+   "any@1": 0.5785,
+   "all@1": 0.0,
+   "any@3": 0.8182,
+   "all@3": 0.3388,
+   "any@5": 0.9174,
+   "all@5": 0.4793,
+   "any@10": 0.9587,
+   "all@10": 0.5785,
+   "empty": 0,
+   "search_ms_median": 249.0
+  },
+  "temporal-reasoning": {
+   "n": 127,
+   "any@1": 0.622,
+   "all@1": 0.0866,
+   "any@3": 0.7874,
+   "all@3": 0.4724,
+   "any@5": 0.8189,
+   "all@5": 0.5984,
+   "any@10": 0.8583,
+   "all@10": 0.685,
+   "empty": 0,
+   "search_ms_median": 259.5
+  },
+  "knowledge-update": {
+   "n": 72,
+   "any@1": 0.875,
+   "all@1": 0.0,
+   "any@3": 0.9583,
+   "all@3": 0.8611,
+   "any@5": 0.9722,
+   "all@5": 0.8889,
+   "any@10": 1.0,
+   "all@10": 0.9306,
+   "empty": 0,
+   "search_ms_median": 273.0
+  }
+ }
+}

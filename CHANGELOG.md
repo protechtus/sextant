@@ -43,6 +43,37 @@ Both changes came out of measuring Sextant on LongMemEval (500 questions over lo
   evidence note found and never opened. `full=3` removed most of those. The default (`full=0`) is
   unchanged.
 
+### Ticket lifecycle (2026-11-21)
+
+- GitHub intake: bot-authored PRs and comments (Dependabot) no longer open a human ticket (ledger only); when an
+  item we ticketed closes upstream its ticket and its comment tickets go `done` (ledger event `upstream-closed`);
+  a CI-failure ticket goes `done` once a later run on main succeeded (`ci-green-after`). Nine of the 37 open
+  tickets were intake tickets whose PR or thread had closed days earlier.
+- Scheduler: `ticket-sync` nightly 11:10 UTC (the `ticket_sync` executor existed but nothing ran it) and
+  `ticket-health` Monday 05:00 UTC; catch-up, maintenance panel and `/scheduler/run/<job>` know both.
+- `ticket_sync` also archives tickets `done` for more than `ATLAS_TICKET_ARCHIVE_DAYS` (14) into
+  `_archive/<YYYY-MM>-auto/<project>/` with status archived (170 archived files still said todo because the move
+  and the status were two hand steps).
+- Session digest and the weekly supervisor context carry a tickets snapshot: open by assignee, agent tickets
+  untouched for a week, done-but-not-archived count.
+- `scripts/bulk_archive_tickets.py` run: 170 statuses normalized.
+
+### Helm pass (2026-11-21)
+
+- Proposals desk: Approve on a `ticket` proposal failed under `ATLAS_AUTONOMOUS=off` ("autonomous ticket create
+  blocked") and, once past the gate, on the default assignee `agent`. The click is the consent: `approve_proposal`
+  creates the ticket with `interactive=True` and maps `agent`/`operator`/`brain` onto the store's assignee
+  vocabulary (`claude-code`/`human`/`local`). Test with the gate off.
+- Brain `/diagnostic`: the Ollama probe ran as a sync `httpx.get` inside the async route and blocked the event
+  loop up to 3 s per Helm panel refresh; it runs in a worker thread now.
+- Helm: a connect or read timeout against a listening Brain is reported as "busy", not "not running" (chat
+  preflight, 503 details, the 30 s task poller whose connect timeout rises from 0.75 s to 2 s). Failed toasts stay
+  9 s, are selectable, and are mirrored to the browser console.
+- The maintainer's Web UI launcher script (not shipped): when another process holds `atlas-web.log` the append redirect failed and the service
+  exited 1 before logging anything; the launcher now probes the log and falls back to a dated sidecar.
+  The maintainer's service control script's `stop` also ends orphaned `multiprocessing.spawn` workers (the curation-report process
+  outlived its killed parent and held the log handle).
+
 ### Brain learning loop (ATL-073, 2026-11-20)
 
 Brain watches and measures, Claude synthesizes weekly, every session reads the result, a desk approves

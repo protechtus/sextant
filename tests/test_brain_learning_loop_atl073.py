@@ -184,6 +184,24 @@ class TestProposalsDesk:
         files = list((tmp_path / "tickets").rglob("*.md"))
         assert len(files) == 1 and "Reflexion review: f-001" in files[0].read_text(encoding="utf-8")
 
+    def test_approve_ticket_is_human_consent_with_the_background_gate_off(self, db, tmp_path, monkeypatch):
+        # 2026-11-21: Approve on the Helm desk raised "autonomous ticket create blocked" under
+        # ATLAS_AUTONOMOUS=off (the production default). The click is the consent; the gate is for
+        # unattended writers.
+        monkeypatch.setenv("ATLAS_AUTONOMOUS", "off")
+        p = learning.add_proposal("desk-test", "ticket", "Gate-off approval", "Body of the ticket.",
+                                  {"project": "atlas-memory+", "effort": "S"}, db_path=db)
+        res = learning.approve_proposal(p["id"], db_path=db, tickets_root=tmp_path / "tickets")
+        assert res["ok"] is True, res
+        assert res["ticket_id"]
+        files = list((tmp_path / "tickets").rglob("*.md"))
+        assert files and "Body of the ticket." in files[0].read_text(encoding="utf-8")
+        # the payload said nothing about assignee: the store's vocabulary, not "agent"
+        assert "assignee: claude-code" in files[0].read_text(encoding="utf-8")
+        assert learning._ticket_assignee("agent") == "claude-code"
+        assert learning._ticket_assignee("operator") == "human"
+        assert learning._ticket_assignee("codex") == "codex"
+
     def test_approve_fact_calls_remember_with_scope_and_body(self, db):
         calls = []
         p = learning.add_proposal("s", "fact", "Operator uses E: for scratch", "Scratch lives on E:.", {"scope": "preference:scratch"}, db_path=db)

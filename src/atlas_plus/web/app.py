@@ -438,7 +438,10 @@ async def _task_poll_loop() -> None:
     while True:
         changed = False
         try:
-            async with _PeerClient(timeout=httpx.Timeout(5.0, connect=0.75)) as client:
+            # connect 2.0 s, not 0.75: under load (a test suite, a model loading) a listening Brain
+            # took longer than that to accept, and the log said it was down (2026-11-21)
+            poll_connect_timeout = 2.0
+            async with _PeerClient(timeout=httpx.Timeout(5.0, connect=poll_connect_timeout)) as client:
                 r = await client.get(
                     f"{BRAIN_URL}/tasks", params={"limit": "20"}, headers=_brain_headers
                 )
@@ -460,8 +463,14 @@ async def _task_poll_loop() -> None:
         except Exception as exc:
             if not _POLL_STATE.get("warned"):
                 _POLL_STATE["warned"] = True
-                log.warning("Brain at %s is not running or not reachable: the dashboard works without it; "
-                            "start sextant-brain or set ATLAS_BRAIN_URL", BRAIN_URL)  # the exception type (ConnectTimeout on Windows) said nothing to a user (MN48)
+                if isinstance(exc, httpx.ReadTimeout) or (
+                        isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout))
+                        and await asyncio.to_thread(_brain_listening)):
+                    log.warning("Brain at %s is busy and did not answer the task poll in time (it is listening); "
+                                "retrying", BRAIN_URL)
+                else:
+                    log.warning("Brain at %s is not running or not reachable: the dashboard works without it; "
+                                "start sextant-brain or set ATLAS_BRAIN_URL", BRAIN_URL)  # the exception type (ConnectTimeout on Windows) said nothing to a user (MN48)
             log.debug("Task poll error: %s", exc)
         poll_interval = 2.0 if changed else min(poll_interval * 1.5, 30.0)
         await asyncio.sleep(poll_interval)
@@ -1169,10 +1178,38 @@ async def tasks_partial(request: Request, limit: int = 20, status: Optional[str]
     return HTMLResponse("\n".join(rows))
 
 
+def _brain_listening(timeout: float = 3.0) -> bool:
+    """Does the Brain's port accept a connection? A connect TIMEOUT alone cannot tell a busy Brain
+    from an absent one: on Windows a refused localhost connect takes about two seconds to be
+    reported, longer than our 0.75 s connect budget, so 'not running' also arrives as
+    ConnectTimeout (AG97). Blocking, at most `timeout` seconds: call it from a worker thread."""
+    import socket
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(BRAIN_URL)
+        port = u.port or (443 if u.scheme == "https" else 80)
+        with socket.create_connection((u.hostname or "127.0.0.1", port), timeout=timeout):
+            return True
+    except Exception:  # noqa: BLE001 - refused, unreachable, unresolvable, or no answer at all
+        return False
+
+
+def _brain_busy_detail() -> str:
+    """The port answered late, not never (2026-11-21): a connect or read TIMEOUT against a listening
+    Brain means its event loop was busy (a slow Ollama probe, a long chat), and telling the user to
+    start a running service sent them hunting for a crash that did not happen."""
+    return (f"Brain at {BRAIN_URL} is busy and did not answer in time (it is running; a slow model "
+            "backend usually explains it). Try again in a few seconds.")
+
+
 def _brain_error_detail(exc: Exception) -> str:
     """A 503 from a Brain call says why (MN85): a refused connect has an empty str() on Windows,
     so Run, Ask Claude, Quick Run and Retry showed a bare "Error: HTTP 503" while the Agents tab
-    and the chat (MN56) named the fix."""
+    and the chat (MN56) named the fix. A timeout is "busy", not "not running" (2026-11-21)."""
+    if isinstance(exc, httpx.ReadTimeout):   # it accepted the connection: it is there
+        return _brain_busy_detail()
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout)) and _brain_listening():
+        return _brain_busy_detail()
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)) or not str(exc).strip():
         return (f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), "
                 "or set ATLAS_BRAIN_URL.")
@@ -5112,13 +5149,16 @@ async def ws_chat(websocket: WebSocket, session_id: str):
                     # connect gave up (AG97, sweep 25); now the MN56 sentence comes at once
                     await client.get(f"{BRAIN_URL}/health", headers=_brain_headers,
                                      timeout=httpx.Timeout(3.0, connect=0.75))
-                except (httpx.ConnectError, httpx.ConnectTimeout):
-                    await websocket.send_json({"type": "error", "detail": (
-                        f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), "
-                        "or set ATLAS_BRAIN_URL.")})
-                    continue
-                except Exception:  # noqa: BLE001 - a slow or odd health answer: the stream below says what is wrong
-                    pass
+                except (httpx.ConnectError, httpx.ConnectTimeout) as _pre_exc:
+                    # a connect timeout is 'busy' only when the port really accepts (Windows reports a
+                    # refused localhost connect too late for the 0.75 s budget: AG97)
+                    if isinstance(_pre_exc, httpx.ConnectError) or not await asyncio.to_thread(_brain_listening):
+                        await websocket.send_json({"type": "error", "detail": (
+                            f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), "
+                            "or set ATLAS_BRAIN_URL.")})
+                        continue
+                except Exception:  # noqa: BLE001 - a slow (timed-out) or odd health answer: the Brain is
+                    pass           # listening, so go on to the stream, whose own timeouts are generous (2026-11-21)
                 await websocket.send_json({"type": "thinking"})
                 try:
                     # Use streaming endpoint to relay live tool-call progress to browser.
@@ -5155,7 +5195,8 @@ async def ws_chat(websocket: WebSocket, session_id: str):
                                 await websocket.send_json({"type": "error", "detail": event.get("detail", "unknown error")})
                 except Exception as exc:
                     # httpx's timeout errors carry an empty message: the chat said just "Error: "
-                    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    if isinstance(exc, httpx.ConnectError) or (
+                            isinstance(exc, httpx.ConnectTimeout) and not await asyncio.to_thread(_brain_listening)):
                         _detail = f"Brain not running or not reachable at {BRAIN_URL}: start it (sextant-brain), or set ATLAS_BRAIN_URL."  # the panels name the command; the chat did not (MN56)
                     else:
                         _detail = str(exc) or f"{type(exc).__name__} (Brain at {BRAIN_URL} did not answer in time)"
@@ -6953,8 +6994,13 @@ function showToast(msg,type){{
   const t=document.createElement('div');
   t.className='toast toast-'+(type||'info');
   t.textContent=msg;
+  if(type==='failed'){{  // a failure stays long enough to read and copy, and is in the console too (2026-11-21)
+    t.style.pointerEvents='auto';t.style.userSelect='text';t.title='click to dismiss';
+    t.addEventListener('click',()=>t.remove());
+    try{{console.error('[helm] '+msg);}}catch(_e){{}}
+  }}
   document.body.appendChild(t);
-  setTimeout(()=>{{t.style.opacity='0';setTimeout(()=>t.remove(),350);}},2700);
+  setTimeout(()=>{{t.style.opacity='0';setTimeout(()=>t.remove(),350);}},type==='failed'?9000:2700);
 }}
 
 // ---- Global error surfacing (no silent failures) ----

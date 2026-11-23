@@ -1,0 +1,1629 @@
+{
+ "judge": "claude-opus-5-5",
+ "prices_usd_per_mtok": {
+  "claude-haiku-5-5": {
+   "in": 0.1,
+   "out": 0.5,
+   "in_long": 0.5,
+   "out_long": 2.5,
+   "long_at": 100000
+  },
+  "claude-sonnet-5-5": {
+   "in": 2.0,
+   "out": 10.0
+  },
+  "claude-opus-5-5": {
+   "in": 4.0,
+   "out": 20.0
+  }
+ },
+ "spend": {
+  "settled_usd": 113.6263,
+  "pending_usd": 0,
+  "total_usd": 113.6263
+ },
+ "jobs": [
+  {
+   "job": "ans.agent-hybrid-v1.haiku.r1",
+   "arm": "agent-hybrid-v1",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 447,
+     "accuracy": 0.894,
+     "ci95": [
+      0.8639,
+      0.918
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 62,
+     "accuracy": 0.9688,
+     "ci95": [
+      0.893,
+      0.9914
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 56,
+     "accuracy": 1.0,
+     "ci95": [
+      0.9358,
+      1.0
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 25,
+     "accuracy": 0.8333,
+     "ci95": [
+      0.6644,
+      0.9266
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 95,
+     "accuracy": 0.7851,
+     "ci95": [
+      0.7038,
+      0.8489
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 117,
+     "accuracy": 0.9213,
+     "ci95": [
+      0.8611,
+      0.9567
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 64,
+     "accuracy": 0.8889,
+     "ci95": [
+      0.7958,
+      0.9426
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 21597,
+   "mean_output_tokens": 739,
+   "usd_per_question_list": 0.002804
+  },
+  {
+   "job": "ans.agent-hybrid-v1.sonnet.r1",
+   "arm": "agent-hybrid-v1",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 459,
+     "accuracy": 0.918,
+     "ci95": [
+      0.8906,
+      0.939
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 62,
+     "accuracy": 0.9688,
+     "ci95": [
+      0.893,
+      0.9914
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 55,
+     "accuracy": 0.9821,
+     "ci95": [
+      0.9055,
+      0.9968
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 26,
+     "accuracy": 0.8667,
+     "ci95": [
+      0.7032,
+      0.9469
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 106,
+     "accuracy": 0.876,
+     "ci95": [
+      0.8055,
+      0.9234
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 115,
+     "accuracy": 0.9055,
+     "ci95": [
+      0.8421,
+      0.9451
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 69,
+     "accuracy": 0.9583,
+     "ci95": [
+      0.8845,
+      0.9857
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 26,
+     "accuracy": 0.8667,
+     "ci95": [
+      0.7032,
+      0.9469
+     ]
+    }
+   },
+   "unanswered": 1,
+   "unparsed": 0,
+   "mean_input_tokens": 13673,
+   "mean_output_tokens": 348,
+   "usd_per_question_list": 0.030829
+  },
+  {
+   "job": "ans.full.haiku.r1",
+   "arm": "full",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 458,
+     "accuracy": 0.916,
+     "ci95": [
+      0.8884,
+      0.9373
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 63,
+     "accuracy": 0.9844,
+     "ci95": [
+      0.9167,
+      0.9972
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 55,
+     "accuracy": 0.9821,
+     "ci95": [
+      0.9055,
+      0.9968
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 22,
+     "accuracy": 0.7333,
+     "ci95": [
+      0.5555,
+      0.8582
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 100,
+     "accuracy": 0.8264,
+     "ci95": [
+      0.7492,
+      0.8836
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 119,
+     "accuracy": 0.937,
+     "ci95": [
+      0.8806,
+      0.9677
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 70,
+     "accuracy": 0.9722,
+     "ci95": [
+      0.9043,
+      0.9923
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 29,
+     "accuracy": 0.9667,
+     "ci95": [
+      0.8333,
+      0.9941
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 167702,
+   "mean_output_tokens": 399,
+   "usd_per_question_list": 0.084848
+  },
+  {
+   "job": "ans.full.sonnet.r1.half",
+   "arm": "full",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 251,
+     "correct": 240,
+     "accuracy": 0.9562,
+     "ci95": [
+      0.9232,
+      0.9754
+     ]
+    },
+    "single-session-user": {
+     "n": 34,
+     "correct": 33,
+     "accuracy": 0.9706,
+     "ci95": [
+      0.8508,
+      0.9948
+     ]
+    },
+    "single-session-assistant": {
+     "n": 28,
+     "correct": 28,
+     "accuracy": 1.0,
+     "ci95": [
+      0.8794,
+      1.0
+     ]
+    },
+    "single-session-preference": {
+     "n": 15,
+     "correct": 15,
+     "accuracy": 1.0,
+     "ci95": [
+      0.7961,
+      1.0
+     ]
+    },
+    "multi-session": {
+     "n": 64,
+     "correct": 58,
+     "accuracy": 0.9062,
+     "ci95": [
+      0.8102,
+      0.9563
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 63,
+     "correct": 61,
+     "accuracy": 0.9683,
+     "ci95": [
+      0.8914,
+      0.9913
+     ]
+    },
+    "knowledge-update": {
+     "n": 35,
+     "correct": 34,
+     "accuracy": 0.9714,
+     "ci95": [
+      0.8547,
+      0.9949
+     ]
+    },
+    "abstention": {
+     "n": 12,
+     "correct": 11,
+     "accuracy": 0.9167,
+     "ci95": [
+      0.6461,
+      0.9851
+     ]
+    }
+   },
+   "unanswered": 1,
+   "unparsed": 0,
+   "mean_input_tokens": 167638,
+   "mean_output_tokens": 175,
+   "usd_per_question_list": 0.337024
+  },
+  {
+   "job": "ans.none.haiku.r1",
+   "arm": "none",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 45,
+     "accuracy": 0.09,
+     "ci95": [
+      0.0679,
+      0.1183
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.0566
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 13,
+     "accuracy": 0.2321,
+     "ci95": [
+      0.141,
+      0.3577
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.1135
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.0308
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 2,
+     "accuracy": 0.0157,
+     "ci95": [
+      0.0043,
+      0.0556
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.0507
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 30,
+     "accuracy": 1.0,
+     "ci95": [
+      0.8865,
+      1.0
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 66,
+   "mean_output_tokens": 337,
+   "usd_per_question_list": 0.000175
+  },
+  {
+   "job": "ans.none.sonnet.r1",
+   "arm": "none",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 44,
+     "accuracy": 0.088,
+     "ci95": [
+      0.0662,
+      0.1161
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.0566
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 12,
+     "accuracy": 0.2143,
+     "ci95": [
+      0.1271,
+      0.3382
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.1135
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.0308
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 2,
+     "accuracy": 0.0157,
+     "ci95": [
+      0.0043,
+      0.0556
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 0,
+     "accuracy": 0.0,
+     "ci95": [
+      0.0,
+      0.0507
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 30,
+     "accuracy": 1.0,
+     "ci95": [
+      0.8865,
+      1.0
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 66,
+   "mean_output_tokens": 286,
+   "usd_per_question_list": 0.002992
+  },
+  {
+   "job": "ans.oracle.haiku.r1",
+   "arm": "oracle",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 468,
+     "accuracy": 0.936,
+     "ci95": [
+      0.911,
+      0.9543
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 61,
+     "accuracy": 0.9531,
+     "ci95": [
+      0.871,
+      0.9839
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 55,
+     "accuracy": 0.9821,
+     "ci95": [
+      0.9055,
+      0.9968
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 25,
+     "accuracy": 0.8333,
+     "ci95": [
+      0.6644,
+      0.9266
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 108,
+     "accuracy": 0.8926,
+     "ci95": [
+      0.8248,
+      0.9361
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 122,
+     "accuracy": 0.9606,
+     "ci95": [
+      0.9111,
+      0.9831
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 68,
+     "accuracy": 0.9444,
+     "ci95": [
+      0.8657,
+      0.9782
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 29,
+     "accuracy": 0.9667,
+     "ci95": [
+      0.8333,
+      0.9941
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 9293,
+   "mean_output_tokens": 362,
+   "usd_per_question_list": 0.001111
+  },
+  {
+   "job": "ans.oracle.sonnet.r1",
+   "arm": "oracle",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 484,
+     "accuracy": 0.968,
+     "ci95": [
+      0.9487,
+      0.9802
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 62,
+     "accuracy": 0.9688,
+     "ci95": [
+      0.893,
+      0.9914
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 56,
+     "accuracy": 1.0,
+     "ci95": [
+      0.9358,
+      1.0
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 29,
+     "accuracy": 0.9667,
+     "ci95": [
+      0.8333,
+      0.9941
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 115,
+     "accuracy": 0.9504,
+     "ci95": [
+      0.896,
+      0.9771
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 124,
+     "accuracy": 0.9764,
+     "ci95": [
+      0.9328,
+      0.9919
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 70,
+     "accuracy": 0.9722,
+     "ci95": [
+      0.9043,
+      0.9923
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 9293,
+   "mean_output_tokens": 160,
+   "usd_per_question_list": 0.020186
+  },
+  {
+   "job": "ans.sextant-fts-v0-k10.haiku.r1",
+   "arm": "sextant-fts-v0-k10",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 79,
+     "accuracy": 0.158,
+     "ci95": [
+      0.1287,
+      0.1926
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 16,
+     "accuracy": 0.25,
+     "ci95": [
+      0.1601,
+      0.3682
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 10,
+     "accuracy": 0.1786,
+     "ci95": [
+      0.1,
+      0.2984
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 1,
+     "accuracy": 0.0333,
+     "ci95": [
+      0.0059,
+      0.1667
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 1,
+     "accuracy": 0.0083,
+     "ci95": [
+      0.0015,
+      0.0453
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 2,
+     "accuracy": 0.0157,
+     "ci95": [
+      0.0043,
+      0.0556
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 19,
+     "accuracy": 0.2639,
+     "ci95": [
+      0.1759,
+      0.3758
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 30,
+     "accuracy": 1.0,
+     "ci95": [
+      0.8865,
+      1.0
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 1052,
+   "mean_output_tokens": 199,
+   "usd_per_question_list": 0.000204
+  },
+  {
+   "job": "ans.sextant-fts-v0-k10.sonnet.r1",
+   "arm": "sextant-fts-v0-k10",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 84,
+     "accuracy": 0.168,
+     "ci95": [
+      0.1378,
+      0.2033
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 16,
+     "accuracy": 0.25,
+     "ci95": [
+      0.1601,
+      0.3682
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 11,
+     "accuracy": 0.1964,
+     "ci95": [
+      0.1134,
+      0.3184
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 3,
+     "accuracy": 0.1,
+     "ci95": [
+      0.0346,
+      0.2562
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 1,
+     "accuracy": 0.0083,
+     "ci95": [
+      0.0015,
+      0.0453
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 3,
+     "accuracy": 0.0236,
+     "ci95": [
+      0.0081,
+      0.0672
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 20,
+     "accuracy": 0.2778,
+     "ci95": [
+      0.1876,
+      0.3905
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 30,
+     "accuracy": 1.0,
+     "ci95": [
+      0.8865,
+      1.0
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 1052,
+   "mean_output_tokens": 165,
+   "usd_per_question_list": 0.003759
+  },
+  {
+   "job": "ans.sextant-fts-v1-k10.haiku.r1",
+   "arm": "sextant-fts-v1-k10",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 440,
+     "accuracy": 0.88,
+     "ci95": [
+      0.8486,
+      0.9056
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 62,
+     "accuracy": 0.9688,
+     "ci95": [
+      0.893,
+      0.9914
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 54,
+     "accuracy": 0.9643,
+     "ci95": [
+      0.8788,
+      0.9902
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 23,
+     "accuracy": 0.7667,
+     "ci95": [
+      0.5907,
+      0.8821
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 91,
+     "accuracy": 0.7521,
+     "ci95": [
+      0.6682,
+      0.8205
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 115,
+     "accuracy": 0.9055,
+     "ci95": [
+      0.8421,
+      0.9451
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 67,
+     "accuracy": 0.9306,
+     "ci95": [
+      0.8475,
+      0.97
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 42188,
+   "mean_output_tokens": 385,
+   "usd_per_question_list": 0.004411
+  },
+  {
+   "job": "ans.sextant-fts-v1-k5.haiku.r1",
+   "arm": "sextant-fts-v1-k5",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 416,
+     "accuracy": 0.832,
+     "ci95": [
+      0.7967,
+      0.8622
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 62,
+     "accuracy": 0.9688,
+     "ci95": [
+      0.893,
+      0.9914
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 54,
+     "accuracy": 0.9643,
+     "ci95": [
+      0.8788,
+      0.9902
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 20,
+     "accuracy": 0.6667,
+     "ci95": [
+      0.4878,
+      0.8077
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 79,
+     "accuracy": 0.6529,
+     "ci95": [
+      0.5645,
+      0.7318
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 106,
+     "accuracy": 0.8346,
+     "ci95": [
+      0.7604,
+      0.8892
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 67,
+     "accuracy": 0.9306,
+     "ci95": [
+      0.8475,
+      0.97
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 22037,
+   "mean_output_tokens": 374,
+   "usd_per_question_list": 0.002391
+  },
+  {
+   "job": "ans.sextant-fts-v1-k5.sonnet.r1",
+   "arm": "sextant-fts-v1-k5",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 433,
+     "accuracy": 0.866,
+     "ci95": [
+      0.8333,
+      0.8931
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 63,
+     "accuracy": 0.9844,
+     "ci95": [
+      0.9167,
+      0.9972
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 56,
+     "accuracy": 1.0,
+     "ci95": [
+      0.9358,
+      1.0
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 24,
+     "accuracy": 0.8,
+     "ci95": [
+      0.6269,
+      0.905
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 88,
+     "accuracy": 0.7273,
+     "ci95": [
+      0.6418,
+      0.7987
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 107,
+     "accuracy": 0.8425,
+     "ci95": [
+      0.7692,
+      0.8957
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 67,
+     "accuracy": 0.9306,
+     "ci95": [
+      0.8475,
+      0.97
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 22037,
+   "mean_output_tokens": 169,
+   "usd_per_question_list": 0.045766
+  },
+  {
+   "job": "ans.sextant-hybrid-v1-k10.haiku.r1",
+   "arm": "sextant-hybrid-v1-k10",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 449,
+     "accuracy": 0.898,
+     "ci95": [
+      0.8684,
+      0.9216
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 64,
+     "accuracy": 1.0,
+     "ci95": [
+      0.9434,
+      1.0
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 54,
+     "accuracy": 0.9643,
+     "ci95": [
+      0.8788,
+      0.9902
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 24,
+     "accuracy": 0.8,
+     "ci95": [
+      0.6269,
+      0.905
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 98,
+     "accuracy": 0.8099,
+     "ci95": [
+      0.7309,
+      0.8699
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 113,
+     "accuracy": 0.8898,
+     "ci95": [
+      0.8234,
+      0.9332
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 68,
+     "accuracy": 0.9444,
+     "ci95": [
+      0.8657,
+      0.9782
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 39556,
+   "mean_output_tokens": 391,
+   "usd_per_question_list": 0.004151
+  },
+  {
+   "job": "ans.sextant-hybrid-v1-k5.haiku.r1",
+   "arm": "sextant-hybrid-v1-k5",
+   "model": "claude-haiku-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 434,
+     "accuracy": 0.868,
+     "ci95": [
+      0.8355,
+      0.8949
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 61,
+     "accuracy": 0.9531,
+     "ci95": [
+      0.871,
+      0.9839
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 56,
+     "accuracy": 1.0,
+     "ci95": [
+      0.9358,
+      1.0
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 23,
+     "accuracy": 0.7667,
+     "ci95": [
+      0.5907,
+      0.8821
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 88,
+     "accuracy": 0.7273,
+     "ci95": [
+      0.6418,
+      0.7987
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 109,
+     "accuracy": 0.8583,
+     "ci95": [
+      0.7871,
+      0.9084
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 68,
+     "accuracy": 0.9444,
+     "ci95": [
+      0.8657,
+      0.9782
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 29,
+     "accuracy": 0.9667,
+     "ci95": [
+      0.8333,
+      0.9941
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 21396,
+   "mean_output_tokens": 376,
+   "usd_per_question_list": 0.002328
+  },
+  {
+   "job": "ans.sextant-hybrid-v1-k5.sonnet.r1",
+   "arm": "sextant-hybrid-v1-k5",
+   "model": "claude-sonnet-5-5",
+   "rep": 1,
+   "groups": {
+    "overall": {
+     "n": 500,
+     "correct": 440,
+     "accuracy": 0.88,
+     "ci95": [
+      0.8486,
+      0.9056
+     ]
+    },
+    "single-session-user": {
+     "n": 64,
+     "correct": 62,
+     "accuracy": 0.9688,
+     "ci95": [
+      0.893,
+      0.9914
+     ]
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "correct": 56,
+     "accuracy": 1.0,
+     "ci95": [
+      0.9358,
+      1.0
+     ]
+    },
+    "single-session-preference": {
+     "n": 30,
+     "correct": 25,
+     "accuracy": 0.8333,
+     "ci95": [
+      0.6644,
+      0.9266
+     ]
+    },
+    "multi-session": {
+     "n": 121,
+     "correct": 96,
+     "accuracy": 0.7934,
+     "ci95": [
+      0.7128,
+      0.856
+     ]
+    },
+    "temporal-reasoning": {
+     "n": 127,
+     "correct": 106,
+     "accuracy": 0.8346,
+     "ci95": [
+      0.7604,
+      0.8892
+     ]
+    },
+    "knowledge-update": {
+     "n": 72,
+     "correct": 67,
+     "accuracy": 0.9306,
+     "ci95": [
+      0.8475,
+      0.97
+     ]
+    },
+    "abstention": {
+     "n": 30,
+     "correct": 28,
+     "accuracy": 0.9333,
+     "ci95": [
+      0.7868,
+      0.9815
+     ]
+    }
+   },
+   "unanswered": 0,
+   "unparsed": 0,
+   "mean_input_tokens": 21396,
+   "mean_output_tokens": 171,
+   "usd_per_question_list": 0.044507
+  }
+ ],
+ "paired": [
+  {
+   "a": "ans.agent-hybrid-v1.haiku.r1",
+   "b": "ans.full.haiku.r1",
+   "n": 500,
+   "a_only": 16,
+   "b_only": 27,
+   "p_mcnemar": 0.126
+  },
+  {
+   "a": "ans.agent-hybrid-v1.haiku.r1",
+   "b": "ans.none.haiku.r1",
+   "n": 500,
+   "a_only": 404,
+   "b_only": 2,
+   "p_mcnemar": 1e-117
+  },
+  {
+   "a": "ans.agent-hybrid-v1.haiku.r1",
+   "b": "ans.oracle.haiku.r1",
+   "n": 500,
+   "a_only": 12,
+   "b_only": 33,
+   "p_mcnemar": 0.00246
+  },
+  {
+   "a": "ans.agent-hybrid-v1.sonnet.r1",
+   "b": "ans.full.sonnet.r1.half",
+   "n": 251,
+   "a_only": 6,
+   "b_only": 15,
+   "p_mcnemar": 0.0784
+  },
+  {
+   "a": "ans.agent-hybrid-v1.sonnet.r1",
+   "b": "ans.none.sonnet.r1",
+   "n": 500,
+   "a_only": 420,
+   "b_only": 5,
+   "p_mcnemar": 2.64e-117
+  },
+  {
+   "a": "ans.agent-hybrid-v1.sonnet.r1",
+   "b": "ans.oracle.sonnet.r1",
+   "n": 500,
+   "a_only": 8,
+   "b_only": 33,
+   "p_mcnemar": 0.000112
+  },
+  {
+   "a": "ans.sextant-fts-v0-k10.haiku.r1",
+   "b": "ans.full.haiku.r1",
+   "n": 500,
+   "a_only": 1,
+   "b_only": 380,
+   "p_mcnemar": 1.55e-112
+  },
+  {
+   "a": "ans.sextant-fts-v0-k10.haiku.r1",
+   "b": "ans.none.haiku.r1",
+   "n": 500,
+   "a_only": 39,
+   "b_only": 5,
+   "p_mcnemar": 1.41e-07
+  },
+  {
+   "a": "ans.sextant-fts-v0-k10.haiku.r1",
+   "b": "ans.oracle.haiku.r1",
+   "n": 500,
+   "a_only": 1,
+   "b_only": 390,
+   "p_mcnemar": 1.55e-115
+  },
+  {
+   "a": "ans.sextant-fts-v0-k10.sonnet.r1",
+   "b": "ans.full.sonnet.r1.half",
+   "n": 251,
+   "a_only": 2,
+   "b_only": 201,
+   "p_mcnemar": 3.22e-57
+  },
+  {
+   "a": "ans.sextant-fts-v0-k10.sonnet.r1",
+   "b": "ans.none.sonnet.r1",
+   "n": 500,
+   "a_only": 42,
+   "b_only": 2,
+   "p_mcnemar": 1.13e-10
+  },
+  {
+   "a": "ans.sextant-fts-v0-k10.sonnet.r1",
+   "b": "ans.oracle.sonnet.r1",
+   "n": 500,
+   "a_only": 3,
+   "b_only": 403,
+   "p_mcnemar": 1.35e-115
+  },
+  {
+   "a": "ans.sextant-fts-v1-k10.haiku.r1",
+   "b": "ans.full.haiku.r1",
+   "n": 500,
+   "a_only": 16,
+   "b_only": 34,
+   "p_mcnemar": 0.0153
+  },
+  {
+   "a": "ans.sextant-fts-v1-k10.haiku.r1",
+   "b": "ans.none.haiku.r1",
+   "n": 500,
+   "a_only": 397,
+   "b_only": 2,
+   "p_mcnemar": 1.24e-115
+  },
+  {
+   "a": "ans.sextant-fts-v1-k10.haiku.r1",
+   "b": "ans.oracle.haiku.r1",
+   "n": 500,
+   "a_only": 14,
+   "b_only": 42,
+   "p_mcnemar": 0.000234
+  },
+  {
+   "a": "ans.sextant-fts-v1-k5.haiku.r1",
+   "b": "ans.full.haiku.r1",
+   "n": 500,
+   "a_only": 14,
+   "b_only": 56,
+   "p_mcnemar": 4.3e-07
+  },
+  {
+   "a": "ans.sextant-fts-v1-k5.haiku.r1",
+   "b": "ans.none.haiku.r1",
+   "n": 500,
+   "a_only": 373,
+   "b_only": 2,
+   "p_mcnemar": 1.83e-108
+  },
+  {
+   "a": "ans.sextant-fts-v1-k5.haiku.r1",
+   "b": "ans.oracle.haiku.r1",
+   "n": 500,
+   "a_only": 10,
+   "b_only": 62,
+   "p_mcnemar": 2.69e-10
+  },
+  {
+   "a": "ans.sextant-fts-v1-k5.sonnet.r1",
+   "b": "ans.full.sonnet.r1.half",
+   "n": 251,
+   "a_only": 4,
+   "b_only": 30,
+   "p_mcnemar": 6.16e-06
+  },
+  {
+   "a": "ans.sextant-fts-v1-k5.sonnet.r1",
+   "b": "ans.none.sonnet.r1",
+   "n": 500,
+   "a_only": 391,
+   "b_only": 2,
+   "p_mcnemar": 7.68e-114
+  },
+  {
+   "a": "ans.sextant-fts-v1-k5.sonnet.r1",
+   "b": "ans.oracle.sonnet.r1",
+   "n": 500,
+   "a_only": 8,
+   "b_only": 59,
+   "p_mcnemar": 1.02e-10
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k10.haiku.r1",
+   "b": "ans.full.haiku.r1",
+   "n": 500,
+   "a_only": 15,
+   "b_only": 24,
+   "p_mcnemar": 0.2
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k10.haiku.r1",
+   "b": "ans.none.haiku.r1",
+   "n": 500,
+   "a_only": 406,
+   "b_only": 2,
+   "p_mcnemar": 2.52e-118
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k10.haiku.r1",
+   "b": "ans.oracle.haiku.r1",
+   "n": 500,
+   "a_only": 14,
+   "b_only": 33,
+   "p_mcnemar": 0.00794
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k5.haiku.r1",
+   "b": "ans.full.haiku.r1",
+   "n": 500,
+   "a_only": 17,
+   "b_only": 41,
+   "p_mcnemar": 0.00223
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k5.haiku.r1",
+   "b": "ans.none.haiku.r1",
+   "n": 500,
+   "a_only": 390,
+   "b_only": 1,
+   "p_mcnemar": 1.55e-115
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k5.haiku.r1",
+   "b": "ans.oracle.haiku.r1",
+   "n": 500,
+   "a_only": 12,
+   "b_only": 46,
+   "p_mcnemar": 8.22e-06
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k5.sonnet.r1",
+   "b": "ans.full.sonnet.r1.half",
+   "n": 251,
+   "a_only": 3,
+   "b_only": 24,
+   "p_mcnemar": 4.92e-05
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k5.sonnet.r1",
+   "b": "ans.none.sonnet.r1",
+   "n": 500,
+   "a_only": 398,
+   "b_only": 2,
+   "p_mcnemar": 6.21e-116
+  },
+  {
+   "a": "ans.sextant-hybrid-v1-k5.sonnet.r1",
+   "b": "ans.oracle.sonnet.r1",
+   "n": 500,
+   "a_only": 4,
+   "b_only": 48,
+   "p_mcnemar": 1.31e-10
+  }
+ ]
+}

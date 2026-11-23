@@ -330,6 +330,8 @@ execute them. A few run in-process (no task queued): see In-process column.
 | Mon 09:00 | weekly-digest | (direct) | yes -- ntfy weekly stats summary |
 | 23:30 | auto-session-log | (direct) | yes -- write today's session log from git commits |
 | 11:00 | session-digest | session_digest | no |
+| 11:10 | ticket-sync | ticket_sync | no |
+| Mon 05:00 | ticket-health | ticket_health_check | no |
 | */10 | sla-check | (direct) | yes -- ntfy push for overdue tasks; registered only when ATLAS_NTFY_URL is set and ATLAS_SLA_MINUTES > 0 |
 | */10 | ticket-dispatch | (direct) | yes -- dispatch todo tickets; registered only when ATLAS_TICKET_DISPATCH=on |
 | *:45 | zombie-cleanup | (direct) | yes -- mark stale running tasks failed |

@@ -99,6 +99,23 @@ def test_brain_down_503_names_the_fix(monkeypatch, method, path, body):
     assert "Brain not running or not reachable" in detail and "sextant-brain" in detail
 
 
+def test_brain_timeout_is_busy_not_down(monkeypatch):
+    # 2026-11-21: a listening Brain whose loop was busy (slow Ollama probe) made the chat say
+    # "Brain not running"; a timeout is reported as busy, a refused connect stays "not running".
+    import httpx
+    req = httpx.Request("GET", "http://x")
+    monkeypatch.setattr(webapp, "_brain_listening", lambda timeout=3.0: True)
+    for exc in (httpx.ConnectTimeout("", request=req), httpx.ReadTimeout("", request=req)):
+        d = webapp._brain_error_detail(exc)
+        assert "busy" in d and "not running" not in d
+    # nothing accepts on the port: a connect timeout is 'not running' (Windows reports a refused
+    # localhost connect later than the connect budget), a read timeout still means it is there
+    monkeypatch.setattr(webapp, "_brain_listening", lambda timeout=3.0: False)
+    assert "not running" in webapp._brain_error_detail(httpx.ConnectTimeout("", request=req))
+    assert "busy" in webapp._brain_error_detail(httpx.ReadTimeout("", request=req))
+    assert "not running" in webapp._brain_error_detail(httpx.ConnectError("", request=req))
+
+
 def test_brain_http_error_keeps_its_own_text():
     import httpx
     exc = httpx.HTTPStatusError("401 Unauthorized", request=httpx.Request("POST", "http://x"),

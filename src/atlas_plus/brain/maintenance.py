@@ -35,6 +35,8 @@ MAINTENANCE_JOBS: list[dict] = [
     {"job_id": "suggest-facts",      "label": "Fact suggestions",     "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "curation",           "label": "Curation report",      "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "session-digest",     "label": "Session digest",       "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
+    {"job_id": "ticket-sync",        "label": "Ticket sync",          "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
+    {"job_id": "ticket-health",      "label": "Ticket health",        "cadence": "weekly", "max_age_hours": _WEEKLY_GRACE_HOURS},
     {"job_id": "patterns-rebuild",   "label": "Patterns rebuild",     "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "embed-index",        "label": "Semantic embed index", "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},
     {"job_id": "memory-trends",      "label": "Memory trends",        "cadence": "daily",  "max_age_hours": _DAILY_GRACE_HOURS},

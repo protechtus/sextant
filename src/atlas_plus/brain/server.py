@@ -564,17 +564,24 @@ async def worker_health(request: Request):
         return {"active_workers": [], "pending_by_agent": {}, "zombie_count": 0, "queue_depth": 0, "error": str(exc)}
 
 
+def _probe_ollama_tags_ok(timeout: float = 3.0) -> bool:
+    """One Ollama reachability check for /diagnostic; runs in a worker thread."""
+    try:
+        r = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=timeout)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 @app.get("/diagnostic")
 async def diagnostic():
     """Detailed operator status: Ollama reachability, model, autonomous gate,
     credit-exhausted agents, and task queue snapshot (pending/running/stale counts).
     """
-    ollama_ok = False
-    try:
-        r = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3.0)
-        ollama_ok = r.status_code == 200
-    except Exception:
-        pass
+    # Off the event loop (2026-11-21): a sync httpx.get here blocked every other request, including
+    # /health, for up to 3 s per Helm panel refresh; the chat's short connect probe then read the
+    # stall as "Brain not running".
+    ollama_ok = await asyncio.to_thread(_probe_ollama_tags_ok)
 
     # Task queue snapshot -- lightweight aggregation for observability dashboards.
     queue: dict = {}
@@ -1032,6 +1039,8 @@ _SCHEDULER_JOB_MAP = {
     "curation":             lambda: brain_scheduler._curation(),
     "research-batch":       lambda: brain_scheduler._research_batch(),
     "patterns-rebuild":     lambda: brain_scheduler._patterns_rebuild(),
+    "ticket-sync":          lambda: brain_scheduler._ticket_sync(),
+    "ticket-health":        lambda: brain_scheduler._ticket_health(),
     "gaps-report":          lambda: brain_scheduler._gaps_report(),
     "memory-agent":         lambda: brain_scheduler._memory_agent_weekly(),
     "narrative-weekly":     lambda: brain_scheduler._narrative_weekly(),

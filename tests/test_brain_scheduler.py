@@ -203,6 +203,7 @@ async def test_start_scheduler_registers_expected_jobs():
         expected = {
             "temporal-build", "suggest-facts", "curation",
             "session-digest", "patterns-rebuild", "gaps-report",
+            "ticket-sync", "ticket-health",
             "convergence-report", "unconfirmed-decay", "decay-report",
             "memory-agent", "narrative-weekly",
             "zombie-cleanup", "db-backup",
@@ -563,6 +564,7 @@ class TestStartScheduler:
         expected = {
             "db-backup", "temporal-build", "suggest-facts", "curation",
             "session-digest", "patterns-rebuild", "gaps-report",
+            "ticket-sync", "ticket-health",
             "convergence-report", "unconfirmed-decay", "decay-report",
             "memory-agent", "claude-supervisor", "narrative-weekly",
             "memory-trends", "research-quality", "suggest-tags",

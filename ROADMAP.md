@@ -6,6 +6,8 @@ discussion on any of them are welcome.
 
 ## Recently landed (the launch-readiness arc)
 
+- Measured on LongMemEval with a whole-history baseline and a held-out split; two search defects
+  found and fixed (sentence queries, whole notes in search results). See `benchmarks/longmemeval/`
 - Hybrid search: FTS + local semantic embeddings (Ollama), graceful
   keyword-only degradation
 - Multi-device sync: hub/spoke, conflict quarantine, policy-fenced
@@ -79,6 +81,12 @@ discussion on any of them are welcome.
 
 ## Later / with demonstrated demand
 
+- Work across your machines: one install hands a task to another (a laptop, a
+  server) and gets the result back, with consent decided on the machine that
+  does the work. Sync already moves the corpus; this moves the work
+- Modules you can see: the parts that are already optional (search, the task
+  queue, the dashboard, importers, sync, bots) listed in one place, with what
+  is installed, what is healthy, and a way to add or remove one
 - Sync: append-union merge (fewer conflict quarantines), scheduled
   background sync, tombstone protocol for deliberate deletes
 - Hosted sync relay for users who do not want to run a server

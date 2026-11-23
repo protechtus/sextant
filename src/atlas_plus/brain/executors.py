@@ -1383,6 +1383,48 @@ def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
     return ExecutionResult(status="done", text=text, artifact_path=artifact)
 
 
+def _archive_done_tickets(days: Optional[int] = None, tickets_root: Optional[Path] = None) -> tuple[list[str], list[str]]:
+    """Move tickets that have been ``done`` for more than ``days`` (ATLAS_TICKET_ARCHIVE_DAYS, default 14) into
+    ``_archive/<YYYY-MM>-auto/<project>/`` with status archived. Returns (archived ids, errors). A ticket whose
+    ``updated`` date cannot be read is left alone. 2026-11-21: 170 archived files still said todo because the
+    move and the status were two separate hand steps."""
+    import os
+    import shutil
+    from datetime import date
+    from atlas_plus.tickets.store import list_tickets, update_ticket_status
+    if days is None:
+        try:
+            days = int(os.environ.get("ATLAS_TICKET_ARCHIVE_DAYS", "14"))
+        except ValueError:
+            days = 14
+    if days < 0:
+        return [], []
+    today = date.today()
+    archived: list[str] = []
+    errors: list[str] = []
+    for t in list_tickets(status="done", tickets_root=tickets_root):
+        try:
+            age = (today - date.fromisoformat(str(t.updated)[:10])).days
+        except (TypeError, ValueError):
+            continue
+        if age <= days or t.path is None:
+            continue
+        try:
+            root = tickets_root or Path(t.path).parent.parent
+            dest_dir = root / "_archive" / f"{today.strftime('%Y-%m')}-auto" / (t.project or "misc")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            update_ticket_status(t.id, "archived", tickets_root=tickets_root)
+            src = Path(t.path)
+            dest = dest_dir / src.name
+            if dest.exists():
+                dest = dest_dir / f"{src.stem}-{today.isoformat()}{src.suffix}"
+            shutil.move(str(src), str(dest))
+            archived.append(t.id)
+        except Exception as exc:  # noqa: BLE001 - one bad ticket never stops the sweep
+            errors.append(f"{t.id}: {exc}")
+    return archived, errors
+
+
 def _ticket_sync(ctx: ExecutorContext) -> ExecutionResult:
     """Scan recent git commits and auto-close tickets referenced in commit messages.
 
@@ -1464,6 +1506,8 @@ def _ticket_sync(ctx: ExecutorContext) -> ExecutionResult:
                     referenced.append(tid)
                     seen_ref.add(tid)
 
+    archived, archive_errors = _archive_done_tickets()
+    errors.extend(archive_errors)
     today = date.today().isoformat()
     report_lines = [
         "---",
@@ -1492,11 +1536,13 @@ def _ticket_sync(ctx: ExecutorContext) -> ExecutionResult:
         report_lines += ["", "## Errors", ""] + [f"- {e}" for e in errors]
 
     report = "\n".join(report_lines)
+    report += "\n\n## Archived (done longer than ATLAS_TICKET_ARCHIVE_DAYS)\n\n" + (
+        "\n".join(f"- {tid}" for tid in archived) if archived else "(none)")
     artifact = _write_text_artifact(ctx, "ticket-sync.md", report)
     return ExecutionResult(
         status="done",
         text=(
-            f"ticket_sync: closed {len(closed)}, "
+            f"ticket_sync: closed {len(closed)}, archived {len(archived)}, "
             f"referenced {len(set(referenced))}, errors {len(errors)}"
         ),
         artifact_path=artifact,

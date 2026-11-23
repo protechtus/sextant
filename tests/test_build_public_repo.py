@@ -181,3 +181,50 @@ def test_patched_output_contains_all_sextant_aliases(builder, patched_pyproject)
 def test_public_identity_is_sextant_ai(patched_pyproject) -> None:
     assert '\nname = "sextant-ai"\n' in patched_pyproject
     assert 'name = "atlas-plus"' not in patched_pyproject
+
+
+class TestShippedTestsImportOnlyShippedCode:
+    """A shipped test that imports an unshipped package is green here and red in the public CI
+    (mirror 3af590e, 2026-11-21: two tests imported the private intake package; caught again before
+    a publish on 2026-11-23). A shipped test may reach such a package only inside a function that
+    calls pytest.importorskip on it first; otherwise the test file belongs in public_exclude.txt.
+    LES-058."""
+
+    IMPORT = re.compile(r"^(\s*)(?:from\s+atlas_plus\.(\w+)|import\s+atlas_plus\.(\w+))", re.M)
+
+    def _unshipped_packages(self, builder) -> set[str]:
+        shipped = {p.relative_to(builder.REPO).as_posix() for p in builder.shippable_set()}
+        src = builder.REPO / "src" / "atlas_plus"
+        names = set()
+        for child in src.iterdir():
+            if child.name.startswith("_"):
+                continue
+            rel = child.relative_to(builder.REPO).as_posix()
+            if child.is_dir():
+                if not any(s.startswith(rel + "/") for s in shipped):
+                    names.add(child.name)
+            elif child.suffix == ".py" and rel not in shipped:
+                names.add(child.stem)
+        return names
+
+    def test_shipped_tests_guard_imports_of_unshipped_packages(self, builder) -> None:
+        unshipped = self._unshipped_packages(builder)
+        assert unshipped, "expected at least one private package (the scan would be vacuous)"
+        offenders = []
+        for path in sorted(builder.shippable_set()):
+            rel = path.relative_to(builder.REPO).as_posix()
+            if not (rel.startswith("tests/") and rel.endswith(".py")):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for m in self.IMPORT.finditer(text):
+                pkg = m.group(2) or m.group(3)
+                if pkg not in unshipped:
+                    continue
+                guarded = m.group(1) and f'importorskip("atlas_plus.{pkg}' in text[: m.start()]
+                if not guarded:
+                    line = text.count("\n", 0, m.start()) + 1
+                    offenders.append(f"{rel}:{line} imports atlas_plus.{pkg}")
+        assert not offenders, (
+            "shipped tests import packages the public tree does not contain (guard with "
+            f"pytest.importorskip inside the test, or exclude the file): {offenders}"
+        )
