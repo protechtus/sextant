@@ -19,6 +19,8 @@ public tree.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-23
+
 ### Search: questions as people type them, and find-and-read in one call (2026-11-20)
 
 Both changes came out of measuring Sextant on LongMemEval (500 questions over long chat histories).

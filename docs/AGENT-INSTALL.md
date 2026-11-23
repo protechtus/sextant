@@ -61,8 +61,8 @@ cd sextant
 
 Verify: `git log --oneline -1` prints a commit and `pyproject.toml` exists.
 
-(When the package is on PyPI, `pipx install sextant-ai` or `uv tool install sextant-ai` is
-the short path and skips steps 1 to 3. Until then, install from the clone. Never run
+(The package is on PyPI as `sextant-ai` from version 0.1.0: `pipx install sextant-ai` or
+`uv tool install sextant-ai` is the short path and skips steps 1 to 3. Never run
 `pip install sextant`: that is an unrelated package.)
 
 ## 2. Create the virtual environment

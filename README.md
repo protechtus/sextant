@@ -15,19 +15,20 @@
 py -3.12 -m venv .venv                                # Windows: any 3.11+ that `py --list` shows (py -3.13, py -3.11); macOS/Linux: python3 -m venv .venv (3.11+)
 .venv\Scripts\Activate.ps1                            # PowerShell; Git Bash: . .venv/Scripts/activate; macOS/Linux: . .venv/bin/activate
 pip --version                                         # STOP unless this names .venv: the venv or its activation failed (delete .venv, fix the line above)
-pip install git+https://github.com/protechtus/sextant
+pip install sextant-ai                                # the released package; NOT `pip install sextant` (an unrelated project)
 sextant init                                          # a corpus (plain Markdown) and a state dir
 sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it
 sextant verify                                        # proves the round-trip; your client is connected once the setup line has run
 ```
 
 One command per line (no `&&`: PowerShell 5.1 has none), about ten minutes, Python 3.11 or newer. The full walk-through is in
-[Quickstart](#quickstart) below. Not on PyPI yet: the first release ships when `v0.1.0` is tagged.
+[Quickstart](#quickstart) below. The package on PyPI is `sextant-ai` (first release: `0.1.0`). For the newest build between
+releases, replace that line with `pip install git+https://github.com/protechtus/sextant`.
 
 **New to GitHub, or stuck on an error?** [New to GitHub? Start here](https://github.com/protechtus/sextant/blob/main/docs/NEW-TO-GITHUB.md)
 explains what Git, Python, pip and PATH are, checks each one with you, and lists the common error messages with their fix.
-The `pip install git+...` line above needs Git (`git --version`; "Cannot find command 'git'" means it is missing or the
-window is older than the install). No Git? This line installs the same thing without it:
+`pip install sextant-ai` needs no Git. The `pip install git+...` form does (`git --version`; "Cannot find command 'git'"
+means it is missing or the window is older than the install). The newest build without Git:
 `pip install https://github.com/protechtus/sextant/archive/refs/heads/main.zip`
 
 Sextant is a self-hosted AI memory and orchestration platform (engine codename: Keel).
@@ -105,8 +106,8 @@ ways once you know what you want:
 main without a clone (with the optional layers:
 `pip install "sextant-ai[telegram,summarizer] @ git+https://github.com/protechtus/sextant.git"`;
 `sextant setup` and `sextant verify` then replace every clone-only step), and
-`pip install sextant-ai` will install the released
-package from PyPI once `v0.1.0` is tagged (until then, install from git as above). Do NOT `pip install
+`pip install sextant-ai` installs the released
+package from PyPI (`0.1.0` is the first release). Do NOT `pip install
 sextant` -- that is an unrelated third-party package (a helm-charts CLI), not
 this project.
 
