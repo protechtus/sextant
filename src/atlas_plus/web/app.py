@@ -765,9 +765,10 @@ async def watchtower_json(
     if watchtower is None:
         return {"error": "SIEM integration not installed"}
     try:
-        return watchtower.fetch_siem_state(since=since, severity_min=severity)
+        # off the event loop and single-flight: the fetch may take its full timeout (KL2; services panel does the same)
+        return await asyncio.to_thread(watchtower.fetch_siem_state_cached, since=since, severity_min=severity)
     except watchtower.WatchtowerError as exc:
-        return {"error": str(exc)}
+        return {"error": str(exc), "next_step": watchtower.NEXT_STEP}
 
 
 @app.get("/api/security/watchtower.html", response_class=HTMLResponse)
@@ -779,7 +780,7 @@ async def watchtower_panel(
     if watchtower is None:
         return HTMLResponse('<div class="text-slate-500 text-xs">SIEM integration not installed.</div>')
     try:
-        state = watchtower.fetch_siem_state(since=since, severity_min=severity)
+        state = await asyncio.to_thread(watchtower.fetch_siem_state_cached, since=since, severity_min=severity)
     except watchtower.WatchtowerError as exc:
         return HTMLResponse(watchtower.render_error_html(str(exc)))
     return HTMLResponse(watchtower.render_panel_html(state))
@@ -3194,17 +3195,22 @@ def _build_topic_index(memory_root) -> dict[str, list[str]]:
     """Scan .memory/ for frontmatter tags: fields. Return {tag: [path, ...]} sorted by count desc."""
     import yaml as _yaml
     from atlas_plus._fsutil import inside as _fs_inside
+    from atlas_plus.curation import _corpus_pass  # shared with the other report sections (SEX-046)
     skip_dirs = {"archive", "_sync", "versions", "_atlas", "anti"}
     tag_to_paths: dict[str, list[str]] = {}
+    try:
+        _root_resolved = memory_root.resolve()  # once, not once per note
+    except OSError:
+        _root_resolved = None
 
-    for md_file in memory_root.rglob("*.md"):
+    for md_file in _corpus_pass.md_files(memory_root):
         rel_parts = md_file.relative_to(memory_root).parts
         if any(p in skip_dirs for p in rel_parts):
             continue
-        if md_file.name.startswith("_") or not _fs_inside(md_file, memory_root):
+        if md_file.name.startswith("_") or not _fs_inside(md_file, memory_root, _root_resolved):
             continue  # a link out of the corpus (MN86, sweep 25)
         try:
-            raw = md_file.read_text(encoding="utf-8", errors="replace")
+            raw = _corpus_pass.read_text(md_file)
         except OSError:
             continue
         if not raw.startswith("---"):
@@ -3213,7 +3219,7 @@ def _build_topic_index(memory_root) -> dict[str, list[str]]:
         if end == -1:
             continue
         try:
-            fm = _fast_yaml_load(raw[3:end]) or {}
+            fm = _corpus_pass.load_frontmatter(raw[3:end]) or {}
         except Exception:
             continue
         tags = fm.get("tags") or fm.get("tag") or []

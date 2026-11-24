@@ -41,10 +41,12 @@ def entry_is_link(entry: "os.DirEntry") -> bool:
     return is_link(Path(entry.path))  # a reparse point (rare): the full rule
 
 
-def inside(path: Path, root: Path) -> bool:
-    """True when ``path`` resolves to a location inside ``root`` (both resolved)."""
+def inside(path: Path, root: Path, root_resolved: "Path | None" = None) -> bool:
+    """True when ``path`` resolves to a location inside ``root`` (both resolved). A caller checking
+    many paths against one root resolves the root once and passes it as ``root_resolved``: resolving
+    it again per note was half of this check's time on a 20,000-note corpus (SEX-046)."""
     try:
-        return path.resolve().is_relative_to(root.resolve())
+        return path.resolve().is_relative_to(root_resolved if root_resolved is not None else root.resolve())
     except (OSError, ValueError):
         return False
 
@@ -67,12 +69,50 @@ def make_private_dir(path: Path) -> bool:
     return not existed
 
 
+_NO_MODE_FS = {"drvfs", "vfat", "exfat", "msdos", "ntfs", "ntfs3", "fuseblk", "cifs", "smb3"}
+
+
+def _mount_entry(path: str, mounts_text: str):
+    """(mount point, fstype, options) of the longest mount point holding ``path``, or None."""
+    best = None
+    for line in mounts_text.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        mnt = parts[1].replace("\\040", " ")
+        if path == mnt or path.startswith(mnt.rstrip("/") + "/"):
+            if best is None or len(mnt) > len(best[0]):
+                best = (mnt, parts[2], parts[3])
+    return best
+
+
+def mode_fix(path: str, mounts_text: str | None = None) -> str:
+    """The Fix line for a loose directory: chmod, unless the folder sits on a mount where chmod does nothing."""
+    import shlex
+    if mounts_text is None:
+        try:
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
+                mounts_text = fh.read()
+        except OSError:
+            mounts_text = ""
+    entry = _mount_entry(str(path), mounts_text)
+    if entry is not None:
+        mnt, fstype, opts = entry
+        drvfs = fstype == "drvfs" or (fstype == "9p" and "aname=drvfs" in opts)
+        if drvfs and "metadata" in opts.replace(";", ",").split(","):
+            return f"chmod 700 {shlex.quote(str(path))}"  # a Windows drive mounted with metadata keeps modes: chmod works
+        if fstype in _NO_MODE_FS or drvfs:
+            return (f"this folder is on {mnt}, a Windows or FAT drive where chmod has no effect; move it under your "
+                    f"Linux home (set ATLAS_WORKSPACE_ROOT, see docs/CONFIGURATION.md) or remount {mnt} with the "
+                    f"metadata option")
+    return f"chmod 700 {shlex.quote(str(path))}"
+
+
 def loose_dir_modes(paths) -> list[dict]:
     """POSIX only: the directories in ``paths`` that exist and grant group or other any access."""
     out: list[dict] = []
     if os.name == "nt":
         return out
-    import shlex
     import stat as _stat
     for p in paths:
         try:
@@ -80,5 +120,5 @@ def loose_dir_modes(paths) -> list[dict]:
         except OSError:
             continue
         if _stat.S_ISDIR(st.st_mode) and st.st_mode & 0o077:
-            out.append({"path": str(p), "mode": oct(st.st_mode & 0o777)[2:], "fix": f"chmod 700 {shlex.quote(str(p))}"})
+            out.append({"path": str(p), "mode": oct(st.st_mode & 0o777)[2:], "fix": mode_fix(str(p))})
     return out

@@ -57,6 +57,18 @@ def command(sub: str = "") -> str:
     return f"`{how_to_run(u)}{' ' + sub if sub else ''}`"
 
 
+def corpus_elsewhere() -> str:
+    """One sentence for a "no corpus yet" message when the corpus location comes from the defaults: a
+    corpus made yesterday in a terminal that had ATLAS_WORKSPACE_ROOT set is invisible to a new terminal
+    without it, and following "run init" there starts a second, empty corpus (MN88 and MN90, SEX-048).
+    Empty when a location variable is set: then the path shown is the one the user chose."""
+    if any(os.environ.get(v) for v in ("ATLAS_WORKSPACE_ROOT", "ATLAS_MEMORY_ROOT")):
+        return ""
+    return (" If you already made a corpus somewhere else, this terminal does not know where: set "
+            "ATLAS_WORKSPACE_ROOT here as you did then (and put it in your shell profile); init would "
+            "start a second, empty corpus.")
+
+
 PYPI_UPGRADE = "pip install -U sextant-ai"
 
 

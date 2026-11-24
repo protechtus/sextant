@@ -515,7 +515,7 @@ What it does not do (know these before you rely on it):
   own fallback path, enforced in code on both. Separately, the web
   dashboard loads one UI library (htmx) from a public CDN (Tailwind ships inside the package):
   your browser contacts them, the data path stays local; offline, the page
-  says so and its panels stay empty while the JSON endpoints keep working.
+  says so and its panels stay at "loading..." while the JSON endpoints keep working.
 - **Two opt-in features make their own outbound calls.** The Brain's
   research executor queries a web search API (DuckDuckGo by default, or
   your own SearXNG instance) with the research topic, only when

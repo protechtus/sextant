@@ -9,6 +9,7 @@ from typing import Optional
 
 from atlas_plus.mcp.memory_server.config import EXCLUDED_DIRS, MEMORY_ROOT
 from atlas_plus.curation.scan import is_excluded_mirror
+from atlas_plus.curation import _corpus_pass
 
 DEFAULT_THRESHOLD = 0.40
 
@@ -188,8 +189,13 @@ def _tokenize(text: str) -> set[str]:
         end = text.find("---", 3)
         if end != -1:
             text = text[end + 3:]
-    text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
+    if "<!--" in text:
+        text = re.sub(r"<!--.*?-->", " ", text)  # provenance comments are not content: every non-Latin note tokenised to `source human direct` and scored 1.00 against every other (AG52)
     emoji: set[str] = set()
+    if text.isascii():
+        # No ideograph, no emoji, nothing to fold: the two scans below cannot match, and a word of one or
+        # two letters is never kept (SEX-046: they were a third of the tokenizer's time on English notes).
+        return {w for w in _WORD_RE.findall(text.lower()) if len(w) > 2 and w not in _STOPS}
     if not text.isascii():
         import unicodedata as _ud
         text = _dup_fold(_fold_marks(_recompose(_ud.normalize("NFC", text))))  # AG89: prefixes and emoji as search folds them; one form for a letter with its marks (MN46); Arabic and Hebrew points folded like search does (MN49); joiners and sara am like search (MN55); ASCII skips it (AG60)
@@ -199,14 +205,16 @@ def _tokenize(text: str) -> set[str]:
     for run in re.findall(_CJK_RE.pattern + "+", text):
         words.extend(run[i:i + 2] for i in range(len(run) - 1))
     # Drop very common stop words and single chars
-    stops = {
-        "the", "a", "an", "and", "or", "of", "to", "in", "is", "it",
-        "that", "this", "for", "be", "with", "on", "at", "by", "from",
-        "not", "are", "was", "were", "as", "if", "but", "all", "any",
-        "has", "have", "had", "do", "does", "did", "will", "would",
-        "can", "could", "should", "may", "might", "must", "shall",
-    }
-    return {w for w in words if (len(w) > 2 or _CJK_RE.search(w)) and w not in stops} | emoji  # CJK bigrams are two characters (MN23)
+    return {w for w in words if (len(w) > 2 or _CJK_RE.search(w)) and w not in _STOPS} | emoji  # CJK bigrams are two characters (MN23)
+
+
+_STOPS = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "is", "it",
+    "that", "this", "for", "be", "with", "on", "at", "by", "from",
+    "not", "are", "was", "were", "as", "if", "but", "all", "any",
+    "has", "have", "had", "do", "does", "did", "will", "would",
+    "can", "could", "should", "may", "might", "must", "shall",
+})
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -219,7 +227,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 def _snippet(path: Path, max_chars: int = 120) -> str:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _corpus_pass.read_text(path)
         # strip frontmatter
         if text.startswith("---"):
             end = text.find("---", 3)
@@ -300,6 +308,10 @@ def _note_facts(text: str) -> list[str]:
 
 
 def _norm_fact(s: str) -> str:
+    if s.isascii():
+        # Every fold below leaves ASCII as it is and casefold is lower there (the file scanner skips the
+        # same chain for ASCII, AG60): 840,000 facts spent 12 s of a 20,000-note report in it (SEX-046).
+        return " ".join(_NON_WORD_RE.sub(" ", s.lower()).split())
     import unicodedata as _ud
     s = _dup_fold(_fold_marks(_recompose(_ud.normalize("NFKC", s)))).casefold()  # prefixes and emoji too (AG89); like search: NFC vs NFD, harakat, half-width, tonos, İ (MN62: the file scanner was fixed, this sibling was not)
     return " ".join(_NON_WORD_RE.sub(" ", s).split())
@@ -317,7 +329,7 @@ def find_fact_duplicates(
     root = memory_root or MEMORY_ROOT
     search_root = root / scope if scope else root
     files = [
-        p for p in search_root.rglob("*.md")
+        p for p in _corpus_pass.md_files(search_root)
         if not any(part in _NON_CURATABLE_DIRS for part in p.relative_to(root).parts)
         and not is_excluded_mirror(p.relative_to(root).parts)
         and not p.name.startswith("_")
@@ -327,7 +339,7 @@ def find_fact_duplicates(
     pending: list[tuple[str, str, str]] = []
     for f in sorted(files):
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            text = _corpus_pass.read_text(f)
         except OSError:
             continue
         rel = str(f.relative_to(root)).replace("\\", "/")
@@ -441,7 +453,7 @@ def find_duplicates(
     search_root = root / scope if scope else root
 
     files = [
-        p for p in search_root.rglob("*.md")
+        p for p in _corpus_pass.md_files(search_root)
         if not any(part in _NON_CURATABLE_DIRS for part in p.relative_to(root).parts)
         and not is_excluded_mirror(p.relative_to(root).parts)
         and not p.name.startswith("_")
@@ -450,7 +462,7 @@ def find_duplicates(
     tokens: dict[Path, set[str]] = {}
     for f in files:
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            text = _corpus_pass.read_text(f)
             tokens[f] = _tokenize(text)
         except OSError:
             tokens[f] = set()
@@ -516,7 +528,10 @@ def find_duplicates(
     _LAST_APPROX[0] = False
     thr = threshold
     # The exact walk's size, before it runs: the posting entries its prefixes would touch (AG84).
-    ordered = [sorted(tokens[f], key=lambda t: (df[t], t)) for f in file_list]
+    # One global order (document frequency, then the token), ranked once: sorting each note by a tuple
+    # built per token called the key function 7.7 million times on 20,000 notes (SEX-046). Same order.
+    _rank = {t: r for r, t in enumerate(sorted(df, key=lambda t: (df[t], t)))}
+    ordered = [sorted(tokens[f], key=_rank.__getitem__) for f in file_list]
     _limit = _exact_max_work()
     _r, _b = _lsh_shape(threshold)
     if 1 - (1 - min(max(threshold, 0.05), 0.99) ** _r) ** _b < _LSH_RECALL:

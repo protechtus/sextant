@@ -8,6 +8,7 @@ from typing import Optional
 
 from atlas_plus.mcp.memory_server.config import MEMORY_ROOT
 from atlas_plus.curation.scan import is_excluded_mirror
+from atlas_plus.curation import _corpus_pass
 from atlas_plus import paths as atlas_paths
 
 _CONVERGENCE_EXCLUDED = {"archive", "_sync", "versions", "_atlas"}
@@ -22,7 +23,7 @@ def _scan_convergence(root: Path) -> list[dict]:
     """Return files with contradictions: frontmatter from the given memory root."""
     import yaml as _yaml
     flagged = []
-    for path in sorted(root.rglob("*.md")):
+    for path in sorted(_corpus_pass.md_files(root)):
         rel = path.relative_to(root)
         parts = rel.parts
         if any(p in _CONVERGENCE_EXCLUDED for p in parts):
@@ -32,7 +33,7 @@ def _scan_convergence(root: Path) -> list[dict]:
         if rel.name.startswith("_"):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = _corpus_pass.read_text(path)
         except OSError:
             continue
         if "contradictions:" not in text:
@@ -43,7 +44,7 @@ def _scan_convergence(root: Path) -> list[dict]:
         if end == -1:
             continue
         try:
-            fm = _fast_yaml_load(text[3:end]) or {}
+            fm = _corpus_pass.load_frontmatter(text[3:end]) or {}
         except Exception:
             continue
         contras = fm.get("contradictions", [])
@@ -183,7 +184,21 @@ def generate_report(
 
     Returns (report_markdown, output_path).
     Passing dry_run=True returns the report without writing.
+
+    Every section runs inside one shared corpus pass: each note is listed, read and has its
+    frontmatter loaded once for the whole report, not once per section (SEX-046).
     """
+    with _corpus_pass.shared_pass():
+        return _generate_report(memory_root, stale_months, dup_threshold, scope, dry_run)
+
+
+def _generate_report(
+    memory_root: Optional[Path],
+    stale_months: int,
+    dup_threshold: float,
+    scope: str,
+    dry_run: bool,
+) -> tuple[str, Path]:
     from atlas_plus.curation.duplicates import find_duplicates
     from atlas_plus.curation.stale import find_stale
 

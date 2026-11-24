@@ -37,7 +37,6 @@ import json
 import os
 import sys
 import queue
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -50,23 +49,9 @@ from pathlib import Path
 SERVER_MODULE = "atlas_plus.mcp.memory_server.server"
 
 
-def _split_windows(command: str) -> list[str]:
-    """Split a launcher the way Windows itself does (CommandLineToArgvW), so a quoted distro
-    name or `--flag="a b"` survives; falls back to shlex when ctypes is unavailable."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-        argc = ctypes.c_int()
-        fn = ctypes.windll.shell32.CommandLineToArgvW
-        fn.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
-        fn.restype = ctypes.POINTER(wintypes.LPWSTR)
-        argv = fn(command, ctypes.byref(argc))
-        try:
-            return [argv[i] for i in range(argc.value)]
-        finally:
-            ctypes.windll.kernel32.LocalFree(argv)
-    except Exception:  # noqa: BLE001
-        return [p.strip('"') for p in shlex.split(command, posix=False)]
+from atlas_plus import _cmdline  # noqa: E402  the one command-line splitter (LES-070, guardrail G14)
+
+_split_windows = _cmdline.split_windows  # kept under its old name for callers that import it
 
 
 def server_command(python: str | None = None, command: str | None = None) -> list[str]:
@@ -78,7 +63,7 @@ def server_command(python: str | None = None, command: str | None = None) -> lis
         if not command.strip():
             raise ValueError("--command is empty")  # CommandLineToArgvW turns "" into the current exe
         try:
-            prefix = _split_windows(command) if os.name == "nt" else shlex.split(command)
+            prefix = _cmdline.split_command(command)
         except ValueError as exc:
             raise ValueError(f"--command could not be split ({exc}): {command!r}") from exc
         if not prefix:
@@ -373,10 +358,10 @@ def _say_next(rc: int, argv: list[str]) -> int:
     local = not any(a.split("=")[0] in ("--url", "--command") or "ATLAS_MEMORY_ROOT=" in a for a in argv)
     if local and not _paths.memory_root().is_dir():
         step = (f"no corpus yet at {_paths.memory_root()}: run {_next_step.command('init')}, "
-                f"then {_next_step.command('verify')} again.")
+                f"then {_next_step.command('verify')} again.{_next_step.corpus_elsewhere()}")
     else:
         step = (f"the step lines above say what failed; {_next_step.command('doctor')} checks the install "
-                "(docs/GETTING-STARTED.md, Troubleshooting).")
+                "and gives a Fix line for each row that fails.")  # the doc section it named does not exist (SEX-047 row 7)
     _next_step.say("verify: the round trip did not complete.", step)
     return rc
 

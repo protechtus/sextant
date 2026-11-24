@@ -1109,17 +1109,18 @@ def downgrade_stale_confirmations(
     cutoff = date.fromordinal(today.toordinal() - threshold_days)  # no .replace(year=...): Feb 29 crashed it (AG33)
 
     import yaml as _yaml
+    from atlas_plus.curation import _corpus_pass  # one walk, read and load per note inside a report (SEX-046)
     downgraded: list[dict] = []
     skip_dirs = {"archive", "_sync", "versions", "_atlas", "anti"}
 
-    for md_file in root.rglob("*.md"):
+    for md_file in _corpus_pass.md_files(root):
         rel_parts = md_file.relative_to(root).parts
         if any(p in skip_dirs for p in rel_parts):
             continue
         if md_file.name.startswith("_"):
             continue
         try:
-            raw = md_file.read_text(encoding="utf-8", errors="replace")
+            raw = _corpus_pass.read_text(md_file)
         except OSError:
             continue
         if not raw.startswith("---"):
@@ -1128,8 +1129,7 @@ def downgrade_stale_confirmations(
         if end == -1:
             continue
         try:
-            from atlas_plus._yaml import fast_safe_load as _fsl  # libyaml (AG42: 10,000 pure-Python loads per report)
-            fm = _fsl(raw[3:end]) or {}
+            fm = _corpus_pass.load_frontmatter(raw[3:end]) or {}  # libyaml (AG42: 10,000 pure-Python loads per report)
         except Exception:
             continue
 

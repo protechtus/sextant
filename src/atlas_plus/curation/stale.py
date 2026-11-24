@@ -16,6 +16,7 @@ DEFAULT_STALE_MONTHS = 6
 
 
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+from atlas_plus.curation import _corpus_pass
 
 
 @dataclass
@@ -51,13 +52,13 @@ def _parse_updated(fm: dict) -> Optional[date]:
 
 def _read_frontmatter(path: Path) -> dict:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _corpus_pass.read_text(path)
         if not text.startswith("---"):
             return {}
         end = text.find("---", 3)
         if end == -1:
             return {}
-        return _fast_yaml_load(text[3:end].strip()) or {}
+        return _corpus_pass.load_frontmatter(text[3:end].strip()) or {}
     except Exception:
         return {}
 
@@ -87,7 +88,7 @@ def find_stale(
     today = date.today()
 
     results: list[StaleFile] = []
-    for f in search_root.rglob("*.md"):
+    for f in _corpus_pass.md_files(search_root):
         rel = f.relative_to(root)
         if any(part in EXCLUDED_DIRS for part in rel.parts):
             continue

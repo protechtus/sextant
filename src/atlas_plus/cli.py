@@ -138,6 +138,12 @@ def _overview() -> None:
         console.print(f"    1. {_u} init     creates the folder your notes live in", soft_wrap=True, markup=False, highlight=False)
         console.print(f"    2. {_u} setup    prints the line that connects your AI client; copy it, paste it, press Enter", soft_wrap=True, markup=False, highlight=False)
         console.print(f"    3. {_u} verify   proves it works (the last line says ROUND-TRIP: OK)", soft_wrap=True, markup=False, highlight=False)
+        from atlas_plus import _next_step as _ns
+        if _ns.corpus_elsewhere():
+            # day 2 in a terminal without the exports: the corpus made yesterday is elsewhere (MN90, SEX-048)
+            console.print("  Not your first time? A corpus made with ATLAS_WORKSPACE_ROOT set is found only where that "
+                          "variable is set: set it in this terminal (and in your shell profile) instead of running init again.",
+                          soft_wrap=True, markup=False, highlight=False)
     console.print(f"  state dir   : {state_dir}")
     ports = service_ports()
     console.print(f"  services    : MCP :{ports['mcp']} | Web UI (Helm) :{ports['web']} | Brain :{ports['brain']} | Sync :{ports['sync']}")
@@ -520,7 +526,7 @@ def cmd_search(
     if not _mr.is_dir():
         # before init, a search must not create the state dir and an empty index (sweep 13, AG25)
         from atlas_plus import _next_step  # the step as this install types it (LES-054, AG102)
-        _err_console().print(f"[yellow]No corpus yet[/yellow] at {_mr} (nothing was created). Next: run {_next_step.command('init')} first.",
+        _err_console().print(f"[yellow]No corpus yet[/yellow] at {_mr} (nothing was created). Next: run {_next_step.command('init')} first.{_next_step.corpus_elsewhere()}",
                       soft_wrap=True, markup=True, highlight=False)
         raise typer.Exit(1)
     if limit > 50:

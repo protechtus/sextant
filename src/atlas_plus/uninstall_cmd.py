@@ -814,7 +814,9 @@ def _main() -> None:
     if not do_state and not do_corpus:
         print("\nReport only. Nothing was changed. To remove: --state, --corpus or --all, each with --yes;\n"
               "the corpus also needs --confirm-path <corpus path> and the state dir --confirm-state-path\n"
-              "<state path> typed back exactly (see --help). Unhook the client first.")
+              "<state path> typed back exactly (see --help). Unhook the client first: for Claude Code\n"
+              "`claude mcp remove -s user sextant`, for Codex CLI `codex mcp remove sextant` (another\n"
+              "client: delete the `sextant` entry from its MCP config).")  # the command was not named (MN89, SEX-050)
         return
 
     if do_corpus and c["exists"]:

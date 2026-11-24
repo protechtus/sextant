@@ -78,6 +78,12 @@ class Typer(_typer.Typer):
                 ctx = getattr(e, "ctx", None)
                 path = ctx.command_path if ctx is not None else "sextant"
                 root = ctx.find_root().command_path if ctx is not None else path  # `python -m atlas_plus` stays whole
+                split_fact = type(e).__name__ == "NoSuchOption" or "extra argument" in str(getattr(e, "message", "")).lower()
+                if split_fact and path.split()[-1:] in (["remember"], ["add"]):
+                    # PowerShell 5.1 drops the inner double quotes of `'Always run "pytest -q" first'`, so the
+                    # fact arrives in pieces and `-q` reads as an option (MN89, SEX-050). The way out is stdin.
+                    print(f"If that was part of the fact (a shell can split a fact that has quotes or dashes "
+                          f"in it), pipe the fact in: `echo \"<fact>\" | {path} -`.", file=sys.stderr)
                 if path != root:
                     print(f"Run `{path} --help` to see what it takes; `{root} --help` lists every command.", file=sys.stderr)
                 else:

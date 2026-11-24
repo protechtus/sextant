@@ -429,9 +429,10 @@ inspect the default locations instead of your real ones.
    volumes, then `docker image rm sextant-mcp sextant-web` (the images are named
    after the Compose project; `docker images | grep sextant`); any systemd units you
    wrote from the self-hosting guide (disable, remove, `daemon-reload`).
-5. **Remove the code.** `pip uninstall sextant-ai` only matters if you
-   installed outside the clone's venv; otherwise deleting the clone
-   (including its `.venv`) is the whole step.
+5. **Remove the code.** Installed with `pip install sextant-ai`:
+   `pip uninstall sextant-ai` in the same environment is the whole step (or
+   delete the venv you made for it). Installed from a clone: delete the clone
+   (including its `.venv`).
 
 Sextant installs no services, cron jobs, or files outside your home
 directory on its own -- those exist only if you created them from the

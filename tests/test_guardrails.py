@@ -1281,6 +1281,71 @@ def test_the_g13_scan_sees_each_shape():
     assert not _g13_hits(good)
 
 
+# ----------------------------------------------------------------------------------------------
+# LES-G14  a command line from a setting is split by atlas_plus._cmdline (LES-070)
+#   KL2, sweep 27: TOOL_CMD=C:\Projects\app\run.exe went through POSIX shlex.split, lost every
+#   backslash, and the panel said the program was "not found" at a path nobody typed. The verify
+#   command had learned the same thing for --command years of sweeps earlier; the second caller
+#   had not. One splitter that knows Windows paths; no other shlex.split in the package.
+# ----------------------------------------------------------------------------------------------
+
+ALLOW_G14: list[Allow] = [
+    ("src/atlas_plus/_cmdline.py", "shlex.split(", "the one splitter"),
+    ("src/atlas_plus/setup_cmd.py", "shlex.split(command, posix=True)",
+     "parses a POSIX hook line this module generated itself, never text a person typed"),
+]
+
+
+def _g14_hits(text: str) -> list[int]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    return sorted({n.lineno for n in ast.walk(tree)
+                   if isinstance(n, ast.Call) and _dotted(n.func).split(".")[-2:] in (["shlex", "split"], ["_shlex", "split"])})
+
+
+def test_g14_command_lines_are_split_by_the_shared_helper():
+    offenders = []
+    for p in _py_files(SRC):
+        for lineno in _g14_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(_rel(p), _line(p, lineno), ALLOW_G14):
+                offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G14", "split a command line with atlas_plus._cmdline.split_command(text): POSIX "
+                                  "shlex.split eats the backslashes of a Windows path")
+
+
+def test_the_g14_scan_sees_each_shape():
+    bad = ("import shlex\n"
+           "argv = shlex.split(os.environ['TOOL_CMD'])\n"
+           "import shlex as _shlex\n"
+           "argv = _shlex.split(raw, posix=False)\n")
+    good = ("from atlas_plus import _cmdline\n"
+            "argv = _cmdline.split_command(raw)\n"
+            "quoted = shlex.quote(path)\n"
+            "parts = line.split()\n")
+    assert _g14_hits(bad) == [2, 4]
+    assert not _g14_hits(good)
+
+
+def test_the_shared_splitter_keeps_a_windows_path_whole(monkeypatch):
+    import pytest
+
+    from atlas_plus import _cmdline
+    path = "C:\\Projects\\app\\.venv\\Scripts\\run.exe"
+    assert _cmdline.split_command(path) == [path]
+    assert _cmdline.split_command(f'"{path}" --profile x') == [path, "--profile", "x"]
+    assert _cmdline.split_command('"C:\\Program Files\\app\\run.exe" siem') == ["C:\\Program Files\\app\\run.exe", "siem"]
+    assert _cmdline.split_command("   ") == [] and _cmdline.split_command("") == []
+    with pytest.raises(ValueError):
+        _cmdline.split_command('"C:\\Projects\\app\\run.exe', strict_quotes=True)
+    monkeypatch.setattr(_cmdline.os, "name", "posix")                # the POSIX rules for everything else
+    assert _cmdline.split_command("python3 -m tool 'a b'") == ["python3", "-m", "tool", "a b"]
+    assert _cmdline.split_command(path) == [path]                    # a drive path keeps its separators anywhere
+    with pytest.raises(ValueError):
+        _cmdline.split_command("tool 'unclosed")
+
+
 if __name__ == "__main__" and sys.argv[1:2] == ["--g8-child"]:
     import json as _json
 

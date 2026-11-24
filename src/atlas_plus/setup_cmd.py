@@ -828,16 +828,19 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.out).parent.mkdir(parents=True, exist_ok=True)  # ~/.config/opencode may not exist yet (AG39)
             if args.client == "codex" and not args.json:
                 if not info.get("codex_toml"):
-                    print("sextant setup: no TOML table to write; nothing written", file=sys.stderr)
+                    print("sextant setup: no TOML table to write; nothing written. Run the same command "
+                          "without --out and paste what it prints.", file=sys.stderr)
                     return 1
                 _write_toml_out(Path(args.out), info["codex_toml"], args.name)
             elif piece is None and _nonempty(Path(args.out)):
                 raise ValueError(f"{args.out} exists; --out merges only the JSON pieces (--client json, "
-                                 "opencode, hooks) and the codex table, so nothing was written")
+                                 "opencode, hooks) and the codex table, so nothing was written. Give --out a "
+                                 "new file name, or leave --out off and paste what is printed")
             else:
                 _write_out(Path(args.out), file_text, piece)
         except OSError as exc:
-            print(f"sextant setup: cannot write {args.out}: {exc}", file=sys.stderr)
+            print(f"sextant setup: cannot write {args.out}: {exc}\nNext: give --out a path you can write to, "
+                  "or leave --out off and paste what is printed.", file=sys.stderr)
             return 1
         except ValueError as exc:
             print(f"sextant setup: {exc}", file=sys.stderr)
