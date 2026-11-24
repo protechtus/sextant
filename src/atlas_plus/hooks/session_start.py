@@ -464,6 +464,13 @@ def main() -> None:
         lines += [f"Corpus: {shown_root} (missing or not a directory: run sextant-init, or set "
                   "ATLAS_MEMORY_ROOT or ATLAS_WORKSPACE_ROOT user-wide so hooks see the one you created)",
                   "(Nothing below comes from a corpus; it is the clock and the working directory only.)", ""]
+        try:  # a person at a terminal gets one pointer on stderr; hook output (a pipe) is unchanged (AG103)
+            _tty = sys.stdout.isatty()
+        except (AttributeError, ValueError, OSError):
+            _tty = False
+        if _tty:
+            from atlas_plus import _next_step
+            print(f"(no corpus yet: run {_next_step.command('init')})", file=sys.stderr)
 
     # --- Who you're talking to ---
     from atlas_plus.identity import resolve_identity_path

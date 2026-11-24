@@ -214,6 +214,10 @@ class _Handler(FileSystemEventHandler):
 
 def main() -> int:
     """Entry point: start the Claude Code JSONL transcript tailer (watchdog mode)."""
+    from atlas_plus import _next_step  # --help prints and returns; a stray argument is refused (SEX-047)
+    _next_step.ArgumentParser(
+        prog="python -m atlas_plus.transcripts.sources.claude_code",
+        description="Tail Claude Code's JSONL transcripts into the transcript store (root: ATLAS_CLAUDE_CODE_ROOT). Takes no arguments; stop it with Ctrl+C.").parse_args()
     logging.basicConfig(
         level=os.environ.get("ATLAS_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(name)s %(levelname)s %(message)s",

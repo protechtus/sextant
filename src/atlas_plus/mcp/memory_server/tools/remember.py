@@ -408,7 +408,9 @@ def memory_remember(
         )
     except Exception as e:
         vp = _vh["path"]
-        return {"ok": False, "file": (str(target) if target.exists() else None), "version_copy": str(vp) if vp else None, "error": str(e)}
+        from atlas_plus import _next_step  # a read-only corpus named no folder and no next step (SEX-048)
+        _msg = _next_step.write_refused(e, target.parent) if _next_step.is_write_refused(e) else str(e)
+        return {"ok": False, "file": (str(target) if target.exists() else None), "version_copy": str(vp) if vp else None, "error": _msg}
     version_path = _vh["path"]
 
     # Optional git autocommit (non-blocking, controlled by ATLAS_MEMORY_AUTOCOMMIT)
@@ -483,7 +485,9 @@ def memory_confirm(path: str, source: str = "agent", interactive: bool = False) 
             version_before_write(target, root=Path(_read.MEMORY_ROOT).resolve())
         ok = confirm_fact(target, source=source)
     except Exception as e:
-        return {"ok": False, "path": path, "confirmed": None, "error": str(e)}
+        from atlas_plus import _next_step  # the sibling of memory_remember's refused write (SEX-048)
+        _msg = _next_step.write_refused(e, target.parent) if _next_step.is_write_refused(e) else str(e)
+        return {"ok": False, "path": path, "confirmed": None, "error": _msg}
     if not ok:
         return {"ok": False, "path": path, "confirmed": None, "error": f"File not found: {path}"}
     from datetime import date

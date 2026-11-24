@@ -118,8 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     info = scan(root)
     if not info["exists"]:
         if info.get("error"):
-            print(json.dumps({"error": info["error"]}) if args.json else f"error: {info['error']}")
-            return 1
+            if args.json:  # the machine-readable answer stays on stdout; the person's text goes to stderr (AG103)
+                print(json.dumps({"error": info["error"]}))
+            return _next_step.say(f"error: {info['error']}",
+                                  f"see docs/GETTING-STARTED.md, or run {_next_step.command('doctor')}; "
+                                  f"{_next_step.command('versions --help')} lists the options")
         msg = {"versions_dir": info["versions_dir"], "files": 0, "bytes": 0}
         print(json.dumps(msg) if args.json else
               f"no history yet: {info['versions_dir']} does not exist (it appears the first time an "
@@ -181,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
     print(f"deleted {removed:,} copies, freed {_size(freed)}")
+    if removed < len(doomed):  # a copy that could not be deleted exited 0 (AG103)
+        return _next_step.say(f"error: {len(doomed) - removed:,} copy(ies) could not be deleted (listed above)",
+                              "close whatever holds them open, then run "
+                              f"{_next_step.command('versions --prune')} again to see what is left")
     return 0
 
 

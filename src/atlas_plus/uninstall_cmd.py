@@ -702,6 +702,22 @@ def _prog() -> str:
     return _P(sys.argv[0]).stem if sys.argv and sys.argv[0] else "atlas-uninstall"
 
 
+def refusal_next(prog: str, preview: str) -> str:
+    """The Next line of a destructive command's refusal: a safe preview and --help, never the
+    destructive command itself (AG103). `prog` is the name typed (`sextant uninstall`,
+    `sextant-reset`, `atlas-uninstall`)."""
+    from atlas_plus import _next_step
+    if " " in prog:  # the umbrella's subcommand: spelled as this install types the umbrella
+        sub = prog.split(" ", 1)[1]
+        return (f"run {_next_step.command(sub + ' ' + preview)} to see what it would do, or "
+                f"{_next_step.command(sub + ' --help')}")
+    if prog.endswith("_cmd"):  # started as `python -m atlas_plus.reset_cmd`: the file's stem is not a command
+        shown = f"python -m atlas_plus.{prog}"
+    else:
+        shown = _next_step.how_to_run(prog)
+    return f"run `{shown} {preview}` to see what it would do, or `{shown} --help`"
+
+
 def main() -> None:
     try:
         _main()
@@ -809,10 +825,13 @@ def _main() -> None:
     corpus_refusal = (corpus_target_refusal() or confirm_corpus_removal(args.yes, args.confirm_path)) if do_corpus else None  # (AG73)
     state_refusal = confirm_state_removal(args.yes, args.confirm_state_path) if do_state else None
     if corpus_refusal or state_refusal:
+        # stderr with a safe next step: the refusal went to stdout and named nothing (AG103)
         if do_state:
-            print(f"state:  {state_refusal or 'not removed (corpus confirmation failed; nothing was deleted)'}")
+            print(f"state:  {state_refusal or 'not removed (corpus confirmation failed; nothing was deleted)'}", file=sys.stderr)
         if do_corpus:
-            print(f"corpus: {corpus_refusal or 'not removed'}")
+            print(f"corpus: {corpus_refusal or 'not removed'}", file=sys.stderr)
+        flags = " ".join(f for f, on in (("--state", args.state), ("--corpus", args.corpus), ("--all", args.all)) if on)
+        print(f"Next: {refusal_next(_prog(), (flags + ' --dry-run').strip())}", file=sys.stderr)
         raise SystemExit(1)
 
     failed = False
@@ -824,6 +843,8 @@ def _main() -> None:
         outcome = remove_corpus(args.yes, args.confirm_path, preauthorized=True)
         print(f"corpus: {outcome}")
         failed = failed or outcome.startswith(("refused", "REFUSED"))
+    if failed:
+        print(f"Next: {refusal_next(_prog(), '--dry-run')}", file=sys.stderr)
     raise SystemExit(1 if failed else 0)
 
 

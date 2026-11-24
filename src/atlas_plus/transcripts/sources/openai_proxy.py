@@ -233,6 +233,10 @@ async def health():
 
 def main() -> int:
     """Entry point: start the OpenAI-compatible capture proxy on DEFAULT_PORT."""
+    from atlas_plus import _next_step  # --help prints and returns; a stray argument is refused (SEX-047)
+    _next_step.ArgumentParser(
+        prog="python -m atlas_plus.transcripts.sources.openai_proxy",
+        description="Start the OpenAI-compatible capture proxy on 127.0.0.1 (port: ATLAS_OPENAI_PROXY_PORT, default 11435). Takes no arguments; stop it with Ctrl+C.").parse_args()
     import uvicorn
     logging.basicConfig(
         level=os.environ.get("ATLAS_LOG_LEVEL", "INFO"),

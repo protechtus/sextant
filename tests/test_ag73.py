@@ -119,7 +119,10 @@ def test_all_refuses_a_junction_corpus_before_touching_state(tmp_path, argv):
     p = subprocess.run([sys.executable, "-m", mod] + argv[1:] + extra, env=env, capture_output=True, text=True)
     assert p.returncode == 1
     assert (state / "search.sqlite").exists(), p.stdout  # the state step never ran
-    assert "junction" in p.stdout
+    assert "junction" in p.stdout + p.stderr  # reset's refusal moved to stderr with a Next line (AG103)
+    if argv[0] == "reset":
+        assert "python -m atlas_plus.reset_cmd" in p.stderr and "--dry-run" in p.stderr  # a command that exists
+        assert "--yes" not in p.stderr.split("Next:", 1)[-1]
 
 
 # ---------------------------------------------------------------- fts cheap snippet

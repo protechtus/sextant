@@ -412,7 +412,7 @@ def test_allowlist_entries_point_at_real_lines():
     full_checkout = (REPO / "scripts" / "public_exclude.txt").exists()
     stale = []
     for name, allow in (("G1", ALLOW_G1), ("G2", ALLOW_G2), ("G2-stdin", ALLOW_G2_STDIN), ("G3", ALLOW_G3), ("G4", ALLOW_G4), ("G6", ALLOW_G6),
-                        ("G7", ALLOW_G7), ("G9", ALLOW_G9), ("G10", ALLOW_G10)):
+                        ("G7", ALLOW_G7), ("G9", ALLOW_G9), ("G10", ALLOW_G10), ("G11", ALLOW_G11), ("G12", ALLOW_G12), ("G13", ALLOW_G13)):
         for path, snippet, _reason in allow:
             f = REPO / path
             if not f.exists():
@@ -448,6 +448,10 @@ ALLOW_G8: list[Allow] = [
     ("sextant prime", "bad-arg", "alias of `context`: every argument is a task word"),
     ("sextant verify", "no-corpus", "starts the MCP server as a child process (seconds); its no-corpus "
                                     "next step is tested in tests/test_ag102.py"),
+    ("python -m atlas_plus.summarizer.hook_entry", "*", "the Stop hook's entry: reads the client's JSON on stdin, "
+                                                        "ignores arguments and must never fail the client"),
+    ("python -m atlas_plus.hooks.prompt_clock", "*", "a prompt hook: ignores arguments and exits 0 whatever "
+                                                     "happens, so a client's prompt is never blocked"),
 ]
 # Long-running services and model-calling jobs: the bad-argument case runs (argparse refuses
 # before anything starts); a bare run would serve or call a model, so the no-corpus case is skipped.
@@ -493,11 +497,34 @@ def _console_scripts() -> dict[str, str]:
     return scripts
 
 
+def _g8_module_entry_points() -> list[str]:
+    """Every `python -m <module>` entry point that no console script reaches: a package's `__main__.py`
+    or a module with a main guard (SEX-047 row 8: github_intake, trading, gatekeeper, budget and the
+    transcript sources were outside G8 because pyproject does not name them). Read from the tree at
+    test time, so a new one is covered the day it lands."""
+    script_mods = {t.partition(":")[0] for t in _console_scripts().values()}
+    out = set()
+    for p in _py_files(SRC):
+        mod = ".".join(p.relative_to(SRC.parent).with_suffix("").parts)
+        if p.name == "__main__.py":
+            mod = mod.removesuffix(".__main__")
+        elif not re.search(r"^if __name__ == ['\"]__main__['\"]:", p.read_text(encoding="utf-8", errors="replace"), re.M):
+            continue
+        if mod not in script_mods:
+            out.add(mod)
+    return sorted(out)
+
+
 def _g8_cases() -> list[dict]:
     scripts = _console_scripts()
     cases, seen = [], set()
+    for mod in _g8_module_entry_points():
+        name = f"python -m {mod}"
+        cases.append({"name": name, "case": "bad-arg", "target": f"-m {mod}", "argv": [name, "--no-such-option-g8"]})
+        cases.append({"name": name, "case": "help", "target": f"-m {mod}", "argv": [name, "--help"]})
     for name, target in scripts.items():
         cases.append({"name": name, "case": "bad-arg", "target": target, "argv": [name, "--no-such-option-g8"]})
+        cases.append({"name": name, "case": "help", "target": target, "argv": [name, "--help"]})  # (AG103)
         if name not in _G8_SERVES and target not in seen:
             cases.append({"name": name, "case": "no-corpus", "target": target, "argv": [name]})
         seen.add(target)
@@ -522,12 +549,16 @@ def _g8_child(cases: list[dict]) -> dict:
             continue
         for cmd in cli.app.registered_commands:  # every subcommand, hidden ones and redirects included
             sub = cmd.name or cmd.callback.__name__
-            for case in ("bad-arg", "no-corpus"):
+            for case in ("bad-arg", "no-corpus", "help"):
                 name = f"sextant {sub}"
                 if any(a[0] == name and a[1] in ("*", case) for a in ALLOW_G8) or (case == "no-corpus" and sub == "init"):
                     continue
+                if case == "help" and sub in cli._REDIRECTS:
+                    continue  # a guessed name, not a command: every argument (--help too) gets the redirect, exit 2
                 if case == "bad-arg":
                     argv = ["sextant", sub, "--no-such-option-g8"]
+                elif case == "help":
+                    argv = ["sextant", sub, "--help"]
                 else:
                     import inspect
                     required = [p for p in inspect.signature(cmd.callback).parameters.values()
@@ -545,10 +576,18 @@ def _g8_child(cases: list[dict]) -> dict:
         sys.argv, sys.stdout, sys.stderr = list(c["argv"]), out, err
         sys.stdin = io.TextIOWrapper(io.BytesIO(b""), encoding="utf-8")
         try:
-            func = importlib.import_module(mod)
-            for part in attr.split("."):
-                func = getattr(func, part)
-            rv = func()
+            if c["target"].startswith("-m "):  # a `python -m` entry point: run the module as __main__
+                import runpy
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)  # "found in sys.modules": imported by an earlier case
+                    runpy.run_module(c["target"][3:], run_name="__main__", alter_sys=True)
+                rv = None
+            else:
+                func = importlib.import_module(mod)
+                for part in attr.split("."):
+                    func = getattr(func, part)
+                rv = func()
             rc = 0 if rv is None else (rv if isinstance(rv, int) else 1)
         except SystemExit as exc:
             code = exc.code
@@ -610,15 +649,18 @@ def test_g8_every_failure_names_the_next_step(tmp_path):
             offenders.append(f"{label}: printed a traceback: {text.strip().splitlines()[-1][:160]}")
         elif r["case"] == "bad-arg" and r["rc"] == 0:
             offenders.append(f"{label}: a bad argument exited 0")
-        elif r["rc"] != 0 and not _g8_names_next_step(r["stderr"] or r["stdout"]):
+        elif r["case"] != "help" and r["rc"] != 0 and not _g8_names_next_step(r["stderr"] or r["stdout"]):
             offenders.append(f"{label}: the last lines name no next step: "
                              f"{(r['stderr'] or r['stdout']).strip().splitlines()[-1:]!r}")
-        elif r["case"] == "bad-arg" and not r["stderr"].strip():
-            offenders.append(f"{label}: the usage error went to stdout only")
+        elif r["case"] == "help" and (r["rc"] != 0 or not (r["stdout"] + r["stderr"]).strip()):
+            offenders.append(f"{label}: --help did not exit 0 with text")
+        elif r["case"] != "help" and r["rc"] != 0 and not r["stderr"].strip():
+            # every non-zero exit, not only bad arguments (AG103): scripts read stderr
+            offenders.append(f"{label}: the error text went to stdout only")
     _report(offenders, "LES-G8", "a failure exits non-zero without a traceback and its last three lines name the "
                                  "next step (a `command`, `--help`, a docs/*.md page or a URL)")
-    known = set(_console_scripts())
-    stale = [a[0] for a in ALLOW_G8 if a[0] not in known | set(payload["subs"])]
+    known = set(_console_scripts()) | {f"python -m {m}" for m in _g8_module_entry_points()}
+    stale =[a[0] for a in ALLOW_G8 if a[0] not in known | set(payload["subs"])]
     assert not stale, f"stale G8 allowlist entries (the command is gone): {stale}"
 
 
@@ -1039,6 +1081,204 @@ def test_the_g10_scan_sees_each_shape():
     assert [o[2] for o in _g10_offenders({"a.py": bad})] == ["test_x"]
     for src in (good1, good2, prose):
         assert not _g10_offenders({"a.py": src}), src
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G11  nothing in the tree installs into the environment it runs from (LES-066)
+#   2026-11-23: a `pip install --no-deps -e .` typed into the checkout's own venv, the one the
+#   running services import from, half-uninstalled the live package (the .pth and 28 wrappers were
+#   gone, pip stopped on a locked exe) and no new process could import it for 25 minutes. An
+#   installer belongs in a venv it builds for itself. Two scans: Python (src, tests, scripts) for a
+#   child process that runs `pip install|uninstall` under sys.executable or a literal .venv path, or
+#   a bare `uv sync|pip|run|add|remove`; shell scripts (scripts/, deploy/) for the same typed as a
+#   command. A message that only NAMES the command (Write-Error "... Run: uv sync") is not a run.
+#   This catches code. A person or an agent at a prompt is covered by the release docs, not here.
+# ----------------------------------------------------------------------------------------------
+
+ALLOW_G11: list[Allow] = []
+_G11_VERBS = {"install", "uninstall"}
+_G11_UV = {"sync", "pip", "run", "add", "remove"}
+_G11_SPAWN = ("run", "check_call", "check_output", "call", "Popen")
+_G11_SHELL_SUFFIXES = (".ps1", ".cmd", ".bat", ".sh")
+_G11_SAYS = re.compile(r"^\s*(#|rem\b|::|write-\w+|echo\b|throw\b|step\b)", re.I)
+_G11_SHELL = re.compile(
+    r"\.venv[\\/](?:Scripts|bin)[\\/](?:python[\w.]*[\"']?\s+-m\s+pip|pip[\w.]*[\"']?)\s+(?:install|uninstall)\b"
+    r"|(?:^|[;&|({]\s*)(?:&\s*)?uv(?:\.exe)?\s+(?:sync|pip|run|add|remove)\b", re.I)
+
+
+def _g11_py_hits(text: str) -> list[tuple]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and node.args and isinstance(node.args[0], (ast.List, ast.Tuple))):
+            continue
+        if _dotted(node.func).rsplit(".", 1)[-1] not in _G11_SPAWN:
+            continue
+        elts = node.args[0].elts
+        if not elts:
+            continue
+        consts = [e.value for e in elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        first = elts[0]
+        first_text = first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else _dotted(first)
+        own_env = first_text == "sys.executable" or ".venv" in first_text.replace("\\", "/")
+        if own_env and "pip" in "".join(consts[:3] + [first_text]).lower() and _G11_VERBS & set(consts):
+            out.append((node.lineno, "pip " + sorted(_G11_VERBS & set(consts))[0] + " into the running environment"))
+        elif first_text in ("uv", "uv.exe") and len(consts) > 1 and consts[1] in _G11_UV:
+            out.append((node.lineno, f"uv {consts[1]} against the project environment"))
+    return out
+
+
+def _g11_shell_hits(text: str) -> list[int]:
+    return [i for i, line in enumerate(text.splitlines(), 1)
+            if not _G11_SAYS.match(line) and _G11_SHELL.search(line)]
+
+
+def test_g11_nothing_installs_into_the_environment_it_runs_from():
+    offenders = []
+    for p in _py_files(SRC, TESTS, *(d for d in (REPO / "scripts",) if d.is_dir())):
+        for lineno, what in _g11_py_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(_rel(p), _line(p, lineno), ALLOW_G11):
+                offenders.append(f"{_rel(p)}:{lineno}: {what}: {_line(p, lineno)[:110]}")
+    for root in (REPO / "scripts", REPO / "deploy"):
+        if not root.is_dir():
+            continue
+        for p in sorted(root.rglob("*")):
+            if p.suffix.lower() not in _G11_SHELL_SUFFIXES or "archive" in p.parts or not p.is_file():
+                continue
+            for lineno in _g11_shell_hits(p.read_text(encoding="utf-8", errors="replace")):
+                if not _allowed(_rel(p), _line(p, lineno), ALLOW_G11):
+                    offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G11", "an installer never runs against the environment the program (and its running "
+                                  "services) import from: build a separate venv and install there")
+
+
+def test_the_g11_scan_sees_each_shape():
+    bad_py = ("import subprocess, sys\n"
+              "subprocess.run([sys.executable, '-m', 'pip', 'install', '-e', '.'], timeout=600)\n"
+              "subprocess.check_call(['.venv/Scripts/pip.exe', 'uninstall', '-y', 'x'], timeout=60)\n"
+              "subprocess.run(['uv', 'sync'], timeout=600)\n")
+    good_py = ("import subprocess, sys\n"
+               "subprocess.run([sys.executable, '-m', 'pip', '--version'], timeout=60)\n"
+               "subprocess.run([str(other_venv_python), '-m', 'pip', 'install', 'x'], timeout=600)\n"
+               "subprocess.run([sys.executable, '-m', 'venv', str(target)], timeout=600)\n"
+               "print('run: pip install -e . or uv sync')\n")
+    assert [ln for ln, _ in _g11_py_hits(bad_py)] == [2, 3, 4]
+    assert not _g11_py_hits(good_py)
+    bad_sh = ("& .\\.venv\\Scripts\\python.exe -m pip install -e .\n"
+              "uv sync --extra telegram\n"
+              "if ($x) { uv run pytest }\n"
+              ".venv/bin/pip uninstall -y thing\n"
+              '& "$repo\\.venv\\Scripts\\python.exe" -m pip install -U pip\n')
+    good_sh = ('Write-Error "Python venv not found. Run: uv sync"\n'
+               "# uv sync would do it\n"
+               "& $venvPy -m pip install --quiet -e $clone\n"
+               '$hint = "then: uv run atlas-brain"\n'
+               "& .\\.venv\\Scripts\\python.exe -m pytest -q\n")
+    assert _g11_shell_hits(bad_sh) == [1, 2, 3, 4, 5]
+    assert not _g11_shell_hits(good_sh)
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G12  a printed command that starts an interpreter comes from one helper (LES-067)
+#   MN88 (sweep 26), AG104 (sweep 27): eight messages told the user to run `python -c "..."`.
+#   Ubuntu has no `python` outside an activated venv, so `export KEY=$(python -c ...)` set an
+#   EMPTY key and the server printed the same hint again. `_next_step.keygen_command()` prints
+#   the interpreter this install runs under; no other string in src spells `python -c`.
+# ----------------------------------------------------------------------------------------------
+
+ALLOW_G12: list[Allow] = [
+    ("src/atlas_plus/_next_step.py", "*", "the helper itself: the Windows form and the docstring that explains the rule"),
+]
+_G12_ONE_LINER = re.compile(r"\bpython3?(?:\.exe)? -c\b")
+
+
+def _g12_hits(text: str) -> list[int]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    return sorted({n.lineno for n in ast.walk(tree)
+                   if isinstance(n, ast.Constant) and isinstance(n.value, str) and _G12_ONE_LINER.search(n.value)})
+
+
+def test_g12_interpreter_one_liners_come_from_the_helper():
+    offenders = []
+    for p in _py_files(SRC):
+        for lineno in _g12_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(_rel(p), _line(p, lineno), ALLOW_G12):
+                offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G12", "a message never spells `python -c ...` itself: there is no `python` on a stock "
+                                  "Linux; print atlas_plus._next_step.keygen_command() (or how_to_run for a command)")
+
+
+def test_the_g12_scan_sees_each_shape():
+    bad = ('print("Generate one: python -c \\"import secrets\\"")\n'
+           "log.error(f'export KEY=$(python3 -c {code})')\n")
+    good = ("print(f'Generate one: {keygen_command()}')\n"
+            "# python -c in a comment is not printed\n"
+            "argv = [sys.executable, '-c', code]\n"
+            "print('run python -m atlas_plus.doctor')\n")
+    assert _g12_hits(bad) == [1, 2]
+    assert not _g12_hits(good)
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G13  a test that removes a package module from sys.modules puts it back (LES-068)
+#   2026-11-09 (memory_server) and again 2026-11-24 (tickets.store): a test popped a module to
+#   prove a lazy import and left it out. The next import made a SECOND copy of the module; a
+#   later test patched one copy while the code under test imported the other, and failed only
+#   in some file orders. `monkeypatch.delitem(sys.modules, name, raising=False)` restores it.
+# ----------------------------------------------------------------------------------------------
+
+ALLOW_G13: list[Allow] = [
+    ("tests/test_ag95.py", "redaction_ag95_probe", "a probe name the test itself creates: no real module carries it"),
+    ("tests/test_mcp_package_import.py", "sys.modules.pop(", "the file's autouse fixture restores the whole "
+                                                             "memory_server package graph after each test"),
+]
+
+
+def _g13_hits(text: str) -> list[int]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    out = set()
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Call) and _dotted(n.func).endswith("modules.pop") and n.args
+                and isinstance(n.args[0], ast.Constant) and str(n.args[0].value).startswith("atlas_plus")):
+            out.add(n.lineno)
+        if isinstance(n, ast.Delete):
+            for t in n.targets:
+                if (isinstance(t, ast.Subscript) and _dotted(t.value).endswith("sys.modules")
+                        and isinstance(t.slice, ast.Constant) and str(t.slice.value).startswith("atlas_plus")):
+                    out.add(n.lineno)
+    return sorted(out)
+
+
+def test_g13_tests_put_back_the_modules_they_remove():
+    offenders = []
+    for p in _py_files(TESTS):
+        if p.name == "test_guardrails.py":
+            continue
+        for lineno in _g13_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(_rel(p), _line(p, lineno), ALLOW_G13):
+                offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G13", "remove a package module from sys.modules with monkeypatch.delitem(sys.modules, "
+                                  "name, raising=False), which restores it; a bare pop or del leaves two copies")
+
+
+def test_the_g13_scan_sees_each_shape():
+    bad = ("import sys\n"
+           "sys.modules.pop('atlas_plus.tickets.store', None)\n"
+           "del sys.modules['atlas_plus.web.app']\n")
+    good = ("import sys\n"
+            "monkeypatch.delitem(sys.modules, 'atlas_plus.tickets.store', raising=False)\n"
+            "sys.modules.pop('some_benchmark_helper', None)\n")
+    assert _g13_hits(bad) == [2, 3]
+    assert not _g13_hits(good)
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--g8-child"]:

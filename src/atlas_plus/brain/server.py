@@ -1397,15 +1397,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if _API_KEY and len(_API_KEY) < 16:
-        log.error("ATLAS_BRAIN_API_KEY is only %d characters; refusing to start. Generate one: "
-                  "python -c \"import secrets; print(secrets.token_urlsafe(32))\"", len(_API_KEY))
+        log.error("ATLAS_BRAIN_API_KEY is only %d characters; refusing to start. Generate one: %s",
+                  len(_API_KEY), _next_step.keygen_command())
         sys.exit(1)
     # Fail closed: refuse to start without a token unless --no-auth is explicit.
     if not _API_KEY and not args.no_auth:
         log.error(
-            "ATLAS_BRAIN_API_KEY is not set. Refusing to start. "
-            "Generate a token: python -c \"import secrets; print(secrets.token_urlsafe(32))\" "
-            "Set ATLAS_BRAIN_API_KEY, or use --no-auth for local development only."
+            "%s. Refusing to start. "
+            "Generate a token: %s "
+            "Set ATLAS_BRAIN_API_KEY, or use --no-auth for local development only.",
+            _next_step.key_missing("ATLAS_BRAIN_API_KEY"), _next_step.keygen_command(),
         )
         sys.exit(1)
 

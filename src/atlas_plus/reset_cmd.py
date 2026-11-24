@@ -74,15 +74,27 @@ def main() -> None:
         default=None,
         help="non-interactive corpus confirmation: must name the corpus path (slash style and trailing separators are tolerated, case only where the filesystem ignores it; anything else refuses)",
     )
+    parser.add_argument("--dry-run", action="store_true",
+                        help="report what each area would do and change nothing (a safe preview)")
     args = parser.parse_args()
+    import sys as _sys
+    _err = _sys.stderr
+
+    def _refuse(*lines: str) -> None:  # stderr, ending with a safe next step (AG103)
+        for line in lines:
+            print(line, file=_err)
+        flags = " ".join(f for f, on in (("--state", args.state), ("--corpus", args.corpus), ("--all", args.all)) if on)
+        print(f"Next: {uninstall_cmd.refusal_next(_prog(), (flags + ' --dry-run').strip())}", file=_err)
+        raise SystemExit(1)
 
     do_state = args.state or args.all
     do_corpus = args.corpus or args.all
 
-    if not do_state and not do_corpus:
+    if args.dry_run or (not do_state and not do_corpus):
         info = uninstall_cmd.report()
         c, s = info["corpus"], info["state"]
-        print(f"{_prog()}: nothing selected; here is what each area would do.")
+        print(f"{_prog()}: " + ("--dry-run: nothing was changed" if args.dry_run else "nothing selected")
+              + "; here is what each area would do.")
         print(f"  --state  : clear derived caches in {s['path']} ({s['files']} file(s) now; derived caches only)")
         prot = " [PROTECTED -- reset will refuse]" if c["protected"] else ""
         print(f"  --corpus : wipe {c['path']} ({c['files']} file(s) now){prot},")
@@ -97,23 +109,17 @@ def main() -> None:
     if do_state and atlas_paths.state_dir().exists():
         state_refusal = uninstall_cmd.validate_destructive_target("state", atlas_paths.state_dir())
         if state_refusal:
-            print(f"state:  {state_refusal}")
-            if do_corpus:
-                print("corpus: not reset (state target unsafe; nothing was changed)")
-            raise SystemExit(1)
+            _refuse(f"state:  {state_refusal}",
+                    *(["corpus: not reset (state target unsafe; nothing was changed)"] if do_corpus else []))
     if do_state and do_corpus:
         _pre = uninstall_cmd.derived_state_refusal()
         if _pre:  # the state step would refuse: nothing is wiped (MN66: the corpus went, the state was refused, rc 1)
-            print(f"state:  {_pre}")
-            print("corpus: not reset (the state step would refuse; nothing was changed)")
-            raise SystemExit(1)
+            _refuse(f"state:  {_pre}", "corpus: not reset (the state step would refuse; nothing was changed)")
     if do_corpus:
         refusal = uninstall_cmd.corpus_target_refusal() or uninstall_cmd.confirm_corpus_removal(args.yes, args.confirm_path)  # (AG73)
         if refusal is not None:
-            if do_state:
-                print("state:  not reset (corpus confirmation failed; nothing was changed)")
-            print(f"corpus: {refusal}")
-            raise SystemExit(1)
+            _refuse(*(["state:  not reset (corpus confirmation failed; nothing was changed)"] if do_state else []),
+                    f"corpus: {refusal}")
 
     failed = False
     if do_state:
@@ -124,6 +130,8 @@ def main() -> None:
         outcome = reset_corpus(args.yes, args.confirm_path)
         print(f"corpus: {outcome}")
         failed = failed or outcome.startswith(("refused", "REFUSED"))
+    if failed:
+        print(f"Next: {uninstall_cmd.refusal_next(_prog(), '--dry-run')}", file=_err)
     raise SystemExit(1 if failed else 0)
 
 

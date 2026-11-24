@@ -504,7 +504,7 @@ def cmd_search(
 ) -> None:
     """Search your memory from the shell (hybrid keyword + semantic)."""
     if not query.strip():
-        _err_console().print("[red]Give a query:[/red] sextant search \"<words>\" (an empty query finds nothing).")
+        _err_console().print("[red]Give a query:[/red] `sextant search \"<words>\"` (an empty query finds nothing).")
         raise typer.Exit(2)
     from atlas_plus.mcp.memory_server.tools.search import (
         confidence_band, memory_search_hybrid, normalize_search_scope,
@@ -564,7 +564,8 @@ def cmd_search(
         raw_snippet = re.sub(r"<!--\s*source:[^>]*-->", "", r.get("snippet") or "")   # curation metadata (FN6)
         snippet = "".join(c for c in raw_snippet.replace("\n", " ")[:120]
                           if c >= " " or c == "\t")   # no ESC/BEL from a stored note reaches the terminal (AG10)
-        console.print(f"  [bold]{escape(r['path'])}[/bold]  [dim]{escape(snippet)}[/dim]")
+        from atlas_plus._term import safe as _safe  # a newline in a file name cannot fake a hit line (SEX-048)
+        console.print(f"  [bold]{escape(_safe(r['path']))}[/bold]  [dim]{escape(snippet)}[/dim]")
 
 
 def service_ports() -> dict[str, int]:
@@ -790,7 +791,8 @@ _REDIRECTS = {
     "recall": "Did you mean `sextant search <words>` or `sextant context`?",
     "list": "Did you mean `sextant search <words>` (facts) or `sextant components` (what is installed)?",
     "forget": "Facts are plain Markdown: edit or delete the line in the note `sextant search` names. `sextant uninstall` removes the whole corpus.",
-    "update": "Facts are plain Markdown: edit the line in the note `sextant search` names. To upgrade the package: `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`.",
+    # the upgrade line is filled in when the redirect runs: it depends on how this copy was installed (AG103)
+    "update": "Facts are plain Markdown: edit the line in the note `sextant search` names. To upgrade the package: {upgrade}.",
 }
 
 
@@ -802,11 +804,15 @@ def _err_console():
 def _make_redirect(name: str, sentence: str):
     def _redirect(ctx: typer.Context) -> None:
         _extra = " ".join(ctx.args)
+        _text = sentence
+        if "{upgrade}" in _text:
+            from atlas_plus._next_step import upgrade_line
+            _text = _text.replace("{upgrade}", upgrade_line())
         # stderr, like every other refusal: exit 2 with the reason on stdout was missed by scripts (AG102)
-        _err_console().print(f"[yellow]No such command '{name}'.[/yellow] {sentence}" + (f" (you typed: {name} {_extra[:80]})" if _extra else ""))
+        _err_console().print(f"[yellow]No such command '{name}'.[/yellow] {_text}" + (f" (you typed: {name} {_extra[:80]})" if _extra else ""))
         raise typer.Exit(2)
     _redirect.__name__ = f"_redirect_{name}"
-    _redirect.__doc__ = sentence
+    _redirect.__doc__ = sentence.replace("{upgrade}", "`pip install -U sextant-ai`")
     return _redirect
 
 

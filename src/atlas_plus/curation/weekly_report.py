@@ -200,7 +200,10 @@ def generate_report(
     _capped = len(fact_dups) > 500  # the count read as a total; it was the cap (MN30)
     fact_dups = fact_dups[:500]
     from atlas_plus.mcp.memory_server.routing import downgrade_stale_confirmations
-    never = [c for c in downgrade_stale_confirmations(memory_root=root, dry_run=True) if c.get("last_confirmed") == "never"]
+    # One pass feeds both sections below (never confirmed, unconfirmed stale): the same call with the same
+    # arguments ran twice per report, reading every note's frontmatter each time (SEX-046).
+    _decay = downgrade_stale_confirmations(threshold_days=90, memory_root=root, dry_run=True)
+    never = [c for c in _decay if c.get("last_confirmed") == "never"]
 
     lines = [
         f"# Atlas Memory Curation Report -- {today}",
@@ -330,13 +333,7 @@ def generate_report(
         lines.append("*No re-derivable facts found above threshold.*")
 
     # Unconfirmed decay section (new: stale last_confirmed facts)
-    try:
-        from atlas_plus.mcp.memory_server.routing import downgrade_stale_confirmations
-        stale_confirmed = downgrade_stale_confirmations(
-            threshold_days=90, memory_root=root, dry_run=True
-        )
-    except Exception:
-        stale_confirmed = []
+    stale_confirmed = _decay
     lines += [
         "",
         "---",

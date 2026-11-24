@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 from atlas_plus._fsutil import make_private_dir
+from atlas_plus._term import safe as _safe  # note paths shown with escapes (SEX-048)
 import json
 import os
 import re
@@ -264,6 +265,52 @@ def check_permissions() -> dict:
     from atlas_plus import paths as _paths
     state = _paths.state_dir()
     return {"loose": _fsutil.loose_dir_modes([MEMORY_ROOT, state, state / "sync"])}
+
+
+def check_writable() -> dict:
+    """Corpus root and state dir accept a write: a probe file made and removed (SEX-048)."""
+    import tempfile
+    from atlas_plus import _next_step
+    from atlas_plus import paths as _paths
+    rows = []
+    for label, root in (("corpus", Path(MEMORY_ROOT)), ("state dir", _paths.state_dir())):
+        if not root.is_dir():
+            continue
+        try:
+            fd, probe = tempfile.mkstemp(prefix=".sextant-write-probe-", dir=str(root))
+            os.close(fd)
+            os.unlink(probe)
+            rows.append({"what": label, "path": str(root), "ok": True})
+        except OSError as exc:
+            rows.append({"what": label, "path": str(root), "ok": False,
+                         "error": exc.strerror or exc.__class__.__name__,
+                         "fix": _next_step.write_refused(exc, root).split("Next: ", 1)[-1]})
+    return {"roots": rows, "ok": all(r["ok"] for r in rows)}
+
+
+def check_command_owner() -> dict:
+    """The `sextant` command in this environment is ours. `pip install sextant` installs an unrelated
+    project whose launcher replaces it; the round trip then fails with that project's usage text and
+    nothing said why (MN89)."""
+    from importlib.metadata import entry_points
+    foreign = []
+    try:
+        for ep in entry_points(group="console_scripts"):
+            if ep.name == "sextant" and not str(ep.value).startswith("atlas_plus"):
+                dist = getattr(getattr(ep, "dist", None), "name", None) or "another package"
+                foreign.append(str(dist))
+    except Exception:  # noqa: BLE001 - a broken metadata folder must not break doctor
+        return {"ok": True, "foreign": []}
+    py = "python"
+    try:
+        from atlas_plus import _next_step
+        py = _next_step.how_to_run("python")
+    except Exception:  # noqa: BLE001
+        pass
+    fix = (f"`{py} -m pip uninstall -y {foreign[0]}`, then "
+           f"`{py} -m pip install --force-reinstall --no-deps sextant-ai` (the uninstall removes the shared "
+           "`sextant` program; a plain install answers 'already satisfied' and does not put it back)") if foreign else ""
+    return {"ok": not foreign, "foreign": sorted(set(foreign)), "fix": fix}
 
 
 def check_temporal() -> dict:
@@ -1337,7 +1384,9 @@ def check_memory_health_overview() -> dict:
     """
     try:
         from atlas_plus.curation.health import scan_memory_health
-        results = scan_memory_health(MEMORY_ROOT, limit=9999)  # all files
+        # every file: a cap of 9,999 made the totals describe the first 9,999 paths of a 20,000-note corpus
+        # and call it the whole (SEX-046)
+        results = scan_memory_health(MEMORY_ROOT, limit=sys.maxsize)
         if not results:
             return {"total_files": 0, "score_0": 0, "score_25": 0, "score_50": 0,
                     "score_75": 0, "score_100": 0, "avg_score": 0.0}
@@ -1917,7 +1966,24 @@ def render_text(data: dict) -> str:
     if loose:
         lines.append("\033[1mPermissions\033[0m")
         for row in loose:
-            lines.append(f"  \033[33mwarning\033[0m  {row['path']} is mode {row['mode']}: other accounts on this machine can read it. Fix: {row['fix']}")
+            lines.append(f"  \033[33mwarning\033[0m  {_safe(row['path'])} is mode {row['mode']}: other accounts on this machine can read it. Fix: {row['fix']}")
+        lines.append("")
+
+    # Command owner: the `sextant` launcher belongs to this package (MN89)
+    owner = data.get("command_owner") or {}
+    if owner.get("foreign"):
+        lines.append("\033[1mCommand\033[0m")
+        lines.append(f"  \033[31mFAIL\033[0m  the `sextant` command here belongs to another package "
+                     f"({', '.join(owner['foreign'])}), not to Sextant. Fix: {owner.get('fix')}")
+        lines.append("")
+
+    # Writable: the corpus and the state dir accept a write (SEX-048)
+    unwritable = [r for r in ((data.get("writable") or {}).get("roots") or []) if not r.get("ok")]
+    if unwritable:
+        lines.append("\033[1mWritable\033[0m")
+        for row in unwritable:
+            lines.append(f"  \033[31mFAIL\033[0m  the {row['what']} {_safe(row['path'])} cannot be written ({row.get('error')}). "
+                         f"Fix: {row.get('fix')}")
         lines.append("")
 
     # Memory quality overview
@@ -2041,7 +2107,7 @@ def render_text(data: dict) -> str:
         lines.append(f"  \033[33m{n} file(s) unreferenced + low health + old (>180d)\033[0m")
         for item in orphans.get("top", [])[:3]:
             lines.append(
-                f"    {item['path']}  (age={item['age_days']}d  health={item['score']:.2f})"
+                f"    {_safe(item['path'])}  (age={item['age_days']}d  health={item['score']:.2f})"
             )
         lines.append("  Run: atlas-review-memory orphans")
         lines.append("")
@@ -2064,7 +2130,7 @@ def render_text(data: dict) -> str:
         lines.append("\033[1mRe-derivable Facts\033[0m")
         lines.append(f"  \033[33m{n} file(s) overlap with project docs (threshold 0.40)\033[0m")
         for item in rederiv.get("top", [])[:3]:
-            lines.append(f"    {item['path']}  (sim={item['similarity']:.2f}  matches: {item['matched_doc']})")
+            lines.append(f"    {_safe(item['path'])}  (sim={item['similarity']:.2f}  matches: {_safe(item['matched_doc'])})")
         lines.append("  Run: atlas-review-memory rederive")
         lines.append("")
 
@@ -2300,6 +2366,8 @@ def collect() -> dict:
         ("autonomous",        check_autonomous),
         ("disk",              check_disk),
         ("permissions",       check_permissions),
+        ("writable",          check_writable),
+        ("command_owner",     check_command_owner),
         ("temporal",          check_temporal),
         ("stop_hook",         check_stop_hook),
         ("tickets",           check_tickets),
@@ -2401,6 +2469,11 @@ def main() -> int:
             if isinstance(_val, dict) and (_val.get("conflict_markers") or _val.get("unmerged") or _val.get("duplicate_keys")):
                 bad.append("corpus holds unresolved git conflicts or duplicate frontmatter keys")  # --strict exited 0 with markers present (AG57)
                 break
+        if (data.get("command_owner") or {}).get("foreign"):
+            bad.append("the `sextant` command belongs to another package")  # MN89
+        for _row in ((data.get("writable") or {}).get("roots") or []):
+            if not _row.get("ok"):
+                bad.append(f"the {_row.get('what')} {_row.get('path')} is not writable")  # SEX-048
         for val in services:
             if not isinstance(val, dict):
                 continue

@@ -284,7 +284,9 @@ imported vault: `--scope reference:obsidian/README`.
   (LM Studio, vLLM, llama.cpp), or `anthropic` with an API key. Your
   models, your choice.
 - **Web dashboard**: needs a key first --
-  `python -c "import secrets; print(secrets.token_urlsafe(32))"`,
+  `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+  (on Linux and macOS outside an activated venv, `python3`; `sextant-web` prints the
+  line with this install's interpreter),
   set it as `ATLAS_WEB_API_KEY` (persistently: see docs/CONFIGURATION.md's
   note on setting variables), then `sextant-web` and open. The page itself
   loads one UI library (htmx) from a public CDN in your browser (Tailwind is served by the dashboard):
@@ -507,7 +509,8 @@ venv's python by absolute path, and the update below reuses that venv
 and then re-run the registration: `claude mcp add` refuses a name that
 already exists). The pip
 reinstall is what makes any NEW `sextant-*` commands appear, so do not
-skip it. A `pip install git+...` install does not update with `-U` while every build is
+skip it. A PyPI install (`pip install sextant-ai`) updates with `pip install -U sextant-ai`.
+From source, a `pip install git+...` install does not update with `-U` while every build is
 version 0.1.0: `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`.
 Local edits in the clone? `git stash` before pulling, `git stash pop`
 after. If the pop reports a conflict (`UU <file>`), the upstream change and

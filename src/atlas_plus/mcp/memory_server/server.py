@@ -100,7 +100,7 @@ def _transport_security():
     return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
 
 # Bearer token for HTTP mode. Must be set when --http-auth is used.
-# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))" (python3 on Linux)
 _MCP_TOKEN = os.environ.get("ATLAS_MCP_TOKEN", "")
 if _MCP_TOKEN != _MCP_TOKEN.strip():
     # A CRLF .env or EnvironmentFile leaves a newline on the token; the presented token is
@@ -1489,17 +1489,19 @@ def main() -> None:
     # Prevents accidentally exposing an unauthenticated MCP endpoint via tunnel.
     token = _MCP_TOKEN
     if token and len(token) < 16 and not args.no_auth:  # --no-auth ignores the token entirely
-        log.error("ATLAS_MCP_TOKEN is only %d characters; refusing to start. Generate one: "
-                  "python -c \"import secrets; print(secrets.token_urlsafe(32))\"", len(token))
+        from atlas_plus import _next_step
+        log.error("ATLAS_MCP_TOKEN is only %d characters; refusing to start. Generate one: %s",
+                  len(token), _next_step.keygen_command())
         raise SystemExit(1)
     if not token and not args.no_auth:
+        from atlas_plus import _next_step
         log.error(
-            "ATLAS_MCP_TOKEN is not set. Refusing to start HTTP mode without auth. "
-            "Generate a token: python -c \"import secrets; print(secrets.token_urlsafe(32))\" "
-            "Set ATLAS_MCP_TOKEN, or use --no-auth for local development only."
+            "%s. Refusing to start HTTP mode without auth. "
+            "Generate a token: %s "
+            "Set ATLAS_MCP_TOKEN, or use --no-auth for local development only.",
+            _next_step.key_missing("ATLAS_MCP_TOKEN"), _next_step.keygen_command(),
         )
         # The log line wraps in columns; most people who type this want a client connected (AG102).
-        from atlas_plus import _next_step
         print(f"Next: an MCP client starts this server itself over stdio: {_next_step.command('setup')} prints "
               "the line that registers it. Serving HTTP needs ATLAS_MCP_TOKEN (docs/HOWTO-self-hosting.md).",
               file=sys.stderr)

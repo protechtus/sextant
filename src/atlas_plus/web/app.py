@@ -7593,18 +7593,20 @@ def main() -> None:
         # Refuse, not warn: the docs say the dashboard will not run without a real key, and a
         # 5-character one is not a key (persona rerun 2026-11-10).
         print(f"ATLAS_WEB_API_KEY is only {len(API_KEY)} characters; refusing to start. Generate one: "
-              'python -c "import secrets; print(secrets.token_urlsafe(32))"', file=__import__("sys").stderr)
+              f"{_next_step.keygen_command()}", file=__import__("sys").stderr)
         raise SystemExit(1)
     # httpx logs every Brain poll at INFO (a 401 every few seconds when the Brain key is
     # wrong or the Brain is not running); the poll loop reports that once, with a hint.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if not API_KEY and not _ALLOW_NO_AUTH:
+        _kg = _next_step.keygen_command()
         print(
-            'ATLAS_WEB_API_KEY not set.\n'
+            f'{_next_step.key_missing("ATLAS_WEB_API_KEY")}.\n'
             'Generate a key and set it, then re-run:\n'
-            '  PowerShell:  $env:ATLAS_WEB_API_KEY = python -c "import secrets; print(secrets.token_urlsafe(32))"\n'
-            '               (persist with: setx ATLAS_WEB_API_KEY $env:ATLAS_WEB_API_KEY)\n'
-            '  bash/zsh:    export ATLAS_WEB_API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")\n'
+            + (f'  PowerShell:  $env:ATLAS_WEB_API_KEY = {_kg}\n'
+               '               (persist with: setx ATLAS_WEB_API_KEY $env:ATLAS_WEB_API_KEY)\n'
+               if os.name == "nt" else '')
+            + f'  bash/zsh:    export ATLAS_WEB_API_KEY=$({_kg})\n'
             'Or use --no-auth for local dev (loopback only). More: docs/GETTING-STARTED.md, section 6.',
             file=__import__("sys").stderr,
         )

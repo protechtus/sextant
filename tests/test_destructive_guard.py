@@ -131,7 +131,9 @@ class TestCliTwoPhase:
             uninstall_cmd.main()
         assert e.value.code == 1
         assert (corpus / "projects" / "note.md").exists()
-        assert "REFUSED" in capsys.readouterr().out
+        streams = capsys.readouterr()
+        assert "REFUSED" in streams.err          # a refusal is an error: stderr since AG103, with a safe next step
+        assert "--dry-run" in streams.err and "--yes" not in streams.err.split("Next:", 1)[-1]
 
     def test_reset_all_with_unsafe_state_changes_nothing(self, tmp_path, monkeypatch, capsys):
         corpus = _corpus(tmp_path)

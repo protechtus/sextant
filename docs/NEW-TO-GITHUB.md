@@ -289,7 +289,7 @@ Find your message in the left column. The words do not have to match exactly.
 | `sextant : The term 'sextant' is not recognized` | You typed `sextant` alone. That only works in an activated `.venv`. | Type `.\.venv\Scripts\sextant.exe` instead, from inside the `sextant-install` folder. |
 | `The system cannot find the path specified` on a `.\.venv\...` line | You are not in the folder from step 2. | `cd $HOME\sextant-install`, then run the line again. |
 | `claude : The term 'claude' is not recognized` | Claude Code is not installed, or the window is older than the install. | Step 1, AI client. Then a new window. |
-| You ran `pip install sextant` | That is a different project by someone else with the same name. | `.\.venv\Scripts\python.exe -m pip uninstall sextant`, then step 3. |
+| You ran `pip install sextant` | That is a different project by someone else with the same name. | `.\.venv\Scripts\python.exe -m pip uninstall -y sextant`, then `.\.venv\Scripts\python.exe -m pip install --force-reinstall --no-deps sextant-ai`. The uninstall also removes the `sextant` program the two projects share, and a plain install (step 3 included) answers "already satisfied" without putting it back. `.\.venv\Scripts\sextant-doctor.exe` names this problem when it sees it. |
 
 Still stuck? Open an issue at https://github.com/protechtus/sextant/issues and paste
 the line you typed and the last ten lines the screen printed. That is all we need, and

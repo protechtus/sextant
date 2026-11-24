@@ -29,6 +29,17 @@ import shlex
 import sys
 from pathlib import Path
 
+
+def _powershell() -> bool:
+    """True where the person will paste the printed lines into PowerShell (native Windows)."""
+    return os.name == "nt"
+
+
+def _keygen() -> str:
+    from atlas_plus import _next_step  # the key hint for this machine (SEX-048)
+    return _next_step.keygen_command()
+
+
 SERVER_MODULE = "atlas_plus.mcp.memory_server.server"
 SERVER_NAME = "sextant"
 #: The variables the MCP SERVER reads to decide where the corpus and its state live. When any
@@ -312,6 +323,13 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
         "port": port,
         "lan_url": f"http://<host>:{port}/mcp",
         "verify_http": f"python -m atlas_plus verify --url http://<host>:{port}/mcp --token $ATLAS_MCP_TOKEN",
+        # The same three lines as PowerShell types them: `VAR=x cmd` is "not recognized" there and
+        # `$ATLAS_MCP_TOKEN` is an empty PowerShell variable, so the header read `Bearer ` (MN89).
+        "serve_powershell": '$env:ATLAS_MCP_TOKEN = "<long random>"; & ' + verify.split(" -m ")[0] + f" -m {SERVER_MODULE}",
+        "remote_claude_code_powershell": 'claude mcp add -s user --transport http sextant https://<your-host>/mcp '
+                                         '--header "Authorization: Bearer $env:ATLAS_MCP_TOKEN"',
+        "verify_http_powershell": f"python -m atlas_plus verify --url http://<host>:{port}/mcp "
+                                  "--token $env:ATLAS_MCP_TOKEN",
         "docs": _self_hosting_doc(),
     }
     import shutil as _shutil
@@ -468,6 +486,10 @@ def render(info: dict, client: str = "all") -> str:
                          "mode behind your ingress and register the remote client against it:")
             if not info.get("claude_on_path"):
                 lines.append("   (`claude` is not on PATH here, so section 1 applies on the client machine)")
+            if _powershell() and h.get("serve_powershell"):  # this machine's shell (MN89)
+                h = {**h, "serve": h["serve_powershell"], "remote_claude_code": h["remote_claude_code_powershell"],
+                     "verify_http": h["verify_http_powershell"],
+                     "serve_container": h["serve_container"] + "   (the container's shell, not PowerShell)"}
             lines += ["   " + h["serve"],
                       f"   (binds 127.0.0.1:{h.get('port', 8765)}; the token is required; ready when the log says "
                       "`Uvicorn running on`, a few seconds)",
@@ -477,8 +499,7 @@ def render(info: dict, client: str = "all") -> str:
                       "   " + h["remote_claude_code"],
                       f"   (behind an ingress; on a LAN or the same host the URL is {h['lan_url']}, and for "
                       "another machine on the LAN the server must bind beyond loopback: ATLAS_MCP_HOST=<this "
-                      "machine's LAN address>; make the token with python -c \"import secrets; "
-                      "print(secrets.token_urlsafe(32))\"; pass it from a variable, since `claude mcp get` "
+                      "machine's LAN address>; make the token with " + _keygen() + "; pass it from a variable, since `claude mcp get` "
                       "and shell history show it)",
                       "   Prove a write over HTTP from the client machine, with that machine's own Python that "
                       "has the package (or scripts/mcp_roundtrip.py from a clone): " + h["verify_http"],

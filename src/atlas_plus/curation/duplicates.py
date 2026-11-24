@@ -57,19 +57,91 @@ def _lsh_shape(threshold: float) -> tuple[int, int]:
     return r, max(1, min(b, 400))
 
 
-def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = None):
+_SIG_POPS_MAX = 4096  # tokens walked per hash column before the notes still unsigned are signed directly
+
+
+def _lsh_minima(shared_toks: list, k: int, deadline: Optional[float] = None, postings: Optional[dict] = None):
+    """The MinHash minima, one ``array('I')`` of len(shared_toks) per hash column, and whether the
+    deadline cut the work short (then fewer than ``k`` columns come back).
+
+    A note's minimum in a column is the hash of whichever of its tokens hashes lowest there. Taking the
+    minimum note by note costs tokens-per-note x k for every note (2,000 notes of 900 words: 378 million
+    comparisons, 25 of the report's 33 seconds; SEX-046). Walking the column's tokens in ascending hash
+    order instead, the first token a note contains IS its minimum, so each note is settled by the first
+    posting list that reaches it and a common vocabulary settles most notes within a few dozen tokens.
+    The few notes left (short notes of rare words) are signed directly. Same minima, so the same
+    candidates in the same order."""
+    import hashlib
+    import time as _time
+    from array import array
+    from itertools import compress
+    n = len(shared_toks)
+    if postings is None:
+        postings = {}
+        for i, toks in enumerate(shared_toks):
+            for t in toks:
+                postings.setdefault(t, []).append(i)
+        vocab_toks = list(postings)
+    else:
+        vocab_toks = [t for t, p in postings.items() if len(p) >= 2]
+    vocab = {t: j for j, t in enumerate(vocab_toks)}
+    posts = [postings[t] for t in vocab_toks]
+    v = len(vocab_toks)
+    big = array("I")
+    big.frombytes(b"".join(hashlib.shake_128(t.encode("utf-8", "surrogatepass")).digest(4 * k) for t in vocab_toks))
+    stride = len(big) // v if v else k  # k where array('I') is four bytes wide (every supported platform)
+    nonempty = [i for i, toks in enumerate(shared_toks) if toks]
+    tau = max(4, n >> 8)       # this few unsigned notes are cheaper to sign directly than to keep walking
+    top = 1 << 32
+    range_v = range(v)
+    blank = bytes(4 * n)
+    cols: list = []
+    for c in range(k):
+        if deadline is not None and _time.monotonic() > deadline:
+            return cols, True  # the columns done so far still give whole bands; the scan reports itself partial (MN79)
+        col = big[c::stride]
+        colget = col.__getitem__
+        out = array("I", blank)
+        un = set(nonempty)
+        size = max(64, min(v, 512))
+        done = 0
+        while len(un) > tau and done < min(v, _SIG_POPS_MAX):
+            hi = top if size >= v else max(1, (top // v) * size)
+            cand = sorted(compress(range_v, map(hi.__gt__, col)), key=colget)  # the tokens hashing below hi, ascending
+            for t in cand[done:]:
+                hit = un.intersection(posts[t])
+                if hit:
+                    h = col[t]
+                    for i in hit:
+                        out[i] = h
+                    un -= hit
+                    if len(un) <= tau:
+                        break
+            done = len(cand)
+            if hi >= top:
+                break
+            size *= 2
+        for i in un:
+            out[i] = min(map(colget, map(vocab.__getitem__, shared_toks[i])))
+        cols.append(out)
+    return cols, False
+
+
+def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = None, postings: Optional[dict] = None):
     """Candidate pairs (i, j), i < j, from MinHash bands over each note's SHARED tokens (a token in one
     note only can never be in an intersection; leaving it out raises every estimate, so it costs no
     recall). One shake-128 digest per distinct token gives all r*b hash values; a note's signature is
-    the column-wise minimum, computed in C (map/min/zip). Past ``deadline`` (time.monotonic) it yields
-    None once and stops, so a scan whose candidates are mostly repeats still honours its budget."""
-    import hashlib
+    the column-wise minimum (``_lsh_minima``). Past ``deadline`` (time.monotonic) it yields
+    None once and stops, so a scan whose candidates are mostly repeats still honours its budget.
+    ``postings`` (token -> ascending note indexes), when the caller already has it, saves building it;
+    only its tokens held by two or more notes are used, which must be the tokens of ``shared_toks``."""
     import time as _time
     from operator import eq
     from array import array
     r, b = _lsh_shape(threshold)
     k = r * b
-    table: dict[str, array] = {}
+    cols, cut = _lsh_minima(shared_toks, k, deadline, postings)
+    b = len(cols) // r  # whole bands only: fewer than planned when the deadline cut the signing
     # One bucket dict per band and each note's band keys: candidates are yielded lazily, band by band, and a
     # pair already yielded by an earlier band is skipped by comparing the two notes' earlier keys. The old
     # code put every pair of every bucket into one set and sorted it before yielding the first: 3,000
@@ -77,20 +149,10 @@ def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = 
     buckets: list[dict[int, list[int]]] = [{} for _ in range(b)]
     keys: list = [None] * len(shared_toks)
     bands = range(b)
-    cut = False
-    for i, toks in enumerate(shared_toks):
-        if deadline is not None and not i & 255 and i and _time.monotonic() > deadline:
-            cut = True  # the notes signed so far still give candidates; the scan reports itself partial (MN79)
-            break
-        if not toks:
+    for i, sig in enumerate(zip(*cols[:b * r])):
+        if not shared_toks[i]:
             continue
-        rows = []
-        for t in toks:
-            h = table.get(t)
-            if h is None:
-                h = table[t] = array("I", hashlib.shake_128(t.encode("utf-8", "surrogatepass")).digest(4 * k))
-            rows.append(h)
-        it = iter(map(min, zip(*rows)))
+        it = iter(sig)
         # one key per band, built in C: (band, r minima); a hash collision only adds a candidate, never loses one
         ki = keys[i] = array("q", map(hash, zip(bands, *([it] * r))))
         for band, key in enumerate(ki):
@@ -260,10 +322,9 @@ def find_fact_duplicates(
         and not is_excluded_mirror(p.relative_to(root).parts)
         and not p.name.startswith("_")
     ]
+    import time as _time
     exact: dict[str, list[tuple[str, str]]] = {}
-    entries: list[tuple[str, str, frozenset]] = []
-    norms: list[str] = []
-    df: dict[str, int] = {}
+    pending: list[tuple[str, str, str]] = []
     for f in sorted(files):
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -275,18 +336,41 @@ def find_fact_duplicates(
             if _weight(norm) < 20:
                 continue
             exact.setdefault(norm, []).append((rel, fact))
-            toks = _tokens(norm)
-            if len(toks) >= 4:
-                entries.append((rel, fact, toks))
-                norms.append(norm)
-                for t in toks:
-                    df[t] = df.get(t, 0) + 1
+            pending.append((rel, fact, norm))
     out: list[dict] = []
-    seen_pairs: set[tuple[int, int]] = set()
     for norm, hits in exact.items():
         if len(hits) > 1:
             for (r1, f1), (r2, _f2) in zip(hits, hits[1:]):
                 out.append({"kind": "exact", "file1": r1, "file2": r2, "similarity": 1.0, "fact": f1[:160]})
+    _LAST_PARTIAL[0] = _LAST_PARTIAL[1] = 0
+    if len(out) >= limit:
+        # Exact repeats sort first and already fill the answer: no near repeat could be shown, so none is
+        # looked for. Tokenising and indexing every fact for a list that was full took most of this scan's
+        # time and memory on a corpus with shared boilerplate (SEX-046).
+        return out[:limit]
+    try:
+        _budget = float(__import__("os").environ.get("ATLAS_DUPLICATES_BUDGET_SECONDS") or 60)
+    except ValueError:
+        _budget = 60.0
+    # The index build has the same budget as the walk after it: a million facts took longer to tokenise
+    # than the walk was allowed to run, and nothing bounded it. Cut short, the walk covers the facts
+    # indexed so far and the scan reports itself partial (the total is then an estimate).
+    _build_deadline = _time.monotonic() + _budget if _budget > 0 else None
+    entries: list[tuple[str, str, frozenset]] = []
+    norms: list[str] = []
+    df: dict[str, int] = {}
+    _total_est = 0
+    for n_done, (rel, fact, norm) in enumerate(pending):
+        if _build_deadline is not None and n_done and not n_done & 1023 and _time.monotonic() > _build_deadline:
+            _total_est = max(len(entries) + 1, round(len(entries) * len(pending) / n_done))
+            break
+        toks = _tokens(norm)
+        if len(toks) >= 4:
+            entries.append((rel, fact, toks))
+            norms.append(norm)
+            for t in toks:
+                df[t] = df.get(t, 0) + 1
+    del pending
     # Near repeats: a pair qualifies when it shares at least 3 tokens AND its Jaccard reaches the
     # threshold. Exact prefix filter (AG90; the old walk counted every posting of every common
     # word, quadratic: 50 s on 2,500 facts): order each fact's tokens rarest-first; a pair
@@ -296,7 +380,6 @@ def find_fact_duplicates(
     # is the same pair set as the full walk.
     import bisect as _bisect
     import math as _math
-    import time as _time
     _t = float(near_threshold)
     prefixes: list[tuple[str, ...]] = []
     index: dict[str, list[int]] = {}
@@ -307,15 +390,12 @@ def find_fact_duplicates(
         prefixes.append(pre)
         for t in pre:
             index.setdefault(t, []).append(idx)  # ascending: built in entry order
-    try:
-        _budget = float(__import__("os").environ.get("ATLAS_DUPLICATES_BUDGET_SECONDS") or 60)
-    except ValueError:
-        _budget = 60.0
     _deadline = _time.monotonic() + _budget if _budget > 0 else None
-    _LAST_PARTIAL[0] = _LAST_PARTIAL[1] = 0
+    if _total_est:
+        _LAST_PARTIAL[0], _LAST_PARTIAL[1] = len(entries), _total_est  # unless the walk below stops sooner
     for i, (rel, fact, toks) in enumerate(entries):
         if _deadline is not None and i % 64 == 0 and _time.monotonic() > _deadline:
-            _LAST_PARTIAL[0], _LAST_PARTIAL[1] = i, len(entries)  # the facts scan had no budget: the weekly report never finished (MN67)
+            _LAST_PARTIAL[0], _LAST_PARTIAL[1] = i, _total_est or len(entries)  # the facts scan had no budget: the weekly report never finished (MN67)
             break
         cands: set[int] = set()
         for t in prefixes[i]:
@@ -455,7 +535,7 @@ def find_duplicates(
     if _LAST_APPROX[0]:
         shared = [[t for t in o if df[t] >= 2] for o in ordered]
         reached = bytearray(len(file_list))  # notes that met at least one candidate, for the partial count
-        for pair in _lsh_pairs(shared, threshold, _deadline):
+        for pair in _lsh_pairs(shared, threshold, _deadline, index):
             if pair is None:  # the budget ran out inside the candidate walk
                 _LAST_PARTIAL[0], _LAST_PARTIAL[1] = sum(reached), len(file_list)
                 break

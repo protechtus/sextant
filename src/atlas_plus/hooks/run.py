@@ -49,10 +49,12 @@ def main(argv: list[str] | None = None) -> int:
             target = a
             i += 1
             continue
-        print(f"atlas_plus.hooks.run: unknown argument {a!r} (expected session-start or stop)", file=sys.stderr)
+        print(f"atlas_plus.hooks.run: unknown argument {a!r} (expected session-start or stop)"
+              "\nRun `python -m atlas_plus.hooks.run --help` to see what it takes.", file=sys.stderr)
         return 2
     if target is None:
-        print("atlas_plus.hooks.run: missing target (session-start or stop)", file=sys.stderr)
+        print("atlas_plus.hooks.run: missing target (session-start or stop)"
+              "\nRun `python -m atlas_plus.hooks.run --help` to see what it takes.", file=sys.stderr)
         return 2
     import importlib
     module_name, func_name = TARGETS[target]

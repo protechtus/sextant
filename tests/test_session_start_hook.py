@@ -245,12 +245,14 @@ class TestSharedTicketScan:
                 patch("atlas_plus.tickets.store.list_tickets", side_effect=Exception("db error")):
             assert ss._all_tickets() is None
 
-    def test_all_tickets_skips_the_store_when_no_tickets_dir(self, tmp_path):
+    def test_all_tickets_skips_the_store_when_no_tickets_dir(self, tmp_path, monkeypatch):
         """No tickets directory: no store import (it pulls in yaml, 30 ms of the hook; AG11)."""
         import sys
         from atlas_plus.hooks import session_start as ss
         with patch.object(ss, "MEMORY_ROOT", tmp_path):
-            sys.modules.pop("atlas_plus.tickets.store", None)
+            # removed for this test only and put back after it: a bare pop left later tests with two
+            # copies of the module (one patched, one imported), so a test after this file failed by order
+            monkeypatch.delitem(sys.modules, "atlas_plus.tickets.store", raising=False)
             assert ss._all_tickets() == []
             assert "atlas_plus.tickets.store" not in sys.modules
 
