@@ -441,7 +441,9 @@ def test_public_readme_tells_a_pip_user_to_skip_the_clone_blocks():
     """SEX-044 (stranger pass on the PyPI package, 2026-11-23): the README said pip needs no Git, then
     'git required' and 'Install from a clone'; a pip user reading on installed twice."""
     from pathlib import Path
-    readme = (Path(__file__).resolve().parents[1] / "docs" / "README-PUBLIC.md").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    src = root / "docs" / "README-PUBLIC.md"            # the private tree; the public build ships it as README.md
+    readme = (src if src.exists() else root / "README.md").read_text(encoding="utf-8")
     quick = readme.split("## Quickstart", 1)[1]
     before_clone = quick.split("git clone", 1)[0]
     assert "git required" not in readme

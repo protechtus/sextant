@@ -379,7 +379,7 @@ def test_allowlist_entries_point_at_real_lines():
     full_checkout = (REPO / "scripts" / "public_exclude.txt").exists()
     stale = []
     for name, allow in (("G1", ALLOW_G1), ("G2", ALLOW_G2), ("G3", ALLOW_G3), ("G4", ALLOW_G4), ("G6", ALLOW_G6),
-                        ("G7", ALLOW_G7), ("G9", ALLOW_G9)):
+                        ("G7", ALLOW_G7), ("G9", ALLOW_G9), ("G10", ALLOW_G10)):
         for path, snippet, _reason in allow:
             f = REPO / path
             if not f.exists():
@@ -434,7 +434,9 @@ def _g8_names_next_step(text: str) -> bool:
     lines = [ln.translate(_G8_BOX).strip() for ln in text.splitlines()]
     tail = [ln for ln in lines if ln][-3:]
     raw_tail = [ln.translate(_G8_BOX) for ln in text.splitlines() if ln.translate(_G8_BOX).strip()][-3:]
-    return bool(_G8_NEXT.search("\n".join(tail)) or _G8_NEXT.search("\n".join(raw_tail)))
+    # a console wraps where it likes: with a long temp path (macOS) the break fell inside a backticked command
+    return bool(_G8_NEXT.search("\n".join(tail)) or _G8_NEXT.search("\n".join(raw_tail))
+                or _G8_NEXT.search(" ".join(tail)))
 
 
 # The public build adds the sextant-* names for the commands a stranger runs; the private tree's
@@ -591,7 +593,8 @@ def test_the_g8_check_sees_each_shape():
     bad = ["sextant-init: error: unrecognized arguments: --x", "Error\nNo such option: --x",
            "ROUND-TRIP: FAILED", "path not found: g8probe"]
     good = ["error: x\nRun `sextant-init --help` to see what it takes.", "Next: run `sextant init` first.",
-            "see docs/GETTING-STARTED.md", "Usage:\n  sextant search \"words\"", "https://example-org.test/x"]
+            "see docs/GETTING-STARTED.md", "Usage:\n  sextant search \"words\"", "https://example-org.test/x",
+            "No corpus yet at /a/long/path, and `sextant\nsetup` prints the registration with them baked in"]
     for text in bad:
         assert not _g8_names_next_step(text), text
     for text in good:
@@ -939,6 +942,70 @@ def test_the_g9_scan_sees_each_shape():
                  "subprocess.run(['wsl', '-d', d, '--', 'python3', '-m', 'atlas_plus'], timeout=5)"):
         src = "import subprocess, sys\ndef f():\n    d = input()\n    " + line + "\n"
         assert not hits(src), (line, hits(src))
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G10  a test reads the public README under both of its names (LES-065)
+#   The private tree keeps the public README at docs/README-PUBLIC.md; the public build ships it
+#   as README.md. A test that opens only the private name is green here and red on the public CI
+#   (mirror e589cb4, 2026-11-23: all four test jobs). A test function that names the private file
+#   must also name README.md (the fallback) or check that the file exists (and skip).
+# ----------------------------------------------------------------------------------------------
+
+ALLOW_G10: list[Allow] = []
+_G10_PRIVATE_NAME = "README-" + "PUBLIC.md"
+
+
+def _g10_offenders(sources: dict) -> list[tuple]:
+    out = []
+    for p, text in sources.items():
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        nested = set()
+        funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        for fn in funcs:
+            for inner in ast.walk(fn):
+                if inner is not fn and isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    nested.add(inner)
+        for fn in funcs:
+            if fn in nested:
+                continue
+            strings = [(n.lineno, n.value) for n in ast.walk(fn) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+            hits = [ln for ln, v in strings if v.endswith(_G10_PRIVATE_NAME) and len(v) < 60 and "\n" not in v]
+            if not hits:
+                continue
+            falls_back = any(v == "README.md" or v.endswith("/README.md") for _, v in strings)
+            checks = any(isinstance(n, ast.Call) and _dotted(n.func).rsplit(".", 1)[-1] in ("exists", "is_file")
+                         for n in ast.walk(fn))
+            if not (falls_back or checks):
+                out.append((p, hits[0], fn.name))
+    return out
+
+
+def test_g10_tests_read_the_public_readme_under_both_names():
+    sources = {p: p.read_text(encoding="utf-8", errors="replace") for p in _py_files(TESTS)}
+    offenders = []
+    for p, lineno, fn in _g10_offenders(sources):
+        rel = _rel(p)
+        if _allowed(rel, _line(p, lineno), ALLOW_G10):
+            continue
+        offenders.append(f"{rel}:{lineno}: {fn}() opens docs/{_G10_PRIVATE_NAME} with no README.md fallback and no exists() check")
+    _report(offenders, "LES-G10", "a test that reads the public README by its private-tree name falls back to "
+                                  "README.md (the name the public build ships) or skips when the file is absent")
+
+
+def test_the_g10_scan_sees_each_shape():
+    name = _G10_PRIVATE_NAME
+    bad = f"def test_x():\n    t = (ROOT / 'docs' / '{name}').read_text(encoding='utf-8')\n"
+    good1 = (f"def test_x():\n    src = ROOT / 'docs' / '{name}'\n"
+             "    t = (src if src.exists() else ROOT / 'README.md').read_text(encoding='utf-8')\n")
+    good2 = f"def test_x():\n    src = ROOT / 'docs' / '{name}'\n    if not src.is_file():\n        return\n"
+    prose = f"def test_x():\n    \"\"\"The private tree keeps it at docs/{name}; nothing is opened here.\n    \"\"\"\n"
+    assert [o[2] for o in _g10_offenders({"a.py": bad})] == ["test_x"]
+    for src in (good1, good2, prose):
+        assert not _g10_offenders({"a.py": src}), src
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["--g8-child"]:
