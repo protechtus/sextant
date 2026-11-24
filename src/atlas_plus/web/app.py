@@ -3955,7 +3955,7 @@ def _run_powershell(cmd: str, timeout: float = 25.0) -> tuple[int, str]:
     try:
         p = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, stdin=subprocess.DEVNULL,
         )
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except Exception as exc:

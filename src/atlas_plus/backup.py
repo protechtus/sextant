@@ -153,7 +153,7 @@ def _rclone(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
             cmd,
             capture_output=capture,
             text=True, encoding="utf-8", errors="replace",
-            timeout=_RCLONE_TIMEOUT_SECS,
+            timeout=_RCLONE_TIMEOUT_SECS, stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
@@ -462,7 +462,7 @@ def install(
                 "-RunTime", time,
             ],
             text=True, encoding="utf-8", errors="replace",
-            timeout=300,  # LES-G2: schtasks registration is seconds; a hung elevation prompt is not
+            timeout=300, stdin=subprocess.DEVNULL,  # LES-G2: schtasks registration is seconds; a hung elevation prompt is not
         )
     except subprocess.TimeoutExpired:
         console.print("[red]Task Scheduler registration did not finish within 5 minutes.[/red]")

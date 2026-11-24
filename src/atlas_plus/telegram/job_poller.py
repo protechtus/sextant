@@ -82,7 +82,7 @@ def _run_claude(ticket) -> tuple[bool, str]:
             text=True,
             timeout=JOB_TIMEOUT,
             encoding="utf-8",
-            errors="replace",
+            errors="replace", stdin=subprocess.DEVNULL,
         )
         success = result.returncode == 0
         output = (result.stdout or result.stderr or "").strip()[:500]

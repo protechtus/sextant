@@ -48,6 +48,10 @@ public tree.
   report. It has a real `--help` and `--days` now and exits 0 on success.
 - `python -m atlas_plus`, the form `sextant setup` prints, named the wrong program in its messages on an install
   from the public package.
+- Child processes started by the hooks, the doctor, the dashboard, the backup and the Brain's task runners no
+  longer inherit standard input (24 calls). Without a terminal, a child that asked a question waited on input
+  nobody could give, and a detached worker started by the Stop hook kept the client's pipe open. A tree-wide test
+  holds every new call to it.
 - The daily session digest counted Brain jobs by the UTC date of their finish time while the rest of the digest
   uses the local date. West of UTC, a job that finished in the evening was counted in the next day's digest. Jobs
   and scheduler runs are now matched by local date.

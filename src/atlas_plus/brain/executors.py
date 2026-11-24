@@ -426,7 +426,7 @@ def _pytest(ctx: ExecutorContext) -> ExecutionResult:
         timeout=_PYTEST_TIMEOUT_SECONDS,
         encoding="utf-8",
         errors="replace",
-        env=_clean_pytest_env(),
+        env=_clean_pytest_env(), stdin=subprocess.DEVNULL,
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "pytest passed" if completed.returncode == 0 else "pytest failed"
@@ -547,7 +547,7 @@ def _gaps_report(ctx: ExecutorContext) -> ExecutionResult:
         text=True,
         timeout=120,
         encoding="utf-8",
-        errors="replace",
+        errors="replace", stdin=subprocess.DEVNULL,
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "Gaps report complete" if completed.returncode == 0 else "Gaps report failed"
@@ -612,7 +612,7 @@ def _convergence_report(ctx: ExecutorContext) -> ExecutionResult:
         text=True,
         timeout=60,
         encoding="utf-8",
-        errors="replace",
+        errors="replace", stdin=subprocess.DEVNULL,
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "Convergence report complete" if completed.returncode == 0 else "Convergence report failed"
@@ -660,7 +660,7 @@ def _curation_report(ctx: ExecutorContext) -> ExecutionResult:
             text=True,
             timeout=900,  # full curation report over the whole memory; 300 still timed out twice in Oct 2026 nightly runs (growing corpus), raised 2026-10-12
             encoding="utf-8",
-            errors="replace",
+            errors="replace", stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         # Without this, the timeout escaped as a raw exception and the task
@@ -729,7 +729,7 @@ def _suggest_facts_review(ctx: ExecutorContext) -> ExecutionResult:
         text=True,
         timeout=240,
         encoding="utf-8",
-        errors="replace",
+        errors="replace", stdin=subprocess.DEVNULL,
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "Suggest-facts review complete" if completed.returncode == 0 else "Suggest-facts review failed"
@@ -794,7 +794,7 @@ def _run_reporting_subprocess(
             text=True,
             timeout=timeout,
             encoding="utf-8",
-            errors="replace",
+            errors="replace", stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired as exc:
         # Fail gracefully with a legible artifact instead of crashing the worker
@@ -933,7 +933,7 @@ def _research_runner(ctx: ExecutorContext) -> ExecutionResult:
         text=True,
         timeout=_PYTEST_TIMEOUT_SECONDS,
         encoding="utf-8",
-        errors="replace",
+        errors="replace", stdin=subprocess.DEVNULL,
     )
 
     if completed.returncode == 0 and not completed.stdout.strip():
@@ -1011,7 +1011,7 @@ def _research_runner_api(ctx: ExecutorContext) -> ExecutionResult:
         text=True,
         timeout=api_timeout,
         encoding="utf-8",
-        errors="replace",
+        errors="replace", stdin=subprocess.DEVNULL,
     )
 
     if completed.returncode == 0 and not completed.stdout.strip():
@@ -1741,7 +1741,7 @@ def _verify(ctx: ExecutorContext) -> ExecutionResult:
         timeout=_PYTEST_TIMEOUT_SECONDS,
         encoding="utf-8",
         errors="replace",
-        env=_clean_pytest_env(),
+        env=_clean_pytest_env(), stdin=subprocess.DEVNULL,
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "verify passed" if completed.returncode == 0 else "verify failed"
@@ -1874,7 +1874,7 @@ def _claude_task(ctx: ExecutorContext) -> ExecutionResult:
             timeout=_CLAUDE_TASK_TIMEOUT,
             encoding="utf-8",
             errors="replace",
-            cwd=str(working_dir),
+            cwd=str(working_dir), stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         msg = f"claude --print timed out after {_CLAUDE_TASK_TIMEOUT}s"

@@ -86,7 +86,7 @@ def _powershell_json(script: str, timeout: float = 8.0):
             text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.SubprocessError):
         return None

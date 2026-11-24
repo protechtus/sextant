@@ -151,6 +151,39 @@ def test_g2_blocking_subprocess_calls_have_a_timeout():
     _report(offenders, "LES-G2", "subprocess.run/check_output/check_call/call pass timeout=")
 
 
+# LES-G2, second half (KL1 follow-up, sweep 26): a child never inherits stdin. A service, a hook or a
+# scheduled task has no terminal: a child that prompts (git credentials, an elevation question, a CLI
+# that reads a prompt from stdin when it is a pipe) waits forever on input nobody can give, and a
+# detached worker keeps the client's pipe open. Every call closes stdin (stdin=subprocess.DEVNULL)
+# or feeds it (input=, stdin=PIPE). Popen is included here: inheriting is the default there too.
+ALLOW_G2_STDIN: list[Allow] = [
+    ("src/atlas_plus/summarizer/review.py", "subprocess.run([editor, tmp]",
+     "opens the user's editor in their terminal: it needs the real stdin"),
+]
+
+
+def test_g2_subprocess_calls_close_or_feed_stdin():
+    offenders = []
+    for p in _py_files(SRC):
+        rel = _rel(p)
+        for node in ast.walk(_parse(p)):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _dotted(node.func)
+            root, _, last = name.rpartition(".")
+            if last not in ("run", "check_output", "check_call", "call", "Popen") \
+                    or root.split(".")[-1] not in _SUBPROCESS_ROOTS:
+                continue
+            if _has_kw(node, "stdin") or _has_kw(node, "input"):
+                continue
+            text = _line(p, node.lineno)
+            if _allowed(rel, text, ALLOW_G2_STDIN):
+                continue
+            offenders.append(f"{rel}:{node.lineno}: {name}(...) inherits stdin")
+    _report(offenders, "LES-G2", "every subprocess call passes stdin=subprocess.DEVNULL (or input= / stdin=PIPE "
+                                 "when it feeds the child)")
+
+
 # ----------------------------------------------------------------------------------------------
 # LES-G3  state directories are created through the private-dir helper
 #   Sweep 25 MN86 finding 6 / AG98: under umask 022 a lazily created state or corpus root was 0755.
@@ -378,7 +411,7 @@ def test_allowlist_entries_point_at_real_lines():
     # treats a missing path as stale.
     full_checkout = (REPO / "scripts" / "public_exclude.txt").exists()
     stale = []
-    for name, allow in (("G1", ALLOW_G1), ("G2", ALLOW_G2), ("G3", ALLOW_G3), ("G4", ALLOW_G4), ("G6", ALLOW_G6),
+    for name, allow in (("G1", ALLOW_G1), ("G2", ALLOW_G2), ("G2-stdin", ALLOW_G2_STDIN), ("G3", ALLOW_G3), ("G4", ALLOW_G4), ("G6", ALLOW_G6),
                         ("G7", ALLOW_G7), ("G9", ALLOW_G9), ("G10", ALLOW_G10)):
         for path, snippet, _reason in allow:
             f = REPO / path

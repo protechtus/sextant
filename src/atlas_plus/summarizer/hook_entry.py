@@ -42,7 +42,7 @@ def _git_out(args, cwd, timeout=5) -> str:
     from atlas_plus import gitsafe
     import subprocess as _sp
     return _sp.check_output(gitsafe.argv(args, cwd, timeout=timeout), cwd=str(cwd),
-                            stderr=_sp.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=gitsafe._env())
+                            stderr=_sp.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=gitsafe._env(), stdin=_sp.DEVNULL)
 
 
 def _capture_fsdiffs() -> None:
@@ -418,7 +418,7 @@ def main() -> int:
             start_new_session=True,
             env=_child_env,
             stdout=_dry_log or subprocess.DEVNULL,
-            stderr=_dry_log or subprocess.DEVNULL,
+            stderr=_dry_log or subprocess.DEVNULL, stdin=subprocess.DEVNULL,
         )
 
     # --- 2. Suggest-facts (auto mode: only writes confidence >= 0.85) ---
@@ -441,7 +441,7 @@ def main() -> int:
                 start_new_session=True,
                 env=_child_env,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
             )
 
     # --- 3. Git diff capture (ATL-R03) ---
@@ -460,7 +460,7 @@ def main() -> int:
                 start_new_session=True,
                 env=_child_env,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
             )
 
     return 0

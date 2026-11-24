@@ -414,7 +414,7 @@ def dispatch(agent: Agent, instruction: str, session_id: str, timeout: int = 300
             result = subprocess.run(
                 [cli, "--print", safe],
                 capture_output=True, text=True, timeout=timeout,
-                encoding="utf-8", errors="replace",
+                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
             )
             output = (result.stdout or result.stderr or "").strip()
             if result.returncode != 0:
@@ -431,7 +431,7 @@ def dispatch(agent: Agent, instruction: str, session_id: str, timeout: int = 300
             result = subprocess.run(
                 [OPENCODE_CLI, "run", safe],
                 capture_output=True, text=True, timeout=timeout,
-                encoding="utf-8", errors="replace",
+                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
             )
             output = (result.stdout or result.stderr or "").strip()
             if result.returncode != 0:
