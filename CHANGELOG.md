@@ -19,6 +19,14 @@ public tree.
 
 ## [Unreleased]
 
+### Changed
+
+- First run, from a clean install of 0.1.0 on a second machine: `sextant init` (and its dry run) now says when it
+  finds an existing corpus and that it is kept and reused; it says the corpus and state folders sit outside the
+  install and outlive a removed virtual environment; its next steps are numbered 1 to 4 and say that
+  `sextant verify` writes one small test fact to `projects/demo.md`. `sextant setup` says that only the section for
+  your client is needed, and its Verify line names the short `sextant verify` form.
+
 ## [0.1.0] - 2026-11-23
 
 ### Search: questions as people type them, and find-and-read in one call (2026-11-20)

@@ -370,6 +370,10 @@ def render(info: dict, client: str = "all") -> str:
         else:
             lines.append("  baked in    : nothing (home-directory defaults; set ATLAS_MEMORY_ROOT "
                          "or ATLAS_WORKSPACE_ROOT first to relocate, then run setup again)")
+        # About ninety lines for five clients, hooks and HTTP: a first-timer could not tell which part
+        # was theirs (laptop install, 2026-11-23, SEX-043).
+        lines.append("  you need    : ONE of the numbered sections, the one for your client (Claude Code: "
+                     "section 1), then the Verify line at the end. Everything else is optional.")
         if any(not v.isascii() for v in [info["interpreter"], *env.values()]):
             lines.append("  NOTE        : a path above has non-ASCII characters. Capture this text only "
                          "from a UTF-8 console (PowerShell: [Console]::OutputEncoding = "
@@ -484,7 +488,8 @@ def render(info: dict, client: str = "all") -> str:
                       "exempts a peer you own)",
                       f"   Full server setup (systemd, Caddy, Tailscale): {h['docs']}", ""]
         lines.append(f"Verify: {info['verify']}   (starts the server over stdio, writes one fact under "
-                     "project:demo, searches it back)")
+                     "project:demo, searches it back; `sextant verify` is the same command when the "
+                     "environment is active)")
     return "\n".join(lines)
 
 

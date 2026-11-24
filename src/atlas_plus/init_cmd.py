@@ -188,6 +188,14 @@ def main() -> None:
 
     print(f"Memory corpus: {result['memory_root']}")
     print(f"State dir:     {result['state_dir']}")
+    # A corpus left by an earlier install went unnoticed: the dry run listed only the state dir and
+    # never said the notes were found and would be reused (laptop install, 2026-11-23, SEX-043).
+    if result["memory_root"] in result["existed"]:
+        print(f"\nFound an existing corpus at {result['memory_root']}: it is kept and reused. "
+              "Nothing in it is overwritten; only missing pieces are added.")
+    print("\nBoth folders sit outside this install: they stay when a virtual environment is removed and "
+          "every Sextant\ninstall on this account uses them (relocate with ATLAS_MEMORY_ROOT and "
+          "ATLAS_STATE_DIR; `sextant uninstall`\nreports them).")
     if result["created"]:
         print(f"\n{verb}:")
         for p in result["created"]:
@@ -201,9 +209,10 @@ def main() -> None:
             "  1. Edit identity/user.md -- introduce yourself to your memory.\n"
             "  2. Wire your MCP client: run `sextant setup` -- it prints the one-line\n"
             "     `claude mcp add ...` for THIS install (paths baked in) and the JSON for\n"
-            "     Claude Desktop or Cursor. Then `sextant verify` proves the round-trip.\n"
-            "  2b. See what's here: sextant components\n"
-            "  3. Check health: sextant-doctor (alias of atlas-doctor)\n"
+            "     Claude Desktop or Cursor.\n"
+            "  3. Prove it works: `sextant verify` (it writes one small test fact to\n"
+            "     projects/demo.md in your corpus and searches it back; delete that file any time).\n"
+            "  4. See what's here: `sextant components`. Check health: `sextant doctor`.\n"
         )
     sys.exit(0)
 

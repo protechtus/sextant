@@ -55,3 +55,41 @@ class TestRunInit:
         assert keep.read_text(encoding="utf-8") == "existing rule"
         assert str(mem / "identity") in result["created"]
         assert str(mem / "feedback") in result["existed"]
+
+
+class TestFirstRunWording:
+    """SEX-043 (laptop install from PyPI, 2026-11-23): what the first run tells a newcomer."""
+
+    def _main(self, monkeypatch, capsys, *argv):
+        import sys
+        from atlas_plus import init_cmd
+        monkeypatch.setattr(sys, "argv", ["sextant-init", *argv])
+        with pytest.raises(SystemExit) as exc:
+            init_cmd.main()
+        assert exc.value.code == 0
+        return capsys.readouterr().out
+
+    def test_dry_run_on_an_existing_corpus_says_it_is_found_and_reused(self, fresh_env, monkeypatch, capsys):
+        run_init()
+        out = self._main(monkeypatch, capsys, "--dry-run")
+        assert "Found an existing corpus" in out and str(fresh_env / "mem") in out
+        assert "kept and reused" in out
+
+    def test_first_run_does_not_claim_an_existing_corpus(self, fresh_env, monkeypatch, capsys):
+        out = self._main(monkeypatch, capsys)
+        assert "Found an existing corpus" not in out
+        assert "outside this install" in out
+
+    def test_next_steps_are_numbered_plainly_and_name_the_demo_fact(self, fresh_env, monkeypatch, capsys):
+        out = self._main(monkeypatch, capsys)
+        steps = [ln.strip().split(".")[0] for ln in out.splitlines() if ln.startswith("  ") and ln.strip()[:2] in ("1.", "2.", "3.", "4.")]
+        assert steps == ["1", "2", "3", "4"]
+        assert "2b" not in out and "atlas-doctor" not in out
+        assert "projects/demo.md" in out
+
+
+def test_setup_says_which_part_is_needed_and_names_the_short_verify():
+    from atlas_plus import setup_cmd
+    text = setup_cmd.render(setup_cmd.describe())
+    assert "ONE of the numbered sections" in text
+    assert "`sextant verify` is the same command" in text
