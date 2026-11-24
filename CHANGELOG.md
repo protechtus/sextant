@@ -26,6 +26,36 @@ public tree.
   install and outlive a removed virtual environment; its next steps are numbered 1 to 4 and say that
   `sextant verify` writes one small test fact to `projects/demo.md`. `sextant setup` says that only the section for
   your client is needed, and its Verify line names the short `sextant verify` form.
+- **Every failure names the next step.** A command that refuses or fails now ends on what to type next, not on
+  the bare complaint. Every usage error (a mistyped option, a missing argument, an unknown subcommand) ends with
+  the `--help` line for that command, for all command-line programs in the package. `sextant verify` and
+  `sextant doctor` before `sextant init` end with a `Next:` line naming init; `sextant import` with a missing path
+  says what to give it; a bare `sextant-mcp` says that a client starts it and that `sextant setup` prints the
+  line; `sextant web` without a key points at the getting-started section. `sextant --help` ends with where to go
+  next. Refusals with a non-zero exit (`No corpus yet`, `Not stored`, `Give a query`, the redirects for `install`,
+  `save`, `recall` and similar words) print to standard error, where a script looks for them. A tree-wide test
+  runs every command with a bad argument and without a corpus and fails on a traceback or an ending with no next
+  step, so a new command is held to the same rule.
+
+### Fixed
+
+- `sextant init` printed a Python traceback when the corpus folder or the state folder was a link whose target no
+  longer exists, or when a file stood at that path (or above it). It now says what is at the path and how to go
+  on, and the dry run says the same instead of listing the folder as one it would create.
+- `sextant-fts-rebuild` and `sextant-embed-index` before `sextant init` reported an index of 0 files, exited 0 and
+  created the state folder. Both now refuse, name `sextant init` and create nothing.
+- `atlas-narrative --help` ran the report instead of showing help, and the command exited 1 even after writing a
+  report. It has a real `--help` and `--days` now and exits 0 on success.
+- `python -m atlas_plus`, the form `sextant setup` prints, named the wrong program in its messages on an install
+  from the public package.
+- The daily session digest counted Brain jobs by the UTC date of their finish time while the rest of the digest
+  uses the local date. West of UTC, a job that finished in the evening was counted in the next day's digest. Jobs
+  and scheduler runs are now matched by local date.
+- Dashboard, Browse tab on a large corpus: the file tree was rebuilt on every load and checked every entry for
+  links with two extra disk calls. At 20,000 notes a load took 3 to 5 seconds and sent 3.5 MB. The tree is now
+  cached until a note is added, changed or removed (`ATLAS_WEB_PANEL_CACHE=off` still recomputes) and sent
+  compressed: about 0.2 seconds and 224 KB for the same corpus. A new file that is not a `.md` note can take up
+  to five minutes to appear in the tree.
 
 ## [0.1.0] - 2026-11-23
 

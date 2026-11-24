@@ -312,7 +312,8 @@ def main() -> None:
     """Entry point: run the weekly memory synthesis report and optionally push it to Telegram."""
     import argparse
 
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         description="Weekly dream report: rolling daily summaries + Sunday synthesis.",
     )
     parser.add_argument(

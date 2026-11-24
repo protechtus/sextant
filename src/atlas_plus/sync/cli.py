@@ -407,7 +407,8 @@ def main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
     from atlas_plus.branding import prog as _prog
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog=_prog("atlas-sync"), description="Sextant Sync: devices, hub, and corpus sync"
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -469,7 +470,7 @@ def main() -> None:
 
     if len(sys.argv) == 1:  # after the subcommands exist, so the usage line lists them
         parser.print_help()
-        print(f"\n{_prog_name()} needs a subcommand -- try: {_prog_name()} status", file=sys.stderr)
+        print(f"\n{_prog_name()} needs a subcommand -- try: `{_prog_name()} status` (or `{_prog_name()} --help`)", file=sys.stderr)
         raise SystemExit(2)
     args = parser.parse_args(_join_dash_values(sys.argv[1:]))
     raise SystemExit(args.func(args))

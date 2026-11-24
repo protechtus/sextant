@@ -98,10 +98,31 @@ def run_init(dry_run: bool = False) -> dict:
     created: list[str] = []
     existed: list[str] = []
 
+    def _path_blocker(p: Path) -> str:
+        """What stands where the folder should go (MN88, sweep 26): a link whose target is gone, or a file,
+        at ``p`` or above it. mkdir answered those with FileExistsError / NotADirectoryError: a traceback."""
+        for q in (p, *p.parents):
+            try:
+                if q.is_dir():
+                    return ""
+                if q.is_symlink():
+                    return f"{q} is a link whose target does not exist. Remove the link or create its target"
+                if q.exists():
+                    return f"{q} is a file, not a folder. Move it away"
+            except OSError:
+                return ""
+        return ""
+
+    _ELSEWHERE = ("or point ATLAS_MEMORY_ROOT (the notes) or ATLAS_STATE_DIR (the state) at another folder, "
+                  "then run `sextant init` again.")
+
     def _ensure_dir(p: Path, private: bool = False) -> None:
         if p.is_dir():
             existed.append(str(p))
         else:
+            blocker = _path_blocker(p)
+            if blocker:  # before the dry-run report too: it would list the folder as one it will create
+                raise SystemExit(f"Cannot create {p}: {blocker}, {_ELSEWHERE}")
             created.append(str(p))
             if not dry_run:
                 try:
@@ -114,6 +135,9 @@ def run_init(dry_run: bool = False) -> dict:
                         p.mkdir(parents=True, exist_ok=True)
                 except PermissionError as exc:
                     raise SystemExit(_permission_sentence(p, exc)) from None
+                except OSError as exc:  # a broken junction, a name the filesystem refuses, a read-only volume
+                    raise SystemExit(f"Cannot create {p}: {exc.strerror or exc}. Check what is at that path, "
+                                     f"{_ELSEWHERE}") from None
 
     def _ensure_file(p: Path, content: str) -> None:
         if p.exists() and not (p.is_file() and p.stat().st_size == 0 and content):
@@ -176,7 +200,8 @@ def main() -> None:
     """Entry point for atlas-init / sextant-init."""
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         description="Create the memory corpus skeleton and state directory (first run).",
     )
     parser.add_argument("--dry-run", "-n", action="store_true",

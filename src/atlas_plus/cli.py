@@ -36,6 +36,8 @@ from atlas_plus import paths as atlas_paths
 
 app = _SextantTyper(
     help="Umbrella command: version, overview, and discovery of the whole command family.",
+    epilog="New here? Run `sextant` with no arguments for the three first steps; `sextant doctor` checks the "
+           "install. Docs: https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md",
     invoke_without_command=True,
     no_args_is_help=False,
     context_settings={"help_option_names": ["-h", "--help"]},  # `sextant -h` was "No such option" (MN66)
@@ -74,6 +76,14 @@ def _dist_name() -> str:
     return "atlas-plus"
 
 
+def _via_python_m(argv: list[str]) -> bool:
+    """`python -m atlas_plus`: argv[0] is the package's own __main__.py."""
+    from pathlib import Path
+
+    p = Path(argv[0]) if argv and argv[0] else Path()
+    return p.stem == "__main__" and p.parent.name == "atlas_plus"
+
+
 def _brand() -> tuple[str, str]:
     """(display name, command prefix) based on how the CLI was invoked.
 
@@ -87,34 +97,15 @@ def _brand() -> tuple[str, str]:
     invoked = Path(sys.argv[0]).stem.lower() if sys.argv else ""
     if invoked.startswith("sextant"):
         return "Sextant", "sextant"
+    if _via_python_m(sys.argv) and _dist_name() == "sextant-ai":
+        # `python -m atlas_plus` (the form `sextant setup` prints) said "Keel" and `atlas-plus setup` on the
+        # public install (AG102): argv decides when it names a command, the distribution when it does not.
+        return "Sextant", "sextant"
     return "Keel", "atlas"
 
 
-def _how_to_run(name: str) -> str:
-    """The command as THIS user has to type it. Bare `sextant` only works when the venv is
-    activated or its Scripts folder is on PATH; a first-timer who ran `.\\.venv\\Scripts\\sextant.exe`
-    and was told to type `sextant init` got "not recognized" (operator's by-hand install,
-    2026-11-21). So: the bare name when the shell would find this install's script, else the
-    script's path, relative to the current folder when it is inside it."""
-    import shutil
-    import sys
-    from pathlib import Path
-
-    script = Path(sys.executable).parent / (name + (".exe" if os.name == "nt" else ""))
-    try:
-        found = shutil.which(name)
-        if not script.exists() or (found and Path(found).resolve() == script.resolve()):
-            return name
-        try:
-            rel = script.resolve().relative_to(Path.cwd().resolve())
-            shown = f".{os.sep}{rel}"
-        except ValueError:
-            shown = str(script)
-    except OSError:
-        return name
-    if " " in shown:
-        return f'& "{shown}"' if os.name == "nt" else f'"{shown}"'
-    return shown
+# The command as THIS user has to type it: one helper for every next-step line (LES-054, AG102).
+from atlas_plus._next_step import how_to_run as _how_to_run  # noqa: E402
 
 
 def _overview() -> None:
@@ -467,31 +458,31 @@ def cmd_remember(
         raw_in = _sys.stdin.buffer.read() if hasattr(_sys.stdin, "buffer") else _sys.stdin.read().encode("utf-8", "replace")
         fact = raw_in.decode("utf-8", errors="replace").lstrip("\ufeff").strip()
         if not fact:
-            console.print("[red]Not stored:[/red] nothing on standard input")
+            _err_console().print("[red]Not stored:[/red] nothing on standard input")
             raise typer.Exit(2)
         if _stdin_looks_mangled(fact):
             # PowerShell 5.1 pipes in ASCII (or the console code page) by default: Japanese arrived as
             # `???????` or U+FFFD runs and was stored as such (MN23). Refuse, name the fix.
-            console.print("[red]Not stored:[/red] the text on standard input is not valid UTF-8 (it holds "
+            _err_console().print("[red]Not stored:[/red] the text on standard input is not valid UTF-8 (it holds "
                           "replacement characters or runs of '?'). In PowerShell 5.1 run "
                           "`$OutputEncoding = [Text.Encoding]::UTF8` first, or pass the fact as an argument.")
             raise typer.Exit(2)
     if _fact_is_blank(fact):
-        console.print("[red]Not stored:[/red] the fact is empty (give some words, or `-` to read standard input).")
+        _err_console().print("[red]Not stored:[/red] the fact is empty (give some words, or `-` to read standard input).")
         raise typer.Exit(2)
     try:
         result = memory_remember(scope, fact, source="human-direct", interactive=True)
     except RuntimeError as exc:  # the write kill switch (ATLAS_INTERACTIVE_WRITES=off)
-        console.print(f"[red]Not stored:[/red] {exc}")
+        _err_console().print(f"[red]Not stored:[/red] {exc}")
         raise typer.Exit(1)
     except UnicodeEncodeError:
-        console.print("[red]Not stored:[/red] this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again.")  # the codec dump (AG52)
+        _err_console().print("[red]Not stored:[/red] this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again.")  # the codec dump (AG52)
         raise typer.Exit(1)
     if not result.get("ok"):
         _err = str(result.get("error") or "")
         if "codec can't encode" in _err:
             _err = "this locale cannot write a file name with those characters; set PYTHONUTF8=1 or LANG=C.UTF-8 and run again."  # the codec dump (MN46)
-        console.print(f"[red]Not stored:[/red] {_err}")
+        _err_console().print(f"[red]Not stored:[/red] {_err}")
         raise typer.Exit(1)
     if result.get("already_remembered"):
         console.print(f"Already remembered in {result['file']} (the same fact stands there; nothing written)")
@@ -513,7 +504,7 @@ def cmd_search(
 ) -> None:
     """Search your memory from the shell (hybrid keyword + semantic)."""
     if not query.strip():
-        console.print("[red]Give a query:[/red] sextant search \"<words>\" (an empty query finds nothing).")
+        _err_console().print("[red]Give a query:[/red] sextant search \"<words>\" (an empty query finds nothing).")
         raise typer.Exit(2)
     from atlas_plus.mcp.memory_server.tools.search import (
         confidence_band, memory_search_hybrid, normalize_search_scope,
@@ -528,7 +519,9 @@ def cmd_search(
     _mr = atlas_paths.memory_root()
     if not _mr.is_dir():
         # before init, a search must not create the state dir and an empty index (sweep 13, AG25)
-        console.print(f"[yellow]No corpus yet[/yellow] at {_mr}: run sextant-init first (nothing was created).")
+        from atlas_plus import _next_step  # the step as this install types it (LES-054, AG102)
+        _err_console().print(f"[yellow]No corpus yet[/yellow] at {_mr} (nothing was created). Next: run {_next_step.command('init')} first.",
+                      soft_wrap=True, markup=True, highlight=False)
         raise typer.Exit(1)
     if limit > 50:
         console.print(f"[dim]--limit {limit} is capped at 50 results.[/dim]")  # it silently returned 50 (MN66)
@@ -537,7 +530,7 @@ def cmd_search(
         from atlas_plus.mcp.memory_server import fts as _fts
         _why = _fts.last_connect_error()
         if _why:
-            console.print(f"[red]Search index unavailable:[/red] {_why}. The notes are intact; the state dir "
+            _err_console().print(f"[red]Search index unavailable:[/red] {_why}. The notes are intact; the state dir "
                           f"({atlas_paths.state_dir()}) is full, read-only or locked. Free space or fix permissions, then search again.")
             raise typer.Exit(1)
         try:
@@ -801,10 +794,16 @@ _REDIRECTS = {
 }
 
 
+def _err_console():
+    from rich.console import Console
+    return Console(stderr=True, highlight=False)
+
+
 def _make_redirect(name: str, sentence: str):
     def _redirect(ctx: typer.Context) -> None:
         _extra = " ".join(ctx.args)
-        console.print(f"[yellow]No such command '{name}'.[/yellow] {sentence}" + (f" (you typed: {name} {_extra[:80]})" if _extra else ""))
+        # stderr, like every other refusal: exit 2 with the reason on stdout was missed by scripts (AG102)
+        _err_console().print(f"[yellow]No such command '{name}'.[/yellow] {sentence}" + (f" (you typed: {name} {_extra[:80]})" if _extra else ""))
         raise typer.Exit(2)
     _redirect.__name__ = f"_redirect_{name}"
     _redirect.__doc__ = sentence

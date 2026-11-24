@@ -36,7 +36,54 @@ def _hide_flag_types() -> None:
 _hide_flag_types()
 
 
+def _click_classes(name: str) -> tuple:
+    """Typer 0.29 vendors Click as typer._click (its Abort lives in typer.exceptions); older Typer
+    raises the real click's. Every class of that name found, resolved BEFORE any except clause
+    needs it: a missing attribute inside an except tuple turned `sextant init`'s exit 0 into a traceback."""
+    found = []
+    for mod in ("typer._click.exceptions", "typer.exceptions", "click.exceptions"):
+        try:
+            cls = getattr(__import__(mod, fromlist=[name]), name, None)
+        except ImportError:
+            continue
+        if isinstance(cls, type) and cls not in found:
+            found.append(cls)
+    return tuple(found) or (_NeverRaised,)
+
+
+class _NeverRaised(Exception):
+    pass
+
+
 class Typer(_typer.Typer):
     def __call__(self, *args, **kwargs):
         kwargs.setdefault("windows_expand_args", False)
-        return super().__call__(*args, **kwargs)
+        if kwargs.get("standalone_mode", True) is False:
+            return super().__call__(*args, **kwargs)
+        # Click's usage errors ended at a bare "No such option" / "Missing argument" box, the
+        # pointer to --help above it (LES-054, AG102): the last line now names the next step.
+        import sys
+
+        click_exc, usage_exc, abort_exc = (_click_classes(n) for n in ("ClickException", "UsageError", "Abort"))
+        kwargs["standalone_mode"] = False
+        try:
+            rv = super().__call__(*args, **kwargs)
+        except click_exc as e:
+            try:
+                from typer import rich_utils
+                rich_utils.rich_format_error(e)
+            except Exception:  # noqa: BLE001 - no rich: Click's own plain rendering
+                e.show()
+            if isinstance(e, usage_exc):
+                ctx = getattr(e, "ctx", None)
+                path = ctx.command_path if ctx is not None else "sextant"
+                root = ctx.find_root().command_path if ctx is not None else path  # `python -m atlas_plus` stays whole
+                if path != root:
+                    print(f"Run `{path} --help` to see what it takes; `{root} --help` lists every command.", file=sys.stderr)
+                else:
+                    print(f"Run `{root} --help` to see every command and option.", file=sys.stderr)
+            sys.exit(e.exit_code)
+        except abort_exc:
+            print("Aborted!", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(rv if isinstance(rv, int) and not isinstance(rv, bool) else 0)

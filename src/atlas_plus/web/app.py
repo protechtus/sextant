@@ -1665,7 +1665,7 @@ async def memory_files(request: Request):
     _SKIP_DIRS = {"_inbox", "__pycache__", ".git", "versions", "_atlas", ".locks", "_sync"}  # copies and state are not notes (MN29: 86% of the tree was versions/)
 
     _FILE_SUFFIXES = (".md", ".txt", ".json", ".yaml", ".yml")
-    from atlas_plus._fsutil import inside as _inside, is_link as _is_link
+    from atlas_plus._fsutil import inside as _inside, entry_is_link as _entry_is_link
 
     def _render_tree(directory: str, root: str) -> str:
         # os.scandir: entry types come from the directory read (no per-entry
@@ -1682,7 +1682,7 @@ async def memory_files(request: Request):
         for entry in entries:
             if entry.name in _SKIP_DIRS:
                 continue
-            if _is_link(Path(entry.path)) and not _inside(Path(entry.path), Path(root)):
+            if _entry_is_link(entry) and not _inside(Path(entry.path), Path(root)):
                 continue  # a link out of the corpus is refused for reading and search; it was still listed by name (MN86)
             if entry.is_dir(follow_symlinks=False):
                 inner = _render_tree(entry.path, root)
@@ -1703,9 +1703,19 @@ async def memory_files(request: Request):
     if not MEMORY_ROOT.exists():
         return HTMLResponse('<div class="text-red-400 text-xs">No corpus yet: run sextant-init (the memory root does not exist).</div>')
     # to_thread: this walk previously ran synchronously INSIDE the async
-    # handler, blocking the event loop for the whole render.
-    html = await asyncio.to_thread(_render_tree, str(MEMORY_ROOT), str(MEMORY_ROOT))
-    return HTMLResponse(f'<div class="space-y-0.5">{html}</div>')
+    # handler, blocking the event loop for the whole render. The tree is cached per corpus signature
+    # like the other slow panels (ATLAS_WEB_PANEL_CACHE=off recomputes) and sent gzip-compressed to a
+    # client that accepts it: 3.5 MB and 3 s on every load at 20,000 notes (AG100).
+    def _build() -> tuple[bytes, bytes]:
+        import gzip as _gzip
+        body = f'<div class="space-y-0.5">{_render_tree(str(MEMORY_ROOT), str(MEMORY_ROOT))}</div>'.encode("utf-8")
+        return body, _gzip.compress(body, 6)
+    plain, packed = await asyncio.to_thread(lambda: _cached_panel(f"memory-files:{MEMORY_ROOT}", _build))
+    from fastapi.responses import Response as _Resp
+    if "gzip" in (request.headers.get("accept-encoding") or "").lower():
+        return _Resp(packed, media_type="text/html; charset=utf-8",
+                     headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+    return _Resp(plain, media_type="text/html; charset=utf-8", headers={"Vary": "Accept-Encoding"})
 
 
 # Tailwind CSS 3.4.17 (Play CDN build), vendored unmodified from https://cdn.tailwindcss.com/3.4.17
@@ -7563,7 +7573,8 @@ def main() -> None:
     if any(a == "--port" or a.startswith("--port=") or a == "--host" or a.startswith("--host=") for a in sys.argv[1:]):
         print("--port and --host are not options here: set ATLAS_WEB_PORT=<n> and ATLAS_WEB_HOST=<addr> in the environment (GETTING-STARTED, Troubleshooting).", file=sys.stderr)  # MN60
         raise SystemExit(2)
-    parser = argparse.ArgumentParser(description=f"{product()} Web UI (Helm dashboard)")
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(description=f"{product()} Web UI (Helm dashboard)")
     parser.add_argument("--no-auth", action="store_true", help="Local dev, loopback only")
     args = parser.parse_args()
 
@@ -7594,7 +7605,7 @@ def main() -> None:
             '  PowerShell:  $env:ATLAS_WEB_API_KEY = python -c "import secrets; print(secrets.token_urlsafe(32))"\n'
             '               (persist with: setx ATLAS_WEB_API_KEY $env:ATLAS_WEB_API_KEY)\n'
             '  bash/zsh:    export ATLAS_WEB_API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")\n'
-            'Or use --no-auth for local dev.',
+            'Or use --no-auth for local dev (loopback only). More: docs/GETTING-STARTED.md, section 6.',
             file=__import__("sys").stderr,
         )
         raise SystemExit(1)

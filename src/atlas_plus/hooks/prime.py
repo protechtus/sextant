@@ -365,7 +365,9 @@ def main() -> None:
     utf8_stdout_when_piped()
     """Entry point for atlas-prime: inject task-specific memory context into a Claude Code session."""
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("Usage: atlas-prime <task description>\n\nPrints task-specific memory context: identity, your house rules, the facts that\nmatch the task words, the project note when a word is a project name, and recent\ndecisions -- for pasting into or priming an AI session.",
+        print("Usage: atlas-prime <task description>\n\nPrints task-specific memory context: identity, your house rules, the facts that\nmatch the task words, the project note when a word is a project name, and recent\ndecisions -- for pasting into or priming an AI session.\n\nExample (LES-054: the last line names what to type):\n  "
+              + (Path(sys.argv[0]).stem if sys.argv and sys.argv[0] and not sys.argv[0].endswith(".py") else "atlas-prime")
+              + ' "fix the login bug"',
               file=sys.stderr if len(sys.argv) < 2 else sys.stdout)
         sys.exit(1 if len(sys.argv) < 2 else 0)
     task = " ".join(sys.argv[1:])

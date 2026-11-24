@@ -60,7 +60,8 @@ def _prog() -> str:
 def main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog=_prog(),
         description="Wipe an area and immediately re-scaffold it (uninstall + init in one step).",
     )

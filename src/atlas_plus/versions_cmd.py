@@ -98,7 +98,8 @@ def plan_prune(info: dict, older_than_days: int, keep_last: int) -> list[tuple[P
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    ap = _next_step.ArgumentParser(
         prog="sextant versions",
         description="Report the corpus history (versions/) and prune old copies. Report first; "
                     "--yes deletes. Live notes are never touched.")

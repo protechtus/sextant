@@ -279,7 +279,8 @@ def main() -> None:
     """Entry point: run the nightly contradiction detection pass across all .memory/ files."""
     import argparse
 
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         description="Nightly contradiction check for Atlas .memory/ files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

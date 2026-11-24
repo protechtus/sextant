@@ -357,12 +357,33 @@ def main(argv: list[str] | None = None) -> int:
             elif line:
                 steps.append({"step": "text", "text": line})
         print(json.dumps({"ok": rc == 0, "steps": steps}, indent=2))
+        return _say_next(rc, args_list)
+    return _say_next(_main_lines(args_list), args_list)
+
+
+def _say_next(rc: int, argv: list[str]) -> int:
+    """`ROUND-TRIP: FAILED` was the last line, its cause in a JSON line above it (LES-054, AG102):
+    end on stderr with what to type next."""
+    if rc != 1:
         return rc
-    return _main_lines(args_list)
+    from atlas_plus import _next_step
+    from atlas_plus import paths as _paths
+
+    # Only this machine's own default server reads this corpus: --url, --command or an --env root point elsewhere.
+    local = not any(a.split("=")[0] in ("--url", "--command") or "ATLAS_MEMORY_ROOT=" in a for a in argv)
+    if local and not _paths.memory_root().is_dir():
+        step = (f"no corpus yet at {_paths.memory_root()}: run {_next_step.command('init')}, "
+                f"then {_next_step.command('verify')} again.")
+    else:
+        step = (f"the step lines above say what failed; {_next_step.command('doctor')} checks the install "
+                "(docs/GETTING-STARTED.md, Troubleshooting).")
+    _next_step.say("verify: the round trip did not complete.", step)
+    return rc
 
 
 def _main_lines(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    ap = _next_step.ArgumentParser(
         prog="sextant verify",
         description="Start the memory server over stdio and prove a write and a search work.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

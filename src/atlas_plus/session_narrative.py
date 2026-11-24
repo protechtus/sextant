@@ -259,3 +259,22 @@ def run_narrative(since_days: int = 14) -> dict:
         "direction_signals": len(report.direction_signals),
         "path": str(path),
     }
+
+
+def main() -> int:
+    """Console entry (atlas-narrative). It pointed at run_narrative itself: `--help` ran the report and
+    the returned dict became the exit status, so even a written report exited 1 (AG102)."""
+    import json
+
+    from atlas_plus import _next_step
+
+    ap = _next_step.ArgumentParser(prog="atlas-narrative", description="Write the session narrative report "
+                                   "(energy, open loops, direction) from recent session summaries.")
+    ap.add_argument("--days", type=int, default=14, help="How many days back to read (default 14).")
+    args = ap.parse_args()
+    result = run_narrative(since_days=args.days)
+    print(json.dumps(result))
+    if not result.get("ok"):
+        return _next_step.say(f"atlas-narrative: nothing written ({result.get('reason')}).",
+                              "session summaries come from the Stop hook: `sextant setup --client hooks` prints it.")
+    return 0

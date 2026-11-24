@@ -180,7 +180,8 @@ def main(argv: list[str] | None = None) -> None:
     utf8_stdout_when_piped()
     from atlas_plus.branding import prog as _prog
 
-    parser = argparse.ArgumentParser(prog=_prog("atlas-intake"),
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(prog=_prog("atlas-intake"),
                                      description="Import files dropped into the intake folder, sorted, with a manifest.")
     sub = parser.add_subparsers(dest="command", required=True)
 

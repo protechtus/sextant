@@ -2167,7 +2167,14 @@ def render_text(data: dict) -> str:
         lines.append(f"  Session fsdiffs captured: {fsdiff}")
 
     lines.append(f"\n  Generated: {data.get('ts', '')}")
+    if _next_hint(data):  # the fix sat mid-report; a first-timer reads the last lines (LES-054, AG102)
+        lines.append(f"  Next: {_next_hint(data)}")
     return "\n".join(lines)
+
+
+def _next_hint(data: dict) -> str:
+    mc = data.get("memory_corpus") or {}
+    return str(mc.get("hint") or "") if isinstance(mc, dict) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -2352,7 +2359,8 @@ def main() -> int:
         except Exception:
             pass
     from atlas_plus.branding import product as _product
-    parser = argparse.ArgumentParser(description=f"{_product()} health check")
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(description=f"{_product()} health check")
     parser.add_argument("--json",  action="store_true", help="Output JSON instead of text")
     parser.add_argument("--watch", action="store_true", help="Refresh every 30s")
     parser.add_argument("--strict", action="store_true",
@@ -2436,7 +2444,10 @@ def main() -> int:
         if bad:
             # On stdout as the last line: PowerShell renders stderr as a red NativeCommandError
             # and the reason got lost after a long report (persona rerun 2026-11-10).
-            print(f"strict: FAIL ({', '.join(bad)})")
+            named = any("run " in b for b in bad)  # "no corpus yet: run sextant-init" already says it
+            print(f"strict: FAIL ({', '.join(bad)})" + ("" if named else ". Next: " + (
+                _next_hint(data) or "the report above names the fix under each section "
+                                    "(docs/GETTING-STARTED.md, Troubleshooting).")))
             return 1
         print("strict: OK")
     if args.watch:

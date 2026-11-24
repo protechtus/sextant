@@ -1461,7 +1461,8 @@ def main() -> None:
     if any(a.split("=", 1)[0] in ("--port", "--host") for a in sys.argv[1:]):
         print("--port and --host are not options here: set ATLAS_MCP_PORT=<n> and ATLAS_MCP_HOST=<addr> in the environment.", file=sys.stderr)  # MN66, the sibling of the web hint
         raise SystemExit(2)
-    parser = argparse.ArgumentParser(description=f"{product()} MCP memory server")
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(description=f"{product()} MCP memory server")
     parser.add_argument(
         "--stdio",
         action="store_true",
@@ -1497,6 +1498,11 @@ def main() -> None:
             "Generate a token: python -c \"import secrets; print(secrets.token_urlsafe(32))\" "
             "Set ATLAS_MCP_TOKEN, or use --no-auth for local development only."
         )
+        # The log line wraps in columns; most people who type this want a client connected (AG102).
+        from atlas_plus import _next_step
+        print(f"Next: an MCP client starts this server itself over stdio: {_next_step.command('setup')} prints "
+              "the line that registers it. Serving HTTP needs ATLAS_MCP_TOKEN (docs/HOWTO-self-hosting.md).",
+              file=sys.stderr)
         raise SystemExit(1)
 
     if args.no_auth:

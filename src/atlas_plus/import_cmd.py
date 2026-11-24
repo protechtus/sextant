@@ -1123,7 +1123,8 @@ def main() -> None:
             _st.reconfigure(errors="replace")
         except Exception:  # noqa: BLE001
             pass
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog=_prog(),
         description="Import existing knowledge (report first; --yes to execute).",
     )
@@ -1152,15 +1153,17 @@ def main() -> None:
         parser.error("give a PATH (a vault directory, conversations.json, or a claude export .zip)")
     src = Path(raw_path)
     if not src.exists():
-        print(f"path not found: {src}", file=sys.stderr)
-        raise SystemExit(1)
+        from atlas_plus import _next_step  # LES-054: name what to give it (AG102)
+        raise SystemExit(_next_step.say(f"path not found: {src}", "give the folder of your notes (an Obsidian vault), a "
+                                        "ChatGPT conversations.json or a Claude export .zip, in quotes if it has spaces; "
+                                        f"`{parser.prog} --help` shows the options."))
 
     if not args.source:
         args.source = _detect_source(src)
         if not args.source:
             print(
                 f"could not auto-detect the source of {src.name!r} -- pass "
-                "--source obsidian|chatgpt|claude",
+                f"--source obsidian|chatgpt|claude (`{parser.prog} --help` says which file each one takes)",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -1175,7 +1178,8 @@ def main() -> None:
     try:
         if args.source == "obsidian":
             if not src.is_dir():
-                print("obsidian import expects a vault DIRECTORY", file=sys.stderr)
+                print(f"obsidian import expects a vault DIRECTORY: give the folder that holds the notes "
+                      f"(`{parser.prog} --help`)", file=sys.stderr)
                 raise SystemExit(1)
             result = import_obsidian(src, args.scope, execute=args.yes, archive_stale=args.archive_stale)
         elif args.source == "claude":
@@ -1187,7 +1191,8 @@ def main() -> None:
               f"export file ({e})", file=sys.stderr)
         raise SystemExit(1)
     except OSError as e:
-        print(f"import failed: {e}", file=sys.stderr)
+        print(f"import failed: {e}\nNext: check the path and its permissions, then run it again "
+              f"(`{parser.prog} --help` shows the options).", file=sys.stderr)
         raise SystemExit(1)
     except ValueError as e:
         print(f"import failed: {e} -- did you pass the wrong --source for this "

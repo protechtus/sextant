@@ -16,7 +16,8 @@ from .preflight import DEFAULT_MARGIN, SIZE_PRESETS, preflight, preflight_size, 
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Atlas token-budget preflight")
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    ap = _next_step.ArgumentParser(description="Atlas token-budget preflight")
     ap.add_argument("--estimate", type=int, default=None, help="task gross-token estimate")
     ap.add_argument("--size", choices=sorted(SIZE_PRESETS), default=None,
                     help="preflight by named size instead of an explicit estimate")

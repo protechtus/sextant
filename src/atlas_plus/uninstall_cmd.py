@@ -714,7 +714,8 @@ def main() -> None:
 def _main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog=_prog(),
         description="Report and (only when explicitly told) remove Sextant data.",
     )

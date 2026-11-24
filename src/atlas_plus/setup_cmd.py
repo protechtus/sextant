@@ -728,7 +728,8 @@ def _write_toml_out(path: Path, table: str, name: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
-    ap = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    ap = _next_step.ArgumentParser(
         prog="sextant setup",
         description="Print the MCP registration and hook entries for this install, filled in.",
     )

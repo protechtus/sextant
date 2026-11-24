@@ -1591,7 +1591,8 @@ def _main_guarded() -> None:
     utf8_stdout_when_piped()
     import argparse
 
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog=__import__("atlas_plus.branding", fromlist=["prog"]).prog("atlas-fts-rebuild"),
         description="Rebuild the .memory FTS index (full rebuild by default).",
     )
@@ -1601,6 +1602,11 @@ def _main_guarded() -> None:
     )
     args = parser.parse_args()
 
+    if not MEMORY_ROOT.is_dir():
+        # before init it built an empty index (and the state dir) and said "rebuilt: 0 files" (AG102);
+        # the sibling of `sextant search` before init (AG25): create nothing, name the step.
+        raise SystemExit(_next_step.say(f"{parser.prog}: no corpus yet at {MEMORY_ROOT} (nothing was built).",
+                                        f"run {_next_step.command('init')} first."))
     count = rebuild(force=not args.if_stale)
     if count == -1:
         print("FTS index already fresh -- nothing to do.")

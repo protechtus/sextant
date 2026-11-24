@@ -286,7 +286,8 @@ def main() -> None:
     # through and PROCESS QUEUED JOBS -- Codex artifact audit 2026-09-21).
     import argparse
 
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog="atlas-job-poller",
         description="Poll the Brain task queue once (default) or continuously (--loop).",
     )

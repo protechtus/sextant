@@ -2904,7 +2904,8 @@ def run(session_id: str) -> None:
 def main() -> None:
     """Entry point for the Brain CLI: parse args and dispatch to the interactive REPL or list/history views."""
     import argparse
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         description="Atlas Brain CLI -- local Qwen3 terminal chat",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(

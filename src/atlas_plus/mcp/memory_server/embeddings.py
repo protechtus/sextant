@@ -381,7 +381,8 @@ def main() -> None:
     """Entry point for atlas-embed-index."""
     import argparse
 
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         prog=__import__("atlas_plus.branding", fromlist=["prog"]).prog("atlas-embed-index"),
         description="Build/refresh the local semantic index (Ollama embeddings).",
     )
@@ -392,6 +393,10 @@ def main() -> None:
     if args.status:
         print(json.dumps(index_status(), indent=2))
         return
+    from .config import MEMORY_ROOT
+    if not MEMORY_ROOT.is_dir():  # the sibling of sextant-fts-rebuild before init (AG102)
+        raise SystemExit(_next_step.say(f"{parser.prog}: no corpus yet at {MEMORY_ROOT} (nothing was embedded).",
+                                        f"run {_next_step.command('init')} first."))
     result = rebuild_index(force=args.force)
     print(json.dumps(result, indent=2))
     if result["failed"] and not any(

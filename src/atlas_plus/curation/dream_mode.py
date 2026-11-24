@@ -356,7 +356,8 @@ def main() -> None:
     import argparse
 
     from atlas_plus.branding import product
-    parser = argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(
         description=f"{product()} Dream Mode: on-demand meta-cognitive reflection over the corpus.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(

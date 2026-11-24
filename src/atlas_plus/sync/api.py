@@ -379,7 +379,8 @@ def main() -> None:
 
     import uvicorn
 
-    parser = argparse.ArgumentParser(description="Sextant Sync hub server")
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(description="Sextant Sync hub server")
     parser.add_argument("--host", default=os.environ.get("ATLAS_SYNC_HOST", "127.0.0.1"))
     parser.add_argument(
         "--port", type=int, default=int(os.environ.get("ATLAS_SYNC_PORT", DEFAULT_PORT))

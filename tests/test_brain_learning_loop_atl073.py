@@ -536,3 +536,38 @@ class TestReaders:
         assert rows[0]["date"] == _today()
         assert learning._notes_for(_today(), state)[0]["text"] == "Shipped ATL-073."
         assert learning._notes_for("2001-01-01", state) == []
+
+
+def test_digest_counts_brain_jobs_by_the_local_day(tmp_path):
+    """Stamps are UTC, the digest's day is local: a job that finished at 23:30 local time belongs to that day,
+    one from 23:30 the evening before does not (by the UTC date both were wrong west of UTC)."""
+    import sqlite3
+    from datetime import datetime as _dt, time as _time, timedelta as _td, timezone as _tz
+
+    from atlas_plus.brain import tasks as task_store
+
+    state = tmp_path / "state"
+    state.mkdir()
+    db = state / "state.sqlite"
+    today = _dt.now().astimezone().date()
+
+    def stamp(day, hh, mm):
+        local = _dt.combine(day, _time(hh, mm)).astimezone()   # that wall-clock time in the machine's zone
+        return local.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+    ids = {}
+    for label in ("early", "late", "eve_before"):
+        task = task_store.create_task(label, session_id="s", db_path=db, kind="dream")
+        task_store.mark_running(task.task_id, db_path=db)
+        task_store.mark_done(task.task_id, "ok", db_path=db)
+        ids[label] = task.task_id
+    con = sqlite3.connect(db)
+    for label, when in (("early", stamp(today, 0, 30)), ("late", stamp(today, 23, 30)),
+                        ("eve_before", stamp(today - _td(days=1), 23, 30))):
+        con.execute("update brain_tasks set started_at = ?, finished_at = ? where task_id = ?", (when, when, ids[label]))
+    con.commit()
+    con.close()
+
+    ledger = learning._brain_ledger(today.isoformat(), db)
+    assert ledger["jobs"]["dream"]["done"] == 2
+    assert learning._brain_ledger((today - _td(days=1)).isoformat(), db)["jobs"]["dream"]["done"] == 1

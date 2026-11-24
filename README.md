@@ -14,16 +14,19 @@
 ```text
 py -3.12 -m venv .venv                                # Windows: any 3.11+ that `py --list` shows (py -3.13, py -3.11); macOS/Linux: python3 -m venv .venv (3.11+)
 .venv\Scripts\Activate.ps1                            # PowerShell; Git Bash: . .venv/Scripts/activate; macOS/Linux: . .venv/bin/activate
-pip --version                                         # STOP unless this names .venv: the venv or its activation failed (delete .venv, fix the line above)
+pip --version                                         # STOP unless this names .venv: the venv or its activation failed (delete .venv, fix the line above). PowerShell said "running scripts is disabled"? Run  Set-ExecutionPolicy -Scope Process RemoteSigned  (this window only), then the Activate line again
 pip install sextant-ai                                # the released package; NOT `pip install sextant` (an unrelated project)
 sextant init                                          # a corpus (plain Markdown) and a state dir
-sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it
+sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it, then restart the client
 sextant verify                                        # proves the round-trip; your client is connected once the setup line has run
 ```
 
-One command per line (no `&&`: PowerShell 5.1 has none), about ten minutes, Python 3.11 or newer. The full walk-through is in
+One command per line (no `&&`: PowerShell 5.1 has none), about ten minutes, Python 3.11 or newer. Have your client installed
+first (Claude Code: `claude --version` prints a version); nothing here installs it. The full walk-through is in
 [Quickstart](#quickstart) below. The package on PyPI is `sextant-ai` (first release: `0.1.0`). For the newest build between
 releases, replace that line with `pip install git+https://github.com/protechtus/sextant`.
+In WSL, make the folder and its `.venv` in the Linux home (for example `~/sextant`), not under `/mnt/c`: on a Windows
+drive the install takes about ten times as long and every command starts slowly.
 
 **New to GitHub, or stuck on an error?** [New to GitHub? Start here](https://github.com/protechtus/sextant/blob/main/docs/NEW-TO-GITHUB.md)
 explains what Git, Python, pip and PATH are, checks each one with you, and lists the common error messages with their fix.
@@ -86,7 +89,8 @@ machines; if that has never bothered you, the built-in is the right call.
 > follow it."* The same runbook ships here as [docs/AGENT-INSTALL.md](https://github.com/protechtus/sextant/blob/main/docs/AGENT-INSTALL.md): numbered
 > steps, a verify command after each, and explicit points where the agent must ask you first.
 
-Supported platforms: Windows, Linux, macOS; Python 3.11+. git required.
+Supported platforms: Windows, Linux, macOS; Python 3.11+. Git is needed only for the clone path below;
+`pip install sextant-ai` needs none.
 You also need an MCP client to connect to -- the walkthrough below uses the
 Claude Code CLI. If `claude --version` prints nothing, install Claude Code
 first ([anthropic.com/claude-code](https://claude.com/product/claude-code) has
@@ -99,7 +103,15 @@ Prefer containers? Generate a `.env` with your keys first (at minimum
 `ATLAS_MCP_TOKEN`; `ATLAS_WEB_API_KEY` for the dashboard), then
 `docker compose up -d mcp web` -- both steps in [docs/HOWTO-docker.md](https://github.com/protechtus/sextant/blob/main/docs/HOWTO-docker.md).
 
-Install from a clone as shown below (the clone also gives you the docs and the test
+**Installed with `pip install sextant-ai` (the block at the top)? You are done installing: skip the clone
+blocks below.** What is left: `sextant init`, then `sextant setup` and run the line it prints for your client,
+restart the client, then `sextant verify`. Use the line `sextant setup` prints, not the hand-typed
+`claude mcp add` lines further down: those are written for a clone, and setup's line carries the real paths
+of your install. Files this README names under `deploy/`, and `constraints.txt`, live in the repository, not
+in the package: the hook entries come from section 3 of `sextant setup`, and the `docs/` links open on GitHub.
+To update later: `pip install -U sextant-ai`.
+
+The rest of this section installs from a clone (the clone also gives you the docs and the test
 suite; `sextant verify` and `sextant setup` work in every kind of install). Two other
 ways once you know what you want:
 `pip install git+https://github.com/protechtus/sextant.git` installs the current

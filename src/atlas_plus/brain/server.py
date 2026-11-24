@@ -1387,7 +1387,8 @@ def main() -> None:
     )
 
     from atlas_plus.branding import product
-    parser = argparse.ArgumentParser(description=f"{product()} Brain -- local task queue API")
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    parser = _next_step.ArgumentParser(description=f"{product()} Brain -- local task queue API")
     parser.add_argument(
         "--no-auth",
         action="store_true",

@@ -62,7 +62,8 @@ def main() -> None:
     # (Codex artifact audit 2026-09-21).
     import argparse
 
-    argparse.ArgumentParser(
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    _next_step.ArgumentParser(
         prog="atlas-telegram-bot",
         description="Telegram control bot (long-poll; needs ATLAS_TELEGRAM_BOT_TOKEN "
                     "and ATLAS_TELEGRAM_ALLOWED_USERS).",

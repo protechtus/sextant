@@ -24,6 +24,23 @@ def is_link(path: Path) -> bool:
     return bool(getattr(st, "st_reparse_tag", 0) & 0x20000000)
 
 
+def entry_is_link(entry: "os.DirEntry") -> bool:
+    """``is_link`` for a directory-listing entry, from the listing's own data: no system call
+    unless the entry IS a reparse point. ``is_link(Path(entry.path))`` cost two lstat calls per
+    file, 3 s of the file tree and 2 s of doctor's scan at 20,000 notes on Windows (AG100)."""
+    try:
+        if entry.is_symlink():
+            return True
+        if os.name != "nt":
+            return False
+        st = entry.stat(follow_symlinks=False)  # cached from the listing on Windows
+    except OSError:
+        return False
+    if not getattr(st, "st_file_attributes", 0) & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT
+        return False
+    return is_link(Path(entry.path))  # a reparse point (rare): the full rule
+
+
 def inside(path: Path, root: Path) -> bool:
     """True when ``path`` resolves to a location inside ``root`` (both resolved)."""
     try:

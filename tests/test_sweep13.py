@@ -435,3 +435,16 @@ def test_wsl_hook_commands_disable_msys_path_conversion():
     for key in ("SessionStart", "Stop"):
         cmd = j["hooks"][key][0]["hooks"][0]["command"]
         assert cmd.startswith("MSYS_NO_PATHCONV=1 wsl -d"), cmd
+
+
+def test_public_readme_tells_a_pip_user_to_skip_the_clone_blocks():
+    """SEX-044 (stranger pass on the PyPI package, 2026-11-23): the README said pip needs no Git, then
+    'git required' and 'Install from a clone'; a pip user reading on installed twice."""
+    from pathlib import Path
+    readme = (Path(__file__).resolve().parents[1] / "docs" / "README-PUBLIC.md").read_text(encoding="utf-8")
+    quick = readme.split("## Quickstart", 1)[1]
+    before_clone = quick.split("git clone", 1)[0]
+    assert "git required" not in readme
+    assert "skip the clone" in before_clone and "pip install -U sextant-ai" in before_clone
+    assert "section 3 of `sextant setup`" in before_clone       # hooks for a pip install come from setup, not deploy/
+    assert "restart the client" in readme.split("```")[1]       # the first block says to restart after registering

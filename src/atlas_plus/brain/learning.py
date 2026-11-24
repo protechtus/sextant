@@ -180,7 +180,10 @@ def _git_commits(day: str, repos: list[Path]) -> dict[str, list[str]]:
 
 
 def _brain_ledger(day: str, db_path: Path) -> dict:
-    """Brain jobs finished on the day (by kind and outcome, minutes spent) and scheduler heartbeats."""
+    """Brain jobs finished on the day (by kind and outcome, minutes spent) and scheduler heartbeats.
+
+    ``day`` is a LOCAL date like the rest of the digest; the stamps are UTC, so they are compared as
+    local dates (by the UTC date, an evening job west of UTC landed in the next day's digest)."""
     result: dict = {"jobs": {}, "failed": [], "scheduler": {}, "pending_facts": 0, "pending_proposals": 0}
     if not db_path.exists():
         return result
@@ -194,21 +197,21 @@ def _brain_ledger(day: str, db_path: Path) -> dict:
             rows = con.execute(
                 "select kind, status, count(*) as n, "
                 "sum((julianday(finished_at) - julianday(started_at)) * 1440.0) as minutes "
-                "from brain_tasks where substr(finished_at, 1, 10) = ? group by kind, status", (day,)).fetchall()
+                "from brain_tasks where date(finished_at, 'localtime') = ? group by kind, status", (day,)).fetchall()
             for r in rows:
                 slot = result["jobs"].setdefault(r["kind"] or "agent", {"done": 0, "failed": 0, "blocked": 0, "minutes": 0.0})
                 slot[r["status"] if r["status"] in ("done", "failed", "blocked") else "done"] += int(r["n"])
                 slot["minutes"] = round(float(slot["minutes"]) + float(r["minutes"] or 0.0), 1)
             rows = con.execute(
                 "select task_id, kind, status, substr(coalesce(error, result, ''), 1, 200) as why "
-                "from brain_tasks where substr(finished_at, 1, 10) = ? and status in ('failed', 'blocked') "
+                "from brain_tasks where date(finished_at, 'localtime') = ? and status in ('failed', 'blocked') "
                 "order by finished_at desc limit 12", (day,)).fetchall()
             result["failed"] = [dict(r) for r in rows]
         except sqlite3.Error:
             pass
         try:
             rows = con.execute(
-                "select job_id, outcome, run_count from scheduler_runs where substr(last_run_at, 1, 10) = ?", (day,)).fetchall()
+                "select job_id, outcome, run_count from scheduler_runs where date(last_run_at, 'localtime') = ?", (day,)).fetchall()
             result["scheduler"] = {r["job_id"]: r["outcome"] for r in rows}
         except sqlite3.Error:
             pass
@@ -711,7 +714,8 @@ def supervisor_context(days: int = 7, *, state_dir: Optional[Path] = None, db_pa
 def main(argv: Optional[list[str]] = None) -> int:
     import argparse
 
-    ap = argparse.ArgumentParser(prog="atlas-brain-learning", description=__doc__.splitlines()[0])
+    from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    ap = _next_step.ArgumentParser(prog="atlas-brain-learning", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("digest", help="write the session digest for a local day (default: yesterday)")
     d.add_argument("--date", help="YYYY-MM-DD")
