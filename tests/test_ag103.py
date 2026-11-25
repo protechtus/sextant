@@ -74,6 +74,8 @@ def test_install_kind_reads_direct_url(monkeypatch):
 
     cases = {'{"url": "https://github.com/x", "vcs_info": {"vcs": "git", "commit_id": "abc"}}': "git",
              '{"url": "file:///C:/Projects/sextant", "dir_info": {"editable": true}}': "editable",
+             '{"url": "file:///C:/Projects/sextant", "dir_info": {}}': "folder",
+             '{"url": "file:///C:/Projects/sextant", "dir_info": {"editable": false}}': "folder",
              None: "pypi", "not json": "pypi"}
     for raw, kind in cases.items():
         monkeypatch.setattr(md, "distribution", lambda _n, _r=raw: _Dist(_r))
@@ -209,3 +211,27 @@ def test_pre_compact_help_prints_usage_and_writes_nothing(sandbox_env, monkeypat
     assert pre_compact.main() is None
     assert "Usage: atlas-pre-compact" in capsys.readouterr().out
     assert not state.exists()
+
+
+def test_a_copy_installed_from_a_folder_gets_an_upgrade_line_that_works(monkeypatch):
+    """MN93 F2: `pip install .` in a clone records a file: address with an empty dir_info; `sextant upgrade`
+    printed `pip install -U sextant-ai`, which answers "Requirement already satisfied" for such a copy. Fails
+    before: the line named PyPI."""
+    import importlib.metadata as md
+
+    from atlas_plus import _next_step
+
+    class _Dist:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def read_text(self, name):
+            return self.raw if name == "direct_url.json" else None
+
+    monkeypatch.setattr(md, "distribution", lambda _n: _Dist('{"url": "file:///srv/src/sextant", "dir_info": {}}'))
+    line = _next_step.upgrade_line()
+    assert _next_step.install_kind() == "folder"
+    assert "git pull" in line and "pip install -U ." in line and "sextant" in line.split("`git pull` in ", 1)[1]
+    assert _next_step.PYPI_UPGRADE not in line
+    monkeypatch.setattr(md, "distribution", lambda _n: _Dist('{"url": "not-a-file-address", "dir_info": {}}'))
+    assert "in the folder you installed from" in _next_step.upgrade_line()

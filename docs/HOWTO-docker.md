@@ -88,7 +88,8 @@ Two things about keys that only show up later:
   `printf %s "$(grep '^ATLAS_MCP_TOKEN=' .env | cut -d= -f2- | tr -d '\r')" | sha256sum | cut -c1-8`,
   without printing either secret. `unset ATLAS_MCP_TOKEN` (or a fresh shell) before `up` fixes it.
   (The 401 body no longer carries the fingerprint: for a short human-chosen token it was an
-  offline oracle. Generate tokens with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.)
+  offline oracle. Generate tokens with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+  (`python` on Windows).)
 - The doctor's Services rows mean little under compose: each container probes
   its own loopback, so the MCP row is up and every other service reads down
   even when it is running. Use `docker compose ps` and the curls for liveness,

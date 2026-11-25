@@ -2160,7 +2160,7 @@ def render_text(data: dict) -> str:
         lines.append("\033[1mConvergence Flags\033[0m")
         lines.append(f"  \033[33m{flagged_n} file(s) with unresolved contradiction flag(s)\033[0m")
         for p in conv.get("paths", [])[:3]:
-            lines.append(f"    {p}")
+            lines.append(f"    {_safe(p)}")
         if flagged_n > 3:
             lines.append(f"    (+{flagged_n - 3} more)")
         lines.append("  Run: atlas-review-memory convergence")

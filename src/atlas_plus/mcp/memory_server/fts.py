@@ -1218,6 +1218,18 @@ def _walk_memory_stats():
 
 
 INDEX_FORMAT = "11"  # bump when _norm_index_text changes: every note is re-indexed (2 = Thai-like runs split, Arabic/Hebrew marks folded; 3 = Hebrew punctuation kept, and an index stamped 2 by the search path without a rebuild; 4 = Turkish dotted/dotless i folded, AG72; 5 = Greek tonos, capital sharp s, Azeri schwa, MN62; 6 = emoji clusters, Arabic/Hebrew prefixes, Persian plurals, AG83; 7 = stroke letters folded, toned ZWJ sequences, MN74; 8 = the remaining stroke letters and the ae/oe ligatures, MN78; 9 = Hebrew acronyms joined across the gershayim, AG89; 10 = digraph-alias tail for å/ø/ö/ä/ü words, AG96; 11 = provenance tags and stamps left out, AG99)
+# What _parse_md and _index_body make of a note, without a format bump (AG121, lesson LES-092): raise it when a
+# change alters the row any note stores (tests/test_guardrails.py G21 holds the snapshot). An index whose stamp
+# is older heals on the next incremental update: only the notes whose row would differ are re-indexed, once.
+# 1 = a top block that is not key/value pairs is text (AG119).
+PARSE_REVISION = "1"
+
+
+def _parse_stamp(last_indexed) -> str:
+    """The `parse_revision` value: the revision tied to the `last_indexed` it was written with. A build that
+    does not know the key (0.1.0) leaves it in place but rewrites `last_indexed` on every pass that writes
+    rows, so its old-style rows never pass as healed (AG121, MN93 F3)."""
+    return f"{PARSE_REVISION}@{last_indexed}"
 
 
 def _needs_rebuild() -> bool:
@@ -1233,6 +1245,8 @@ def _needs_rebuild() -> bool:
         ).fetchone()
         if not row:
             return True
+        if _parse_stamp_stale(conn):
+            return True   # rows an older parser wrote: `--if-stale` said "already fresh" (AG121, MN93 F1)
         last_indexed = float(row[0])
         # A newer mtime is an edit; a path the index does not hold is an added or renamed note (a rename and a
         # copy keep the mtime); fewer notes than the index holds is a removal. `--if-stale` answered "already
@@ -1454,6 +1468,60 @@ def _stale_scaffold_rows(conn, todo, seen, db_state, rowids) -> list:
     return [(rel, mtime, size)]
 
 
+_HEAL_STATS: dict = {}   # what the last healing pass did: notes read, notes queued (AG121; read by tests)
+_HEAL_NOTICE_MIN_NOTES = 2000   # the pass reads and parses every note once: 35 s at 20,000 notes, warm (2026-11-25)
+
+
+def _parse_heal_rows(conn, todo, seen, db_state, rowids, resuming: bool = False) -> list:
+    """The unchanged notes whose index row the current parser would write differently, when the index's
+    parse stamp is missing or older than PARSE_REVISION (AG121, MN93 F1: an index 0.1.0 built kept a
+    rule-line top block out of the body until a forced rebuild). Each candidate is read once and parsed;
+    only a differing row is queued. A stamped index costs two meta lookups."""
+    try:
+        got = dict(conn.execute("SELECT key, value FROM atlas_meta WHERE key IN ('parse_revision','last_indexed')"))
+    except sqlite3.Error:
+        return []
+    if "last_indexed" in got and got.get("parse_revision") == _parse_stamp(got["last_indexed"]):
+        return []
+    if resuming and got.get("parse_revision") == _parse_stamp("building"):
+        return []   # a build this code started: every row it kept is right (AG99)
+    queued = {t[0] for t in todo}
+    cands = [rel for rel in db_state if rel in seen and rel not in queued]
+    _HEAL_STATS.update(read=len(cands), queued=0)
+    if not cands:
+        return []
+    if len(cands) >= _HEAL_NOTICE_MIN_NOTES:   # the first search after an update waited in silence
+        _notice(f"Sextant: checking {len(cands):,} notes against the search index after an update; "
+                "this runs once and can take a minute.")
+    from atlas_plus import _readahead
+    out = []
+    for rel, (_p, raw) in zip(cands, _readahead.read_texts([MEMORY_ROOT / r for r in cands], encoding="utf-8-sig")):
+        if isinstance(raw, OSError):
+            continue
+        fm_json, body, _c = _parse_md(raw)
+        want = (fm_json, _index_body(fm_json, body))
+        try:
+            rid = rowids.get(rel)
+            row = conn.execute("SELECT path, frontmatter_json, body FROM memory_fts WHERE rowid=?", (int(rid),)).fetchone() if rid is not None else None
+            if row is None or row[0] != rel:
+                row = conn.execute("SELECT path, frontmatter_json, body FROM memory_fts WHERE path=?", (rel,)).fetchone()
+        except (sqlite3.Error, TypeError, ValueError):
+            continue
+        if row is None or (row[1], row[2]) != want:
+            mtime, size = db_state[rel]
+            out.append((rel, mtime, size))
+    _HEAL_STATS["queued"] = len(out)
+    return out
+
+
+def _parse_stamp_stale(conn) -> bool:
+    try:
+        got = dict(conn.execute("SELECT key, value FROM atlas_meta WHERE key IN ('parse_revision','last_indexed')"))
+    except sqlite3.Error:
+        return False
+    return "last_indexed" in got and got.get("parse_revision") != _parse_stamp(got["last_indexed"])
+
+
 def _index_pass(resuming: bool = False) -> int:
     """Index every note whose (mtime, size) differs from memory_files and drop the rows of vanished notes.
 
@@ -1483,6 +1551,10 @@ def _index_pass(resuming: bool = False) -> int:
                 todo.append((rel, mtime, size))
         forced = _stale_scaffold_rows(conn, todo, seen, db_state, rowids)
         todo.extend(forced)
+        healing = _parse_heal_rows(conn, todo, seen, db_state, rowids, resuming)   # a parse change heals old rows (AG121)
+        todo.extend(healing)
+        forced = set(forced) | set(healing)
+        restamp = not resuming and _parse_stamp_stale(conn)
         _t0 = time.monotonic()
         if len(todo) >= _NOTICE_MIN_NOTES:  # a pull, sync or restore re-indexes thousands of notes: say so before the wait (AG84)
             if resuming and db_state:
@@ -1531,10 +1603,11 @@ def _index_pass(resuming: bool = False) -> int:
             _fts_delete(conn, rel, rowids.get(rel))
             conn.execute("DELETE FROM memory_files WHERE path=?", (rel,))
             changed += 1
-        if changed or resuming or conn.in_transaction:
+        if changed or resuming or conn.in_transaction or restamp:
             conn.execute(
-                "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?)",
-                (str(now),),
+                "INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format','" + INDEX_FORMAT + "'), ('last_indexed',?),"
+                " ('parse_revision',?)",
+                (str(now), _parse_stamp(str(now))),
             )
             conn.commit()
             log.info("FTS incremental update: %d row(s) changed", changed)
@@ -1649,8 +1722,8 @@ def rebuild(force: bool = False) -> int:
                     conn.execute("DELETE FROM memory_fts")
                 conn.execute("DELETE FROM memory_files")
                 conn.execute("DELETE FROM atlas_meta WHERE key='last_indexed'")
-                conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format',?)",
-                             (_BUILDING + INDEX_FORMAT,))
+                conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format',?), ('parse_revision',?)",
+                             (_BUILDING + INDEX_FORMAT, _parse_stamp("building")))
                 conn.commit()
         finally:
             conn.close()

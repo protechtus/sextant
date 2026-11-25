@@ -99,14 +99,28 @@ def _direct_url() -> dict:
 
 
 def install_kind() -> str:
-    """How THIS copy was installed: "git" (pip install git+...), "editable" (a clone, -e), or
-    "pypi" (anything else, the default). Read from the distribution's direct_url.json (PEP 610)."""
+    """How THIS copy was installed: "git" (pip install git+...), "editable" (a clone, -e), "folder"
+    (`pip install .` in a clone or an unpacked archive, not editable), or "pypi" (anything else, the
+    default). Read from the distribution's direct_url.json (PEP 610)."""
     info = _direct_url()
-    if isinstance(info.get("dir_info"), dict) and info["dir_info"].get("editable"):
-        return "editable"
+    if isinstance(info.get("dir_info"), dict):
+        return "editable" if info["dir_info"].get("editable") else "folder"
     if "vcs_info" in info:
         return "git"
     return "pypi"
+
+
+def install_folder() -> str:
+    """The folder a "folder" or "editable" install came from, as a path of this system ('' when unknown)."""
+    url = install_source()
+    if not url.lower().startswith("file:"):
+        return ""
+    from urllib.parse import urlsplit
+    from urllib.request import url2pathname
+    try:
+        return url2pathname(urlsplit(url).path)
+    except (ValueError, OSError):
+        return ""
 
 
 def install_source() -> str:
@@ -125,6 +139,11 @@ def upgrade_line(kind: str | None = None) -> str:
                 "(this copy came from git; every build is 0.1.0, so -U is a no-op)")
     if kind == "editable":
         return "`git pull` in your clone, then `pip install -e .` again (this copy is an editable clone)"
+    if kind == "folder":
+        folder = install_folder()
+        where = f"in {folder}" if folder else "in the folder you installed from"
+        return (f"`git pull` {where}, then `pip install -U .` there again (this copy was installed from "
+                "that folder: PyPI's `-U` line does nothing for it)")
     return f"`{PYPI_UPGRADE}` (a source install updates differently: docs/GETTING-STARTED.md)"
 
 

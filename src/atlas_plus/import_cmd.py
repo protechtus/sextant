@@ -1193,6 +1193,12 @@ def main() -> None:
               f"export file ({e})", file=sys.stderr)
         raise SystemExit(1)
     except OSError as e:
+        from atlas_plus import _next_step
+        if _next_step.is_write_refused(e) and getattr(e, "filename", None) and \
+                str(e.filename).startswith(str(atlas_paths.memory_root())):
+            # the corpus refused the write: the folder and the next step, not a raw errno (AG120)
+            print(f"import failed: {_next_step.write_refused(e, atlas_paths.memory_root())}", file=sys.stderr)
+            raise SystemExit(1)
         print(f"import failed: {e}\nNext: check the path and its permissions, then run it again "
               f"(`{parser.prog} --help` shows the options).", file=sys.stderr)
         raise SystemExit(1)

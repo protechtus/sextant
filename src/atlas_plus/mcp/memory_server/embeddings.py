@@ -131,15 +131,11 @@ def _body_of(path: Path) -> str:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-    from .fts import strip_provenance, without_scaffold
-    _rest = without_scaffold(text)
-    if _rest is not None:
-        text = _rest   # the init template's instructions are not a memory (AG111; the keyword index drops them too)
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            text = text[end + 4:]
-    return strip_provenance(text).strip()   # the `<!-- source:... -->` tag is not meaning: keyword search drops it too (AG99)
+    from .fts import _parse_md, strip_provenance
+    # the keyword index's parser: the init template dropped (AG111) and a top block that is not key/value pairs
+    # kept as text (AG119); this pass cut that block and its words were never embedded (AG121). The content
+    # hash then differs for exactly those notes, so the next embed-index run re-embeds them once.
+    return strip_provenance(_parse_md(text)[1]).strip()   # the `<!-- source:... -->` tag is not meaning: keyword search drops it too (AG99)
 
 
 def index_status() -> dict:

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import yaml
-from atlas_plus._yaml import load_mapping as _load_mapping
+from atlas_plus._yaml import load_mapping_or_none as _load_mapping_or_none
 
 from ..config import MAX_READ_BYTES, MEMORY_ROOT, safe_resolve_within
 
@@ -44,11 +44,18 @@ def memory_read(path: str) -> dict:
     if raw.startswith("---"):
         end = raw.find("\n---", 3)
         if end != -1:
+            block: dict | None = {}
             try:
-                frontmatter = _load_mapping(raw[3:end].strip(), fast=False)
+                block = _load_mapping_or_none(raw[3:end].strip(), fast=False)
             except Exception:
-                pass
-            body = raw[end + 4:].strip()
+                pass  # a block that does not parse stays hidden, as before
+            if block is None:
+                # a rule line over a sentence, a list, a number: not frontmatter but the note's own
+                # text, which search finds and snippets show; a read must not drop it (AG120)
+                body = raw.strip()
+            else:
+                frontmatter = block or {}
+                body = raw[end + 4:].strip()
 
     return {
         "path": path,

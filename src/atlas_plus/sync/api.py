@@ -407,6 +407,10 @@ def main() -> None:
         print(f"Port {args.port} is already in use on {args.host}: another hub, or another program. Set ATLAS_SYNC_PORT to a free "
               "port.", file=__import__('sys').stderr)  # the raw uvicorn bind error named nothing (AG71)
         raise SystemExit(3)
+    # uvicorn logs at warning, so nothing said the hub was up; flushed, so an output redirected to a
+    # file shows it at once (MN92 F8)
+    _shown = f"[{args.host}]" if ":" in args.host else args.host
+    print(f"sync hub listening on http://{_shown}:{args.port} (stop it with Ctrl+C)", flush=True)
     uvicorn.run(create_app(bind_host=args.host), host=args.host, port=args.port,
                 log_level=_os.environ.get("ATLAS_SYNC_LOG_LEVEL", "warning").lower(), access_log=False, proxy_headers=False)  # every request incl. file paths was logged at INFO (MN35)
 

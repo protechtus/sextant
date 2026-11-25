@@ -132,7 +132,20 @@ def cmd_archive(
     if not yes:
         typer.confirm(f"Archive '{path}'? It will be moved to archive/. Continue?", abort=True)
 
-    dest = archive_file(path, label=label)
+    import sys as _sys
+
+    from atlas_plus import _next_step
+    try:
+        dest = archive_file(path, label=label)
+    except (FileNotFoundError, ValueError) as e:  # a missing or escaping path: one line, no traceback (AG120)
+        print(f"archive refused: {e}. Next: give a path relative to the corpus, as {_next_step.command('review stale')} "
+              "lists them.", file=_sys.stderr)
+        raise typer.Exit(1)
+    except OSError as e:
+        if not _next_step.is_write_refused(e):
+            raise
+        print(f"Not archived: {_next_step.write_refused(e, atlas_paths.memory_root())}", file=_sys.stderr)
+        raise typer.Exit(1)
     console.print(f"[green]Archived:[/green] {path} -> {dest}")
 
 

@@ -321,7 +321,12 @@ def _check_auth(request: Request, header_only: bool = False) -> None:
         _refuse_cross_site(request)
         return
     if not API_KEY:
-        raise HTTPException(status_code=503, detail="ATLAS_WEB_API_KEY not set.")
+        # the same key-missing wording as the command line, plus the next step (SEX-048); the
+        # copyable keygen lines name this interpreter's path, so they stay on the server's stderr
+        from atlas_plus import _next_step
+        raise HTTPException(status_code=503, detail=(
+            f"{_next_step.key_missing('ATLAS_WEB_API_KEY')}. Next: stop this server and start the dashboard "
+            f"with {_next_step.command('web')}: it prints how to make and set the key."))
     client_ip, cf_ip = _client_ip(request)
     throttle_ip = cf_ip or client_ip
     # Loopback is trusted: the throttle exists to stop REMOTE brute-force via the

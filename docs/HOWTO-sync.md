@@ -105,6 +105,12 @@ parked copy is only a copy. Archive or delete it afterwards so `status` stops co
 under a subdirectory of `_atlas/` never syncs, so archiving it there is safe.
 The `sync` output names the parked path.
 
+Exit codes: a parked conflict is not an error. `sextant-sync plan`, `sync` and `status` exit 0
+when a conflict is parked or still pending (`sync` exits 1 only when a transfer failed);
+`sextant-sync checkin` exits 1 while your corpus and the hub's differ, which includes an
+unresolved conflict. A script that must stop on a conflict looks for the `CONFLICT:` lines of
+`plan` and `sync`, or the `UNRESOLVED CONFLICTS` line of `status`.
+
 ### After the hub was restored from a backup
 
 Restore the hub's corpus AND its state dir together, from the same backup. A corpus restored on its own (over a live

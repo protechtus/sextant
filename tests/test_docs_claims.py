@@ -219,6 +219,32 @@ class TestConfigurationReference:
             f"{sorted(undocumented)}"
         )
 
+    # A name the page documents and nothing reads sends a reader to set a variable that does nothing
+    # (lesson LES-020, the other direction; meta pass of 2026-11-25). Names read outside src/atlas_plus
+    # are listed with where they are read.
+    _READ_ELSEWHERE: dict[str, str] = {}
+
+    def test_every_documented_env_is_read(self):
+        doc_path = REPO / "docs" / "CONFIGURATION.md"
+        if not doc_path.exists():
+            pytest.skip("sdist install: docs/ not shipped")
+        doc = doc_path.read_text(encoding="utf-8")
+        src = "\n".join(py.read_text(encoding="utf-8", errors="replace")
+                        for py in (REPO / "src" / "atlas_plus").rglob("*.py"))
+        unread = set()
+        for m in re.finditer(r"ATLAS_[A-Z0-9_]+", doc):
+            name, nxt = m.group(0), doc[m.end():m.end() + 1]
+            if name.endswith("_") or nxt in "<*{":      # a family: ATLAS_MODEL_<ROLE>_PROVIDER, ATLAS_DISABLE_*
+                continue
+            if name in src or name in self._READ_ELSEWHERE:
+                continue
+            unread.add(name)
+        assert not unread, (
+            f"docs/CONFIGURATION.md names variables nothing in src/atlas_plus reads: {sorted(unread)} "
+            f"(remove them from the page, or list where they are read in _READ_ELSEWHERE)")
+        stale = [n for n in self._READ_ELSEWHERE if n in src or n not in doc]
+        assert not stale, f"_READ_ELSEWHERE entries no longer needed: {stale}"
+
     def test_model_role_family_documented(self):
         doc_path = REPO / "docs" / "CONFIGURATION.md"
         if not doc_path.exists():

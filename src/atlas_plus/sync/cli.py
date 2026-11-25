@@ -17,6 +17,7 @@ import sys
 
 from atlas_plus import paths as atlas_paths
 from atlas_plus.sync import devices, manifest, store
+from atlas_plus._term import safe as _safe  # printed note paths show control/bidi characters as escapes (SEX-048)
 
 
 def _hub_args(args: argparse.Namespace) -> tuple[str, str]:
@@ -218,7 +219,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         ("deleted locally (no action)", plan.local_deleted),
     ):
         for rel in items:
-            print(f"  {label}: {rel}")
+            print(f"  {label}: {_safe(rel)}")
     return 0
 
 
@@ -238,9 +239,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
     print(report.summary())
     if args.dry_run:  # it printed only counts: name the files, as `plan` does (SEX-023)
         for rel in report.would_pull:
-            print(f"  would pull: {rel}")
+            print(f"  would pull: {_safe(rel)}")
         for rel in report.would_push:
-            print(f"  would push: {rel}")
+            print(f"  would push: {_safe(rel)}")
     if args.dry_run and report.hub_restored:
         from atlas_plus.sync.client import RESTORED_HUB_AHEAD
         print(f"  WARNING: {RESTORED_HUB_AHEAD}")
@@ -248,10 +249,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         from atlas_plus.sync.client import HUB_OLDER
         print(f"  WARNING: {HUB_OLDER.format(n=len(report.hub_older))}")
     for rel in report.hub_older:
-        print(f"  the hub's copy is OLDER than yours or gone, {'a sync would not pull it' if args.dry_run else 'not pulled'}: {rel}")
+        print(f"  the hub's copy is OLDER than yours or gone, {'a sync would not pull it' if args.dry_run else 'not pulled'}: {_safe(rel)}")
     if args.dry_run:
         for rel in report.too_large:
-            print(f"  too large for the hub, a sync would not send it: {rel}")
+            print(f"  too large for the hub, a sync would not send it: {_safe(rel)}")
     share = _share_args(args)
     if share:
         from atlas_plus.sync import policy as _policy
@@ -265,12 +266,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("  note: the declared share matches no local file yet (check the prefix spelling)")
     for rel in report.conflicts:
         if args.dry_run:  # nothing is parked in a dry run: it said "is parked at" (AG82)
-            print(f"  CONFLICT: {rel} -- a sync would keep your copy and park the hub's under "
+            print(f"  CONFLICT: {_safe(rel)} -- a sync would keep your copy and park the hub's under "
                   f"{root / '_atlas' / 'sync-conflicts'}")
             continue
         where = report.parked.get(rel) or str(root / "_atlas" / "sync-conflicts")
         both = " (the hub also parked your pushed copy)" if rel in report.push_conflicts else ""
-        print(f"  CONFLICT: {rel} -- your copy is kept; the hub's copy is parked at {where}{both} "
+        print(f"  CONFLICT: {_safe(rel)} -- your copy is kept; the hub's copy is parked at {where}{both} "
               "(resolve, then archive or delete the parked copy; docs/HOWTO-sync.md, Conflict handling)")
     if report.proposed:
         print(f"  {len(report.proposed)} proposal(s) awaiting the hub's review (unchanged since you sent them)")
@@ -284,7 +285,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     for item in report.errors:
         print(f"  error: {_re.sub(chr(91) + chr(92) + 'x00-' + chr(92) + 'x1f' + chr(92) + 'x7f' + chr(93), ' ', str(item))[:300]}")  # the hub's text is untrusted: no control characters, 300 chars (AG49)
     for rel in report.kept_local_edits:
-        print(f"  edited here, deleted on the hub: {rel} -- your copy is kept, not pushed")
+        print(f"  edited here, deleted on the hub: {_safe(rel)} -- your copy is kept, not pushed")
     if report.remote_deleted or report.local_deleted:
         print(
             f"  deletions reported, not propagated: "
@@ -423,7 +424,7 @@ def cmd_accept_restore(args: argparse.Namespace) -> int:
     print(f"accepted {len(accepted)} file(s) as the hub's newest copies; devices pull them at their next sync "
           "(their own copies stay under versions/):")
     for rel in accepted:
-        print(f"  {rel}")
+        print(f"  {_safe(rel)}")
     return 0
 
 

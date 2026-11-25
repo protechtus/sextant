@@ -513,6 +513,8 @@ reinstall is what makes any NEW `sextant-*` commands appear, so do not
 skip it. A PyPI install (`pip install sextant-ai`) updates with `pip install -U sextant-ai`.
 From source, a `pip install git+...` install does not update with `-U` while every build is
 version 0.1.0: `pip install --force-reinstall --no-deps git+https://github.com/protechtus/sextant`.
+A copy installed with `pip install .` inside a clone (not editable) updates with `git pull` in that clone and
+`pip install -U .` there again; `sextant upgrade` prints the line that fits how your copy was installed.
 Local edits in the clone? `git stash` before pulling, `git stash pop`
 after. If the pop reports a conflict (`UU <file>`), the upstream change and
 yours touched the same lines: `git checkout --ours <file>` keeps the new
@@ -571,6 +573,9 @@ help page (its exit code depends on the git version), and the build then rebuild
 search rebuilds the keyword index only when a build changed the tokenizer
 (several recent builds did; the first search, or `sextant verify`, says so on stderr when it happens), and last week's image
 still reads the new index if you roll back.
+When a build changes what a note contributes to the keyword index (its parser), the first
+search after the update re-indexes only the notes that change affects, once, and again after an
+older build rebuilt the index; no command is needed.
 
 ## Good to know (from fresh-install testing)
 

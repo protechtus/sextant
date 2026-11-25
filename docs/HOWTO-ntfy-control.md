@@ -36,6 +36,7 @@ A command channel is a control surface, so it is locked down by default:
    ```powershell
    python -c "import secrets; print('atlas-cmd-'+secrets.token_urlsafe(8)); print(secrets.token_urlsafe(24))"
    ```
+   (On Linux and macOS the command is `python3`.)
 2. Set both values in the environment the listener will run in (your
    shell, or the service definition if you register one):
    ```powershell

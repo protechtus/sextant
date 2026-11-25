@@ -1853,3 +1853,69 @@ def test_g20_self_test_flags_planted_offenders():
             "def c(p):\n    return p.load()\n")
     assert [f for _, f in _g20_hits(ast.parse(bad))] == ["a", "b", "c", "d"]
     assert not _g20_hits(ast.parse(good))
+
+
+# --- G21 (AG121, lesson LES-092): a change to what a note stores in the keyword index raises the parse revision ---
+# An index row is rewritten only when a note's (mtime, size) changes, a format bump rebuilds every note, and a
+# parse revision makes the next incremental update re-index the notes whose row would differ. A parser change
+# with none of the three left 0.1.0's rows in place after an upgrade (MN93 F1: words in a rule-line top block
+# gave "No hits" until a forced rebuild). The snapshot below is the digest of the rows a fixture corpus stores;
+# it sits next to the revision it was taken with.
+_G21_PARSE_REVISION = "1"
+_G21_INDEX_FORMAT = "11"
+_G21_SNAPSHOT = "e17704a087d65293f627326b8555ac13f199a149fdb26d05e9937a77ff9f44aa"
+
+
+def _g21_fixture():
+    from atlas_plus.init_cmd import _IDENTITY_TEMPLATE
+    return {
+        "rules/rule-top.md": "---\nThis top block is a plain sentence about the lighthouse.\n---\nThe body.\n",
+        "rules/list-top.md": "---\n- alpha item\n- beta item\n---\nBody under a list top block.\n",
+        "identity/user.md": _IDENTITY_TEMPLATE,
+        "identity/user-plus.md": _IDENTITY_TEMPLATE + "\nGoes by Sam; on call for payments.\n",
+        "notes/cjk.md": "---\ntitle: 東京\n---\n東京の天気は晴れです。\n",
+        "notes/frontmatter.md": "---\ntitle: Router\ntags: [homelab, net]\nconfirmed: 2026-01-02\n---\nThe router firmware is 4.2.\n",
+        "notes/plain.md": "# Plain\n\nThe staging box reboots on Fridays.\n",
+        "notes/provenance.md": "Kayak paddle is 220 cm. <!-- source:remember -->\n",
+        "notes/crlf.md": "---\r\ntitle: Windows\r\n---\r\nA note written on Windows.\r\n",
+    }
+
+
+def _g21_digest(fts) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    for rel, raw in sorted(_g21_fixture().items()):
+        fm_json, body, confirmed = fts._parse_md(raw)
+        for part in (rel, fm_json, fts._index_body(fm_json, body), repr(confirmed)):
+            h.update(part.encode("utf-8") + b"\x00")
+    return h.hexdigest()
+
+
+def _g21_check(fts) -> str:
+    """'' when the stored rows match the snapshot of this revision, else the message the guardrail fails with."""
+    if (fts.PARSE_REVISION, fts.INDEX_FORMAT) != (_G21_PARSE_REVISION, _G21_INDEX_FORMAT):
+        return ("G21: the parse revision or INDEX_FORMAT changed: take the new snapshot "
+                f"(_G21_SNAPSHOT = {_g21_digest(fts)!r}) and record the revision beside it")
+    got = _g21_digest(fts)
+    if got != _G21_SNAPSHOT:
+        return ("G21: what a note stores in the keyword index changed without a new parse revision: "
+                "raise the parse revision so old indexes heal (fts.PARSE_REVISION), or bump INDEX_FORMAT, "
+                f"then set _G21_SNAPSHOT = {got!r} (lesson LES-092)")
+    return ""
+
+
+def test_g21_a_changed_index_row_raises_the_parse_revision():
+    from atlas_plus.mcp.memory_server import fts
+    msg = _g21_check(fts)
+    assert not msg, msg
+
+
+def test_g21_self_test_a_parser_that_drops_a_word_trips_it(monkeypatch):
+    from atlas_plus.mcp.memory_server import fts
+    real = fts._parse_md
+
+    def drops_a_word(raw):
+        fm_json, body, confirmed = real(raw)
+        return fm_json, body.replace("lighthouse", ""), confirmed
+    monkeypatch.setattr(fts, "_parse_md", drops_a_word)
+    assert "raise the parse revision so old indexes heal" in _g21_check(fts)

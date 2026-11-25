@@ -40,7 +40,7 @@ def _snapshot() -> dict:
                                  "ON t.rowid = f.fts_rowid ORDER BY f.path").fetchall(),
             "n_fts": conn.execute("SELECT COUNT(*) FROM memory_fts").fetchone()[0],
             "table_sql": conn.execute("SELECT sql FROM sqlite_master WHERE name='memory_fts'").fetchone()[0],
-            "meta": conn.execute("SELECT key, value FROM atlas_meta WHERE key != 'last_indexed' ORDER BY key").fetchall(),
+            "meta": conn.execute("SELECT key, value FROM atlas_meta WHERE key NOT IN ('last_indexed', 'parse_revision') ORDER BY key").fetchall(),
         }
     finally:
         conn.close()
