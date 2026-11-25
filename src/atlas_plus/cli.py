@@ -646,7 +646,7 @@ def gather_components(probe_ports: bool = True) -> list[dict]:
         "name": "Keyword search (FTS)",
         "what": "built-in full-text index, rebuilt automatically",
         "status": "core",
-        "disable": "always on; rebuild any time: atlas-fts-rebuild",
+        "disable": "always on; rebuild any time: " + __import__("atlas_plus._next_step", fromlist=["script"]).script("fts-rebuild"),
     })
     sem_status = "disabled"
     sem_detail = "set ATLAS_SEMANTIC_SEARCH=off"

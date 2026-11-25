@@ -22,7 +22,7 @@ from pathlib import Path
 import sys
 import time
 
-from ._sdk import SDK_MAJOR as _SDK_MAJOR, FastMCP
+from ._sdk import SDK_MAJOR as _SDK_MAJOR, FastMCP, new_server  # noqa: F401 (FastMCP kept for importers)
 
 from atlas_plus import activity as _activity
 
@@ -146,13 +146,14 @@ def _instructions() -> str:
 
 
 # serverInfo.name is what every client shows on first contact; it said atlas-memory while the
-# product is Sextant (known since sweep 8; fixed for the flip, 2026-11-12). The version in
-# serverInfo is the MCP SDK's own, not ours.
+# product is Sextant (known since sweep 8; fixed for the flip, 2026-11-12). serverInfo.version is
+# Sextant's installed version on both SDK majors (it was the SDK's own on 1.x and empty on 2.x;
+# sweep 33 AG114): new_server sets it.
 # mcp 1.x takes the Host policy in the constructor; 2.x (FastMCP renamed MCPServer) takes it
 # where the HTTP app is built, see _run_http_with_auth (ATL-072, sweep 31 AG109).
-mcp = FastMCP("sextant", instructions=_instructions(), website_url="https://usesextant.com",
-              log_level=_LOG_LEVEL,
-              **({} if _SDK_MAJOR >= 2 else {"transport_security": _transport_security()}))
+mcp = new_server("sextant", instructions=_instructions(), website_url="https://usesextant.com",
+                 log_level=_LOG_LEVEL,
+                 **({} if _SDK_MAJOR >= 2 else {"transport_security": _transport_security()}))
 
 # Every tool registration below passes through this wrapper so each call
 # pulses the activity feed (the Helm live map). It records the tool NAME,
@@ -358,7 +359,8 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10, full: int =
             _err = ""
         if _err:
             # the agent saw 'starved' with no reason while the index could not be opened (MN25)
-            response["index_error"] = f"Search index unavailable: {_err}. Run `sextant fts-rebuild`; check that the state dir is writable."
+            from atlas_plus._next_step import script as _script  # `sextant fts-rebuild` is no command (SEX-052 item 4)
+            response["index_error"] = f"Search index unavailable: {_err}. Run {_script('fts-rebuild')}; check that the state dir is writable."
     if temporal_context:
         response["temporal_context"] = temporal_context
     return response
@@ -484,7 +486,7 @@ def memory_remember_tool(scope: str, fact: str) -> dict:
     box (disable with ATLAS_INTERACTIVE_WRITES=off); ATLAS_AUTONOMOUS gates only
     BACKGROUND writes. Call memory_health() to check current state.
     """
-    return memory_remember(scope=scope, fact=fact, interactive=True)
+    return _with_stored_scope(scope, memory_remember(scope=scope, fact=fact, interactive=True))
 
 
 @mcp.tool()
@@ -520,10 +522,20 @@ def memory_remember_tool_v2(
             confidence = min(float(confidence), 0.84)
         except (TypeError, ValueError):
             confidence = None
-    return memory_remember(
+    return _with_stored_scope(scope, memory_remember(
         scope=scope, fact=fact, source=written_source, confidence=confidence,
         session_id=session_id or None, task_id=task_id or None, interactive=True,
-    )
+    ))
+
+
+def _with_stored_scope(scope: str, result: dict) -> dict:
+    """`Project:Foo` is stored as `project:foo`: the reply says so, as `sextant remember` does
+    (SEX-052 item 8; the same _next_step.stored_scope the CLI reply uses)."""
+    from atlas_plus._next_step import scope_as_stored, stored_scope
+    if isinstance(result, dict) and result.get("ok") and scope_as_stored(scope):
+        result["scope"] = stored_scope(scope)
+        result["scope_note"] = scope_as_stored(scope).strip(" ()")
+    return result
 
 
 @mcp.tool()

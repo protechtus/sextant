@@ -58,8 +58,15 @@ class DecayCandidate:
 
 def _parse_frontmatter(path: Path) -> dict:
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-        if not raw.startswith("---"):
+        return _frontmatter_of(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+
+
+def _frontmatter_of(raw) -> dict:
+    """The frontmatter of a note's text; {} for no frontmatter, a parse error, or a read error passed in."""
+    try:
+        if not isinstance(raw, str) or not raw.startswith("---"):
             return {}
         end = raw.find("\n---", 3)
         if end == -1:
@@ -92,14 +99,20 @@ def find_decayed_facts(
 
     excluded = {"archive", "__pycache__", ".git", "_inbox", "versions"}
 
+    from atlas_plus._readahead import read_texts
+
+    wanted: list[Path] = []
     for md_file in search_root.rglob("*.md"):
         parts = md_file.relative_to(MEMORY_ROOT).parts
         if any(p in excluded for p in parts):
             continue
         if is_excluded_mirror(parts):
             continue
+        wanted.append(md_file)
 
-        fm = _parse_frontmatter(md_file)
+    # Read ahead on threads: one by one, 20,000 notes outside the file cache took 150 s (SEX-046).
+    for md_file, raw in read_texts(wanted):
+        fm = _frontmatter_of(raw)
         if not fm:
             continue
 

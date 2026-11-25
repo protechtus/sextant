@@ -57,6 +57,14 @@ def command(sub: str = "") -> str:
     return f"`{how_to_run(u)}{' ' + sub if sub else ''}`"
 
 
+def script(name: str) -> str:
+    """A standalone console script (`sextant-<name>`, or `atlas-<name>` in an atlas-* install) as this
+    install must type it, backticked. `sextant fts-rebuild` is not a subcommand: hints named it, or the
+    atlas-* alias a public install never shows (SEX-052 item 4)."""
+    prefix = "sextant" if umbrella() == "sextant" else "atlas"
+    return f"`{how_to_run(prefix + '-' + name)}`"
+
+
 def corpus_elsewhere() -> str:
     """One sentence for a "no corpus yet" message when the corpus location comes from the defaults: a
     corpus made yesterday in a terminal that had ATLAS_WORKSPACE_ROOT set is invisible to a new terminal

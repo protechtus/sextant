@@ -4727,7 +4727,8 @@ async def memory_search(request: Request, q: str = ""):
                     _err = ""
                 if _err:
                     return (f'<div class="text-red-400 text-xs">Search index unavailable: {_html_mod.escape(_err)}. '
-                            f'Run <code>sextant fts-rebuild</code>; check that the state dir is writable.</div>')
+                            f'Run <code>{_html_mod.escape(__import__("atlas_plus._next_step", fromlist=["script"]).script("fts-rebuild").strip("`"))}</code>; '
+                            'check that the state dir is writable.</div>')  # `sextant fts-rebuild` is no command (SEX-052 item 4)
                 # AG89: the index answered "nothing", so the dashboard says what `sextant search` and the MCP tool say;
                 # the substring grep below answered `لله`, `רגיש` and an emoji where both said "No hits" (MN74)
                 from atlas_plus.mcp.memory_server.fts import fts5_available as _fts5_ok

@@ -88,11 +88,19 @@ def _build_inbound_refs(memory_root: Path, on_text=None, read=None) -> dict[str,
     fast_token_set = set(fast_stems)
     gram_lengths = sorted({len(g) for g in gram_stems})
 
-    for md_file in all_files:
+    from atlas_plus._readahead import read_texts
+
+    def _given(path: Path):
         try:
-            content = (read(md_file) if read is not None
-                       else md_file.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
+            return read(path)
+        except OSError as exc:
+            return exc
+
+    # Read ahead on threads (a note outside the file cache costs milliseconds to open; SEX-046). A
+    # caller's own `read` already holds the texts, so it runs in line.
+    texts = read_texts(all_files, read=_given, threads=1) if read is not None else read_texts(all_files)
+    for md_file, content in texts:
+        if isinstance(content, OSError):
             continue
         if on_text is not None:
             on_text(md_file, content)

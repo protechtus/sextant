@@ -1372,10 +1372,6 @@ ALLOW_G15: list[Allow] = [
     ("src/atlas_plus/brain/learning.py", "*", "git log with -n: the output is bounded by the command itself"),
     ("src/atlas_plus/github_intake/gh.py", "*", "one gh API call with a timeout; no child tree"),
     ("src/atlas_plus/brain/executors.py", "*", _G15_WAITING),
-    ("src/atlas_plus/brain/executors_local.py", "*", _G15_WAITING),
-    ("src/atlas_plus/doctor/cli.py", "*", _G15_WAITING),
-    ("src/atlas_plus/github_intake/actions.py", "*", _G15_WAITING),
-    ("src/atlas_plus/intake/engine.py", "*", _G15_WAITING),
 ]
 
 
@@ -1482,3 +1478,26 @@ def test_the_g16_scan_sees_each_shape():
             "from .fastmcp import helper\n")
     assert _g16_hits(bad) == [1, 2, 3, 4, 5]
     assert not _g16_hits(good)
+
+
+def test_g17_no_test_finds_a_real_agent_program(tmp_path, monkeypatch):
+    """LES-087: inside the suite, `shutil.which` never resolves `claude`, `codex` or `opencode`, even
+    when a program of that name is first on PATH; other programs resolve as usual. A test that
+    wants one present patches `shutil.which` itself."""
+    import os
+    import shutil
+    import stat
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    names = ["claude", "codex", "opencode", "sextant-g17-probe"]
+    for name in names:
+        for fname in ((name + ".cmd", name + ".exe") if os.name == "nt" else (name,)):
+            f = bindir / fname
+            f.write_text("@echo off\n" if os.name == "nt" else "#!/bin/sh\n", encoding="utf-8")
+            f.chmod(f.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+
+    assert shutil.which("sextant-g17-probe"), "the probe program must resolve: the fixture hides too much"
+    for name in ("claude", "codex", "opencode", "claude.cmd", "CLAUDE"):
+        assert shutil.which(name) is None, f"a test could start the real {name}"

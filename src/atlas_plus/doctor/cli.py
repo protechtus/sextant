@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from atlas_plus import _proc
 from atlas_plus import paths as atlas_paths
 
 
@@ -81,17 +82,15 @@ def _powershell_json(script: str, timeout: float = 8.0):
     stealing focus -- see .memory/feedback/no-interrupting-refresh-scripts.md.
     """
     try:
-        completed = subprocess.run(
+        res = _proc.run_bounded(
             ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-            capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
-            timeout=timeout,
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), stdin=subprocess.DEVNULL,
+            timeout=timeout, max_bytes=1024 * 1024, no_window=True,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    out = (completed.stdout or "").strip()
+    if res.timed_out:  # the whole probe tree ended at the timeout
+        return None
+    out = res.stdout_text().strip()
     if not out:
         return None
     try:

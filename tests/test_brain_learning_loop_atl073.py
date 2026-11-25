@@ -415,7 +415,7 @@ class TestExecutors:
         def fake_run(cmd, **kw):
             calls["cmd"], calls["kw"] = cmd, kw
             return subprocess.CompletedProcess(cmd, 0, stdout="## 1. Patterns\nok\n", stderr="")
-        monkeypatch.setattr(executors.subprocess, "run", fake_run)
+        monkeypatch.setattr(executors, "_bounded_text_run", fake_run)  # KL4: the call is bounded now
         monkeypatch.setattr("shutil.which", lambda name: "C:/claude.cmd" if name == "claude" else None)
         text, how = executors._run_supervisor_model("<prompt> with <angles>", "claude-sonnet-5-5", 900)
         assert text.startswith("## 1. Patterns") and how == "claude --print --model claude-sonnet-5-5"

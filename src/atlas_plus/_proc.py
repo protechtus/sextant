@@ -178,6 +178,7 @@ def run_bounded(
     env: Mapping[str, str] | None = None,
     cwd: str | os.PathLike | None = None,
     input: str | bytes | None = None,
+    no_window: bool = False,
 ) -> BoundedResult:
     """Run ``argv`` (a list, never a shell) with stdin closed; return within about ``timeout`` seconds.
 
@@ -186,7 +187,8 @@ def run_bounded(
     The call ends the whole process tree at the deadline (``timed_out``), keeps at most ``max_bytes``
     of stdout (``truncated``) and the last ``stderr_tail_bytes`` of stderr. A child that exits but
     leaves a grandchild holding its stdout counts as timed out when the grandchild is still there at
-    the deadline. Raises ``FileNotFoundError`` / ``OSError`` when the program cannot be started.
+    the deadline. ``no_window`` (Windows only) starts a console program without a console window,
+    for probes run from a background task. Raises ``FileNotFoundError`` / ``OSError`` when the program cannot be started.
     """
     if isinstance(argv, (str, bytes)):
         raise TypeError("argv must be a list of arguments, not a string")
@@ -198,7 +200,8 @@ def run_bounded(
     kwargs: dict = {}
     job = None
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) if no_window else 0)
     else:
         kwargs["start_new_session"] = True
     deadline = time.monotonic() + max(0.0, float(timeout))

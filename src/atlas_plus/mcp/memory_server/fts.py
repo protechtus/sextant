@@ -1598,7 +1598,15 @@ def rebuild(force: bool = False) -> int:
                 # this format resumes instead (its rows are right; AG99), here and on the search path.
                 if not conn.in_transaction:
                     conn.execute("BEGIN IMMEDIATE")
-                conn.execute("DELETE FROM memory_fts")
+                # Drop and re-create instead of deleting row by row: on a built index of 20,000 notes
+                # the delete took 10 s and the drop 1.6 s (SEX-052). Same transaction, same tokenizer
+                # (the one _connect recorded), so a crash here leaves the old index whole.
+                tok = conn.execute("SELECT value FROM atlas_meta WHERE key='tokenizer'").fetchone()
+                if tok and tok[0]:
+                    conn.execute("DROP TABLE IF EXISTS memory_fts")
+                    conn.execute(_CREATE_FTS.format(tokenizer=tok[0].removesuffix(_INDEX_TAG)))
+                else:
+                    conn.execute("DELETE FROM memory_fts")
                 conn.execute("DELETE FROM memory_files")
                 conn.execute("DELETE FROM atlas_meta WHERE key='last_indexed'")
                 conn.execute("INSERT OR REPLACE INTO atlas_meta(key,value) VALUES ('index_format',?)",
@@ -1950,5 +1958,4 @@ def search(query: str, scope: str = "", limit: int = 10,
 
 
 if __name__ == "__main__":
-    n = rebuild(force=True)
-    print(f"Indexed {n} files into {FTS_DB}")
+    main()  # one success line for `python -m` and the console script (SEX-052 item 4)

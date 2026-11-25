@@ -232,9 +232,13 @@ def main() -> None:
         # Each command as THIS install must type it: bare `sextant verify` was "not recognized" in a
         # shell without the venv activated, while setup printed the full path (SEX-043 f, AG107).
         c = _next_step.command
+        # The full path, as the shell shows it: "identity/user.md" alone left a first-timer looking for
+        # it in the current folder (SEX-052 item 5); a path with a space stays copyable in quotes.
+        user_md = str(Path(result["memory_root"]) / "identity" / "user.md")
+        user_md_shown = f'"{user_md}"' if " " in user_md else user_md
         print(
             "\nNext steps:\n"
-            "  1. Edit identity/user.md -- introduce yourself to your memory.\n"
+            f"  1. Edit {user_md_shown} -- introduce yourself to your memory.\n"
             f"  2. Wire your MCP client: run {c('setup')} -- it prints the one-line\n"
             "     `claude mcp add ...` for THIS install (paths baked in) and the JSON for\n"
             "     Claude Desktop or Cursor.\n"

@@ -12,6 +12,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_real_claude(monkeypatch):
+    """The supervisor runs `claude --print` when `claude` is on PATH: these tests mean the registry
+    fallback, so the real CLI is never found (KL4, sweep 32: it was started on a machine that has it)."""
+    import shutil
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None if name == "claude" else real_which(name, *a, **k))
+
+
 # ---------------------------------------------------------------------------
 # Phase 1+3: escalation.py -- helper functions
 # ---------------------------------------------------------------------------

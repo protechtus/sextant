@@ -51,6 +51,43 @@ jobs:
       - name: Test
         run: python -m pytest tests -q
 
+  # The MCP SDK 1.x (ATL-072, sweep 33 AG114): the server runs on 1.x and 2.x from one code base
+  # (mcp/memory_server/_sdk.py). The test job installs without constraints, so it resolves the
+  # newest SDK the pin allows (2.x); the pin still allows 1.x (mcp>=1.28.1), so this job forces 1.x
+  # and runs the MCP and round-trip tests on it. The repository test uses the event payload so the
+  # private repository stays ubuntu-only, as in the test job.
+  mcp-sdk-1:
+    if: ${{ !github.event.repository.private || github.actor != 'dependabot[bot]' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(!github.event.repository.private && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (then the MCP SDK 1.x over it)
+        run: |
+          python -m pip install -U pip setuptools
+          python -m pip install -e ".[dev,telegram,summarizer]"
+          python -m pip install "mcp>=1.28.1,<2"
+      - name: The installed MCP SDK is 1.x
+        shell: bash
+        run: |
+          v="$(python -c "import importlib.metadata as m; print(m.version('mcp'))")"
+          echo "mcp $v"
+          case "$v" in 1.*) ;; *) echo "expected mcp 1.x, got $v"; exit 1;; esac
+      - name: MCP and round-trip tests on SDK 1.x
+        shell: bash
+        run: |
+          python -m pytest tests/test_mcp*.py tests/test_ag109.py tests/test_ag114.py -q
+          python -m pytest tests/test_ag102.py tests/test_mn78_follow.py tests/test_sex047_row7.py -q -k "roundtrip or round_trip or verify"
+
   # Dependency CVEs: GATING since 2026-09-25 -- the tree audited clean
   # (only venv-bootstrap pip/setuptools findings, upgraded away), so per the
   # promote-once-quiet rule a new dependency CVE should be a red build.

@@ -252,8 +252,45 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
     return rpc, close
 
 
+_JSON_LINES = False
+"""True under `--json-lines` (and inside `--json`): each step as the raw JSON object, one per line, the
+output before SEX-052 item 3. The default is one plain line per step."""
+
+
+def _plain(obj: dict) -> str:
+    """One readable line for a step object (the default output; `--json-lines` keeps the raw objects)."""
+    def show(v) -> str:
+        return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+
+    step = obj.get("step", "?")
+    result = obj.get("result") if isinstance(obj.get("result"), dict) else None
+    if step == "handshake":
+        where = (f"url {obj['url']}" if "url" in obj
+                 else "command " + " ".join(show(c) for c in obj.get("command") or []))
+        return f"handshake: server {obj.get('server')}, {obj.get('tool_count')} tools, {where}"
+    if step == "memory_health" and result is not None:
+        extra = {k: v for k, v in result.items() if k not in ("status", "memory_root", "memory_root_exists")}
+        return (f"memory_health: status {result.get('status')}, memory_root {result.get('memory_root')}"
+                + (f", {show(extra)}" if extra and result.get("status") != "ok" else ""))
+    if step == "memory_remember_tool" and result is not None:
+        if result.get("ok") is False or result.get("error"):
+            return f"memory_remember_tool: FAILED, {show(result.get('error') or result)}"
+        again = " (already remembered)" if result.get("already_remembered") else ""
+        return f"memory_remember_tool: ok, file {result.get('file')}{again}"
+    if step == "memory_search_tool":
+        first = obj.get("first") or {}
+        found = {True: ", found this write", False: ", this write NOT found", None: ""}[obj.get("found_this_write")]
+        return (f"memory_search_tool: confidence {obj.get('confidence')}, {obj.get('hits')} hit(s){found}"
+                + (f", first {first.get('path')}" if first.get("path") else ""))
+    return f"{step}: " + ", ".join(f"{k} {show(v)}" for k, v in obj.items() if k != "step")
+
+
+def _emit(obj: dict) -> None:
+    print(json.dumps(obj) if _JSON_LINES else _plain(obj))
+
+
 def _run_calls(rpc, args, fact: str, where: dict) -> bool:
-    """The handshake and the three calls; prints one JSON line per step; True when all passed."""
+    """The handshake and the three calls; prints one line per step; True when all passed."""
     ok = True
 
     def call(tool: str, arguments: dict) -> dict:
@@ -273,17 +310,17 @@ def _run_calls(rpc, args, fact: str, where: dict) -> bool:
     server_name = (init or {}).get("result", {}).get("serverInfo", {}).get("name", "?")
     tools = rpc("tools/list") or {}
     names = [t["name"] for t in tools.get("result", {}).get("tools", [])]
-    print(json.dumps({"step": "handshake", "server": server_name, "tool_count": len(names), **where}))
+    _emit({"step": "handshake", "server": server_name, "tool_count": len(names), **where})
 
     health = call("memory_health", {})
-    print(json.dumps({"step": "memory_health", "result": health}))
+    _emit({"step": "memory_health", "result": health})
     if health.get("status") != "ok":
         ok = False
 
     written_file = None
     if not args.skip_remember:
         written = call("memory_remember_tool", {"scope": f"project:{args.project}", "fact": fact})
-        print(json.dumps({"step": "memory_remember_tool", "result": written}))
+        _emit({"step": "memory_remember_tool", "result": written})
         if written.get("ok") is False or written.get("error"):
             ok = False
         written_file = written.get("file")
@@ -303,9 +340,9 @@ def _run_calls(rpc, args, fact: str, where: dict) -> bool:
             if p and want.endswith(p):
                 this_hit = h
                 break
-    print(json.dumps({"step": "memory_search_tool", "confidence": found.get("confidence"),
+    _emit({"step": "memory_search_tool", "confidence": found.get("confidence"),
                       "hits": len(hits), "found_this_write": bool(this_hit) if written_file else None,
-                      "first": (this_hit or (hits[0] if hits else None))}))
+                      "first": (this_hit or (hits[0] if hits else None))})
     if written_file and not this_hit:
         ok = False
     return ok
@@ -322,15 +359,21 @@ def _timeout_seconds() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """`--json`: one object {"ok": bool, "steps": [...]} instead of JSON lines plus a prose
-    line, for installer agents (AG24, sweep 12)."""
+    line, for installer agents (AG24, sweep 12). `--json-lines`: one JSON object per step, then the
+    verdict line; the default is one plain line per step, then the verdict (SEX-052 item 3)."""
+    global _JSON_LINES
     args_list = list(sys.argv[1:] if argv is None else argv)
     if "--json" in args_list:
         import contextlib
         import io
-        args_list = [a for a in args_list if a != "--json"]
+        args_list = [a for a in args_list if a not in ("--json", "--json-lines")]
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = _main_lines(args_list)
+        _JSON_LINES = True
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = _main_lines(args_list)
+        finally:
+            _JSON_LINES = False
         steps = []
         for line in buf.getvalue().splitlines():
             line = line.strip()
@@ -343,7 +386,11 @@ def main(argv: list[str] | None = None) -> int:
                 steps.append({"step": "text", "text": line})
         print(json.dumps({"ok": rc == 0, "steps": steps}, indent=2))
         return _say_next(rc, args_list)
-    return _say_next(_main_lines(args_list), args_list)
+    _JSON_LINES = "--json-lines" in args_list
+    try:
+        return _say_next(_main_lines([a for a in args_list if a != "--json-lines"]), args_list)
+    finally:
+        _JSON_LINES = False
 
 
 def _say_next(rc: int, argv: list[str]) -> int:
@@ -393,7 +440,10 @@ def _main_lines(argv: list[str]) -> int:
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds to wait between calls (diagnostics)")
     ap.add_argument("--json", action="store_true",
-                    help="one JSON object {ok, steps} instead of JSON lines and a prose line")
+                    help="one JSON object {ok, steps} instead of the step lines and the verdict")
+    ap.add_argument("--json-lines", action="store_true",
+                    help="each step as one JSON object per line, then the ROUND-TRIP verdict line "
+                         "(the default prints one plain line per step)")
     ap.add_argument("--skip-remember", action="store_true",
                     help="diagnostics: search only, write nothing, report the hit count without failing")
     args = ap.parse_args(argv)
@@ -412,7 +462,7 @@ def _main_lines(argv: list[str]) -> int:
         try:
             ok = _run_calls(rpc_http, args, fact, {"url": args.url, "auth": bool(token)})
         except Exception as exc:  # noqa: BLE001
-            print(json.dumps({"step": "error", "error": str(exc)[:800]}))
+            _emit({"step": "error", "error": str(exc)[:800]})
             ok = False
         finally:
             close_http()
@@ -422,14 +472,14 @@ def _main_lines(argv: list[str]) -> int:
     try:
         cmd = server_command(args.python, args.command)
     except ValueError as exc:
-        print(json.dumps({"step": "start", "error": str(exc)}))
+        _emit({"step": "start", "error": str(exc)})
         print("ROUND-TRIP: FAILED")
         return 1
     env = os.environ.copy()
     extra: dict[str, str] = {}
     for item in args.env:
         if "=" not in item:
-            print(json.dumps({"step": "start", "error": f"--env needs NAME=VALUE, got {item!r}"}))
+            _emit({"step": "start", "error": f"--env needs NAME=VALUE, got {item!r}"})
             print("ROUND-TRIP: FAILED")
             return 1
         k, v = item.split("=", 1)
@@ -457,9 +507,9 @@ def _main_lines(argv: list[str]) -> int:
                                 env=env)
     except OSError as exc:
         _discard_log()
-        print(json.dumps({"step": "start", "error": f"could not start {cmd[0]!r}: {exc}", "command": cmd,
+        _emit({"step": "start", "error": f"could not start {cmd[0]!r}: {exc}", "command": cmd,
                           "hint": "an interpreter path with spaces goes in --python, or inside double quotes "
-                                  "within --command; single quotes do not group on Windows"}))
+                                  "within --command; single quotes do not group on Windows"})
         print("ROUND-TRIP: FAILED")
         return 1
     next_id = 0
@@ -526,7 +576,7 @@ def _main_lines(argv: list[str]) -> int:
     try:
         ok = _run_calls(rpc, args, fact, {"command": cmd})
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"step": "error", "error": str(exc)[:800]}))
+        _emit({"step": "error", "error": str(exc)[:800]})
         ok = False
     finally:
         try:

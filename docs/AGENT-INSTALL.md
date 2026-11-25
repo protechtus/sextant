@@ -261,9 +261,11 @@ this command; `sextant verify` is the same thing):
 ```
 
 It starts the server over stdio, does the MCP handshake, and runs the three calls below,
-printing each result as JSON and ending with `ROUND-TRIP: OK`. Paste that output into your
+printing one line per call and ending with `ROUND-TRIP: OK`. Paste that output into your
 report. Check the `memory_root` in the `memory_health` line: it must be the corpus from
-step 4, not a leftover `~/.memory`. (In a clone, `scripts/mcp_roundtrip.py` runs the same
+step 4, not a leftover `~/.memory`. To parse it, add `--json-lines` (each step as one JSON
+object per line, then the same last line) or `--json` (one object `{ok, steps}`); the exit
+code is 0 for a passed round trip either way. (In a clone, `scripts/mcp_roundtrip.py` runs the same
 check.) From Windows against a WSL install, run the `Verify from Windows` line that
 `sextant setup` printed inside WSL: `wsl -d <Distro> -- env ATLAS_WORKSPACE_ROOT=<linux path>
 /home/<user>/<install>/.venv/bin/python -m atlas_plus verify` (no Windows Python needed). With

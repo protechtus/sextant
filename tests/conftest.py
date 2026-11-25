@@ -194,3 +194,26 @@ def _void_fts_freshness_window():
     except Exception:
         pass
     yield
+
+
+_AGENT_PROGRAMS = frozenset({"claude", "codex", "opencode"})
+
+
+@pytest.fixture(autouse=True)
+def _no_real_agent_program(monkeypatch):
+    """No test finds a real agent program on PATH (LES-087, guardrail G17). A supervisor test that
+    did not pin ``shutil.which`` started the real ``claude`` with a prompt on every machine that
+    has it installed (KL4, sweep 32). A test that needs the program present patches
+    ``shutil.which`` itself, or passes a fake program it wrote."""
+    import shutil as _shutil
+
+    real = _shutil.which
+
+    def which(cmd, *args, **kwargs):
+        name = _os.path.basename(str(cmd)).lower()
+        if name.rsplit(".", 1)[0] in _AGENT_PROGRAMS or name in _AGENT_PROGRAMS:
+            return None
+        return real(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(_shutil, "which", which)
+    yield

@@ -37,6 +37,8 @@ class IntakeConfigError(Exception):
     """The source folder is not configured or does not exist."""
 
 
+_VALIDATOR_TIMEOUT = 120  # seconds for the brand-kit validator, its whole process tree included
+
 def source_dir(explicit: Path | str | None = None) -> Path:
     """Resolve the drop folder: argument, then ``ATLAS_INTAKE_DIR``."""
     if explicit:
@@ -251,8 +253,14 @@ def _action_brand_import(record: store.Record) -> str:
     verdict = "validator not found"
     if validator.is_file():
         try:
-            proc = subprocess.run([sys.executable, "-I", str(validator), str(target)],
-                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, cwd=str(workspace), stdin=subprocess.DEVNULL)
+            from atlas_plus import _proc  # KL4: the validator is a workspace script; its tree ends at the timeout
+            res = _proc.run_bounded([sys.executable, "-I", str(validator), str(target)],
+                                    timeout=_VALIDATOR_TIMEOUT, max_bytes=1024 * 1024, cwd=str(workspace))
+            if res.timed_out:
+                raise subprocess.TimeoutExpired([str(validator)], _VALIDATOR_TIMEOUT)
+            proc = subprocess.CompletedProcess([str(validator)], res.returncode,
+                                               stdout=res.stdout_text().replace("\r\n", "\n"),
+                                               stderr=res.stderr_text().replace("\r\n", "\n"))
             store.atomic_write_text(target / "VALIDATION.txt",
                                     f"exit={proc.returncode}\n\n{proc.stdout}\n{proc.stderr}")
             verdict = f"validator exit {proc.returncode}"

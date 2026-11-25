@@ -35,9 +35,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+from atlas_plus import _proc
 from atlas_plus import paths as atlas_paths
 
-log = logging.getLogger("atlas.brain.executors")
+log =logging.getLogger("atlas.brain.executors")
 
 from . import agents as agent_registry
 from . import context as brain_context
@@ -388,6 +389,30 @@ def _utf8_env() -> dict[str, str]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     return env
+
+
+_CHILD_OUTPUT_BYTES = 4 * 1024 * 1024  # stdout kept from one child; the rest is drained and dropped
+
+
+def _bounded_text_run(argv: list[str], *, timeout: float, cwd: str | None = None,
+                      env: dict[str, str] | None = None,
+                      input: str | None = None) -> subprocess.CompletedProcess:
+    """Run ``argv`` through ``_proc.run_bounded`` and hand back what ``subprocess.run(text=True)`` did.
+
+    The whole process tree ends at ``timeout`` (``subprocess.run`` killed only the direct child and
+    then waited for any grandchild holding the pipe) and stdout is capped. A timeout raises
+    ``subprocess.TimeoutExpired`` and a start failure raises ``OSError``, as before, so the callers
+    keep their messages; stdout and the stderr tail are decoded as UTF-8 with replacement and get
+    universal newlines.
+    """
+    result = _proc.run_bounded(argv, timeout=timeout, max_bytes=_CHILD_OUTPUT_BYTES,
+                               env=env, cwd=cwd, input=input)
+    if result.timed_out:
+        raise subprocess.TimeoutExpired(argv, timeout, output=result.stdout, stderr=result.stderr_tail)
+    def nl(text: str) -> str:  # universal newlines, as subprocess.run(text=True) gave them
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+    return subprocess.CompletedProcess(argv, result.returncode, stdout=nl(result.stdout_text()),
+                                       stderr=nl(result.stderr_text()))
 
 
 # Non-ATLAS live-deployment keys that change src/ behavior when set (the same
@@ -1230,16 +1255,10 @@ def _run_supervisor_model(prompt: str, model: str, timeout: int) -> tuple[str, s
     claude_bin = _shutil.which("claude")
     if claude_bin:
         try:
-            completed = subprocess.run(
+            # KL4: the whole tree ends at the timeout (claude starts MCP servers that inherit its stdout)
+            completed = _bounded_text_run(
                 [claude_bin, "--print", "--model", model, "--max-turns", "1"],
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                encoding="utf-8",
-                errors="replace",
-                cwd=str(_PROJECT_ROOT),
-                env=_utf8_env(),
+                timeout=timeout, cwd=str(_PROJECT_ROOT), env=_utf8_env(), input=prompt,
             )
         except subprocess.TimeoutExpired:
             return "", f"claude --print timed out after {timeout}s"
@@ -1867,15 +1886,8 @@ def _claude_task(ctx: ExecutorContext) -> ExecutionResult:
     ]
 
     try:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=_CLAUDE_TASK_TIMEOUT,
-            encoding="utf-8",
-            errors="replace",
-            cwd=str(working_dir), stdin=subprocess.DEVNULL,
-        )
+        # KL4: bounded; the MCP servers claude starts inherit its stdout and outlived the old timeout
+        completed = _bounded_text_run(cmd, timeout=_CLAUDE_TASK_TIMEOUT, cwd=str(working_dir))
     except subprocess.TimeoutExpired:
         msg = f"claude --print timed out after {_CLAUDE_TASK_TIMEOUT}s"
         artifact = _write_text_artifact(ctx, "claude-task.md", msg)
