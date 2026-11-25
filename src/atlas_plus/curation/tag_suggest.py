@@ -60,6 +60,7 @@ _TITLE_STRIP_PREFIXES = ["research: ", "atlas: ", '"']
 
 
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 
 def _title_strip_prefixes() -> list[str]:
@@ -123,7 +124,7 @@ def suggest_tags_for_file(
     if end == -1:
         return []
     try:
-        fm = _fast_yaml_load(raw[3:end]) or {}
+        fm = _load_mapping(raw[3:end])
     except Exception:
         return []
 

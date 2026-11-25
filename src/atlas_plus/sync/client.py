@@ -28,6 +28,42 @@ class SyncAuthError(SyncClientError):
     """The hub rejected the token mid-run: stop instead of one error per file (MN65)."""
 
 
+class SyncHubGoneError(SyncClientError):
+    """A hub that answered earlier in this run stopped answering (refused, reset, timed out): every
+    per-file loop stops at the first one instead of paying a refused connect per file (MN92 F1)."""
+
+
+def _sync_cmd() -> str:
+    from atlas_plus.branding import prog as _prog
+    return _prog("atlas-sync")
+
+
+def token_rejected() -> str:
+    """401 from the hub: the next step, not only the verdict (MN92 F6)."""
+    c = _sync_cmd()
+    return (f"unauthorized: token rejected by hub (revoked or mistyped?): on the hub run `{c} revoke <name>` "
+            f"(if that name is paired) and `{c} pair <name>`, then set ATLAS_SYNC_DEVICE_TOKEN on this device "
+            "to the new token")
+
+
+def _auth_stopped() -> str:
+    c = _sync_cmd()
+    return ("the hub rejected this device's token (revoked, or a new pairing): sync stopped. On the hub run "
+            f"`{c} revoke <name>` (if that name is paired) and `{c} pair <name>`, then set "
+            "ATLAS_SYNC_DEVICE_TOKEN on this device to the new token")
+
+
+def hub_gone_line(why: str, not_transferred: int, unknown: int, done: int) -> str:
+    """ONE line for a hub that stopped answering mid-run (MN92 F1-F3)."""
+    c = _sync_cmd()
+    parts = [f"{done} transferred"]
+    if unknown:
+        parts.append(f"{unknown} unknown (the hub did not confirm: run `{c} plan`)")
+    parts.append(f"{not_transferred} not transferred")
+    return (f"{why}: sync stopped, {', '.join(parts)}. Start the hub (`{c} serve` on the hub) and run "
+            f"`{c} sync` again: it resumes")
+
+
 
 def normalize_share(share: Sequence[str] | None) -> tuple[str, ...]:
     """Corpus-relative prefixes this system agrees to exchange, as ``dir/`` strings."""
@@ -146,6 +182,11 @@ class SyncReport:
     hub_restored: bool = False
     # The hub holds OLDER copies than this device's (SEX-017): not pulled, the device's copies kept.
     hub_older: list[str] = field(default_factory=list)
+    # The hub stopped answering mid-run (MN92): pushes it may have taken without confirming, and the
+    # files never tried after it went away.
+    unconfirmed: list[str] = field(default_factory=list)
+    not_transferred: list[str] = field(default_factory=list)
+    hub_gone: str = ""
     # A dry run moves nothing: what a real sync would pull and push (AG97; it printed "pulled 0, pushed 0").
     dry_run: bool = False
     would_pull: list[str] = field(default_factory=list)
@@ -155,10 +196,12 @@ class SyncReport:
         if self.dry_run:
             return (f"dry run, nothing moved: would pull {len(self.would_pull)}, would push {len(self.would_push)}, "
                     f"conflicts {len(self.conflicts)}")
+        gone = (f", unknown {len(self.unconfirmed)}, not transferred {len(self.not_transferred)}"
+                if self.hub_gone else "")
         return (
             f"pulled {len(self.pulled)}, pushed {len(self.pushed)}, "
             f"conflicts {len(self.conflicts)}, denied {len(self.denied)}, "
-            f"errors {len(self.errors)}"
+            f"errors {len(self.errors)}{gone}"
         )
 
 
@@ -263,6 +306,7 @@ class SyncClient:
         # Which pairing a base belongs to (AG78): a domain-separated digest of the token, never
         # the token and never the digest the hub stores.
         self._credential = _hashlib.sha256(b"sextant-sync-base:" + token.encode("utf-8")).hexdigest()[:16] if token else ""
+        self._answered = False  # the hub answered at least one request in this run (MN92 F3)
         if http_client is not None:
             # Injected client (e.g. starlette TestClient) already knows its
             # base URL/transport; we only attach the credential.
@@ -336,6 +380,11 @@ class SyncClient:
     def _transport_error(self, verb: str, path: str, exc: Exception) -> SyncClientError:
         # A refused connection is "no hub answering", not a WinError dump (persona rerun 2026-11-10).
         _s = str(exc)
+        if getattr(self, "_answered", False) and isinstance(
+                exc, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)):
+            # This hub answered plain HTTP earlier in the run: a refused, reset or timed-out request now
+            # means it went away, not a TLS proxy (it printed the TLS hint once per file, MN92 F3).
+            return SyncHubGoneError(f"{self._hub_label()} stopped answering ({type(exc).__name__})")
         if "WRONG_VERSION_NUMBER" in _s or "record layer failure" in _s:
             return SyncClientError(
                 f"{self._hub_label()} answered plain HTTP to a TLS handshake: use http:// for this hub "
@@ -374,6 +423,7 @@ class SyncClient:
             response = self._client.get(path, **kwargs)
         except httpx.HTTPError as exc:
             raise self._transport_error("GET", path, exc) from exc
+        self._answered = True
         return response
 
     def _post(self, path: str, payload: dict) -> httpx.Response:
@@ -381,6 +431,7 @@ class SyncClient:
             response = self._client.post(path, json=payload)
         except httpx.HTTPError as exc:
             raise self._transport_error("POST", path, exc) from exc
+        self._answered = True
         return response
 
     def health(self) -> dict:
@@ -393,7 +444,7 @@ class SyncClient:
         response = self._get("/sync/v1/manifest", params={"since": since}) if isinstance(since, int) and since > 0 \
             else self._get("/sync/v1/manifest")
         if response.status_code == 401:
-            raise SyncClientError("unauthorized: token rejected by hub")
+            raise SyncClientError(token_rejected())
         if response.status_code != 200:
             _hint = _url_hint(self._hub_label(), response)
             raise SyncClientError(f"manifest: HTTP {response.status_code}" + (_hint or f": {_detail(response)}"))
@@ -415,7 +466,7 @@ class SyncClient:
         # a 409 (unreadable on hub), a 5xx or an ingress HTML page must not abort the run
         # (round C 2026-11-10, lane A F4).
         if response.status_code == 401:
-            raise SyncAuthError("the hub rejected this device's token (revoked, or a new pairing): sync stopped")  # 9,815 lines of 401 (MN65)
+            raise SyncAuthError(_auth_stopped())  # 9,815 lines of 401 (MN65)
         if response.status_code != 200:
             raise SyncClientError(f"{rel}: HTTP {response.status_code}: {_detail(response)}")
         return response.content, response.headers.get("X-Sextant-Sha256", "")
@@ -435,7 +486,13 @@ class SyncClient:
                     # a later batch was refused: what already landed is still reported as landed (AG79)
                     out.extend({"path": ch.get("path", "?"), "result": "unsent"} for ch in changes[i:])
                     return {"results": out, "generation": gen, "generation_mark": mark,
-                            "stopped": "the hub rejected this device's token (revoked, or a new pairing): sync stopped"}
+                            "stopped": _auth_stopped()}
+                except SyncHubGoneError as exc:
+                    # the hub went away during this batch: it may have taken some of it (MN92 F2), and
+                    # the later batches are not sent at all (F1: 500 refused connects, one error each)
+                    out.extend({"path": ch.get("path", "?"), "result": "unconfirmed"} for ch in changes[i:i + 500])
+                    out.extend({"path": ch.get("path", "?"), "result": "unsent"} for ch in changes[i + 500:])
+                    return {"results": out, "generation": gen, "generation_mark": mark, "hub_gone": str(exc)}
                 except SyncClientError as exc:
                     if not out:
                         raise
@@ -448,7 +505,7 @@ class SyncClient:
             return {"results": out, "generation": gen, "generation_mark": mark}
         response = self._post("/sync/v1/push", {"changes": changes})
         if response.status_code == 401:
-            raise SyncAuthError("the hub rejected this device's token (revoked, or a new pairing): sync stopped")  # one sentence, not one per file (AG73)
+            raise SyncAuthError(_auth_stopped())  # one sentence, not one per file (AG73)
         if response.status_code != 200:
             raise SyncClientError(f"push: HTTP {response.status_code}: {_detail(response)}")
         try:
@@ -546,6 +603,8 @@ class SyncClient:
                 try:  # and only when the file kept every line the hub's copy has: a push never drops one
                     hub_bytes, _ = self.fetch_file(rel)
                     mine = (root / rel).read_bytes()
+                except SyncHubGoneError:
+                    raise  # the plan stops: one refused connect per file otherwise (MN92 F1)
                 except (SyncClientError, httpx.HTTPError, OSError):
                     continue
                 if hashlib.sha256(hub_bytes).hexdigest() == sha and _keeps_every_line(hub_bytes, mine):
@@ -672,7 +731,8 @@ class SyncClient:
         _done = 0
         auth_stopped = False  # a 401 stops the WHOLE run: the push and conflicts passes went on with one 401 line per file (AG73)
         local_files = local.get("files", {})
-        for rel in plan.to_pull:
+        hub_gone = ""  # the hub stopped answering: every later per-file request is skipped (MN92 F1)
+        for _i, rel in enumerate(plan.to_pull):
             try:
                 content, announced = self.fetch_file(rel)
                 # TOCTOU guard (audit 2026-11-09 row 20): a pull is only valid
@@ -708,13 +768,20 @@ class SyncClient:
                 unresolved.update(r for r in plan.to_pull if r not in report.pulled)
                 auth_stopped = True
                 break
+            except SyncHubGoneError as exc:
+                hub_gone = str(exc)
+                report.not_transferred.extend(plan.to_pull[_i:])
+                unresolved.update(plan.to_pull[_i:])
+                break
             except (apply.SyncIntegrityError, SyncClientError, OSError) as exc:
                 report.errors.append(f"{rel}: {exc}")
                 unresolved.add(rel)
 
-        if auth_stopped:
+        if auth_stopped or hub_gone:
             unresolved.update(plan.to_push)
-        if plan.to_push and not auth_stopped:
+            if hub_gone:
+                report.not_transferred.extend(plan.to_push)
+        if plan.to_push and not auth_stopped and not hub_gone:
             base_files = old_base_files
             changes = []
             for rel in plan.to_push:
@@ -759,6 +826,12 @@ class SyncClient:
                     if _push_answer.get("stopped"):
                         report.errors.append(str(_push_answer["stopped"]))
                         auth_stopped = True
+                    if _push_answer.get("hub_gone"):
+                        hub_gone = str(_push_answer["hub_gone"])
+                except SyncHubGoneError as exc:
+                    # one request carried every file and its answer was lost: the hub may hold some (MN92 F2)
+                    hub_gone = str(exc)
+                    results = [{"path": ch["path"], "result": "unconfirmed"} for ch in changes]
                 except SyncAuthError as exc:
                     report.errors.append(str(exc))
                     unresolved.update(ch["path"] for ch in changes)
@@ -793,6 +866,8 @@ class SyncClient:
                         unresolved.add(rel)
                         # Park the hub's copy here NOW, like a pull conflict, instead of making
                         # the user sync twice to see it (self-hoster pass 2026-11-10).
+                        if hub_gone:
+                            continue  # the hub's copy is parked at the next sync (MN92 F1)
                         try:
                             content, _sha = self.fetch_file(rel)
                             if apply.current_sha256(root, rel) == hashlib.sha256(content).hexdigest():
@@ -800,14 +875,21 @@ class SyncClient:
                                 continue  # the hub holds the same bytes: converged, not a conflict (MN65)
                             report.parked[rel] = str(apply.quarantine(
                                 root, rel, content, reason="push conflict: the hub changed it too"))
+                        except SyncHubGoneError as exc:
+                            hub_gone = str(exc)
                         except SyncAuthError as exc:
                             if not auth_stopped:
                                 report.errors.append(str(exc))
                             auth_stopped = True
                         except Exception as exc:  # noqa: BLE001
                             report.errors.append(f"{rel}: could not fetch the hub's copy ({_detail(exc)})")
+                    elif result == "unconfirmed":
+                        report.unconfirmed.append(rel)  # sent, the hub went away before it answered (MN92 F2)
+                        unresolved.add(rel)
                     elif result == "unsent":
                         unresolved.add(rel)  # never reached the hub (the run stopped): one sentence above, not one per file
+                        if hub_gone:
+                            report.not_transferred.append(rel)
                     elif result == "denied":
                         report.denied.append(rel)
                         report.errors.append(f"{rel}: denied (hub said: {item.get('detail') or 'policy'})")  # `denied 1` named nothing (MN41)
@@ -823,7 +905,7 @@ class SyncClient:
         if progress is not None and _total:
             progress("end", _done, _total, len(plan.to_pull), len(plan.to_push))
         for rel in plan.conflicts:
-            if auth_stopped:
+            if auth_stopped or hub_gone:
                 break  # every conflict is already unresolved: nothing parked, nothing lost
             unresolved.add(rel)
             if rel not in remote_files_all:
@@ -843,9 +925,16 @@ class SyncClient:
                 report.errors.append(str(exc))
                 auth_stopped = True
                 break
+            except SyncHubGoneError as exc:
+                hub_gone = str(exc)
+                break
             except (SyncClientError, OSError) as exc:
                 report.errors.append(f"{rel}: {exc}")
 
+        if hub_gone:
+            report.hub_gone = hub_gone
+            report.errors.append(hub_gone_line(hub_gone, len(report.not_transferred), len(report.unconfirmed),
+                                               len(report.pulled) + len(report.pushed)))
         # New base = local state after applying; next diff3 anchors here --
         # except for files whose exchange did not complete, which keep the
         # previous anchor so the same divergence is seen again next time.
@@ -895,8 +984,8 @@ class SyncClient:
         store.save_base_manifest(self._base_key(base_id), refreshed)
         if self._base_key(base_id) != base_id:
             store.save_base_manifest(base_id, refreshed)  # the legacy file: `status` and an older build read it
-        if auth_stopped:
-            return report  # the check-in would be one more 401 (AG73)
+        if auth_stopped or hub_gone:
+            return report  # the check-in would be one more 401 (AG73), or one more refused connect (MN92)
         if progress is not None and _total:
             progress("checkin", _done, _total, len(plan.to_pull), len(plan.to_push))  # the hub re-hashes its corpus: 18 s silent on 6,000 files (AG88)
         try:

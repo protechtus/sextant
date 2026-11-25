@@ -17,6 +17,7 @@ _REDERIVE_THRESHOLD = 0.40  # conservative threshold for the weekly report
 
 
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 
 def _scan_convergence(root: Path) -> list[dict]:
@@ -83,7 +84,7 @@ def _scan_decisions(root: Path, stale_days: int = _DECISIONS_STALE_DAYS) -> list
         if end == -1:
             continue
         try:
-            fm = _fast_yaml_load(text[3:end]) or {}
+            fm = _load_mapping(text[3:end])
         except Exception:
             continue
 
@@ -419,7 +420,7 @@ def _generate_report(
             if end2 == -1:
                 continue
             try:
-                fm2 = _yaml2.safe_load(raw2[3:end2]) or {}
+                fm2 = _load_mapping(raw2[3:end2], fast=False)
             except Exception:
                 continue
             qs = fm2.get("quality_score")

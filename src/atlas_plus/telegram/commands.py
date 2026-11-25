@@ -1044,6 +1044,7 @@ async def cmd_decisions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         def _do_check():
             from atlas_plus.curation.cli import MEMORY_ROOT
             import yaml as _yaml
+            from atlas_plus._yaml import load_mapping as _load_mapping
             from datetime import date
             decisions_dir = MEMORY_ROOT / "decisions"
             if not decisions_dir.exists():
@@ -1063,7 +1064,7 @@ async def cmd_decisions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 if end == -1:
                     continue
                 try:
-                    fm = _yaml.safe_load(text[3:end]) or {}
+                    fm = _load_mapping(text[3:end], fast=False)
                 except Exception:
                     continue
                 title = str(fm.get("title", path.stem))
@@ -1651,6 +1652,7 @@ async def cmd_research_index(update: Update, context: ContextTypes.DEFAULT_TYPE)
     import os
     import re
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     from pathlib import Path
 
     args = _args(context)
@@ -1679,7 +1681,7 @@ async def cmd_research_index(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _load_mapping(raw[3:end], fast=False)
         except Exception:
             continue
         title = str(fm.get("title", md_file.stem)).replace("Research: ", "").replace('"', "").strip()[:45]
@@ -2266,6 +2268,7 @@ async def cmd_research_quality(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             import os
             import yaml as _yaml
+            from atlas_plus._yaml import load_mapping as _load_mapping
             from pathlib import Path
             reports_dir = atlas_paths.state_dir() / "reports"
             if not reports_dir.exists():
@@ -2280,7 +2283,7 @@ async def cmd_research_quality(update: Update, context: ContextTypes.DEFAULT_TYP
                     if not raw.startswith("---"):
                         continue
                     end = raw.find("\n---", 3)
-                    fm = _yaml.safe_load(raw[3:end]) if end != -1 else {}
+                    fm = _load_mapping(raw[3:end], fast=False) if end != -1 else {}
                     topic = str((fm or {}).get("topic", (fm or {}).get("tags", "")) or "").lower()
                     if topic_filter not in topic and topic_filter not in md_file.name.lower():
                         continue

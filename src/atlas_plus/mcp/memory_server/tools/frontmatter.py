@@ -1,6 +1,7 @@
 """memory.frontmatter — return only the YAML frontmatter of a .memory/ file."""
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from ..config import MEMORY_ROOT
 from .read import _safe_resolve
@@ -30,7 +31,7 @@ def memory_frontmatter(path: str) -> dict:
         return {"path": path, "frontmatter": {}, "error": None}
 
     try:
-        fm = yaml.safe_load(raw[3:end].strip()) or {}
+        fm = _load_mapping(raw[3:end].strip(), fast=False)
     except Exception as e:
         return {"path": path, "frontmatter": {}, "error": f"yaml parse error: {e}"}
 

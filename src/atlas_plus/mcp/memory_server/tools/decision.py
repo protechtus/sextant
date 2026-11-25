@@ -188,7 +188,8 @@ def list_decisions(project: str = "") -> list[dict]:
                 end = raw.find("\n---", 3)
                 if end != -1:
                     import yaml
-                    fm = yaml.safe_load(raw[3:end]) or {}
+                    from atlas_plus._yaml import load_mapping as _load_mapping
+                    fm = _load_mapping(raw[3:end], fast=False)
             if project and fm.get("project", "") != project:
                 continue
             results.append({

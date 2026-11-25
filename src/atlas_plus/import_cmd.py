@@ -100,11 +100,13 @@ def _import_copies(dest: Path, src: Path, listing: dict[Path, list[str]],
         except OSError:
             continue
         m = _ORIGINAL_PATH_RE.search(head)
+        if m is None:
+            continue  # the user's own `<stem>_N` note, never stamped by an import
         try:
             stamped = yaml.safe_load(m.group(1))
         except yaml.YAMLError:
             stamped = None
-        if stamped in want:
+        if isinstance(stamped, str) and stamped in want:  # a list or a mapping cannot be a set member
             out.append(cand)
     return out
 

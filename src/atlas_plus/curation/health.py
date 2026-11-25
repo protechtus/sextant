@@ -66,6 +66,10 @@ def health_from_text(raw: str, today: Optional[date] = None) -> dict:
         fm = _fast_yaml_load(raw[3:end]) or {}
     except Exception:
         return {**zero, "issues": ["parse_error"]}
+    if not isinstance(fm, dict):
+        # a note that opens with a rule line and a sentence (or a list) has a top block that parses
+        # as a string or a list: that is text, not frontmatter (every scan crashed on `.get`)
+        return {**zero, "issues": ["no_frontmatter"]}
 
     factors = {}
     issues = []

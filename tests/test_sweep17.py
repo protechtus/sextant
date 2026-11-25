@@ -204,15 +204,27 @@ async def test_peer_client_breaker_skips_a_dead_host_for_a_while():
 
     from atlas_plus.web import app as web
 
+    # The dead host is a transport that refuses every connect and counts the attempts: a real
+    # 127.0.0.1:9 is not dead on every machine (a listener there answered with a ReadTimeout, a proxy
+    # with a response: SEX-052 item 16), and a wall-clock bound measured the machine, not the breaker.
+    attempts = []
+
+    def _refuse(request):
+        attempts.append(str(request.url))
+        raise httpx.ConnectError("connection refused", request=request)
+
     web._PeerClient._down.clear()
-    async with web._PeerClient(timeout=httpx.Timeout(2.0, connect=0.5)) as c:
-        with pytest.raises((httpx.ConnectError, httpx.ConnectTimeout)):
-            await c.get("http://127.0.0.1:9/health")          # a dead port
-        import time
-        t0 = time.perf_counter()
+    async with web._PeerClient(transport=httpx.MockTransport(_refuse), trust_env=False) as c:
+        with pytest.raises(httpx.ConnectError):
+            await c.get("http://127.0.0.1:9/health")          # a dead host
+        assert len(attempts) == 1
         with pytest.raises(httpx.ConnectError) as ei:
             await c.get("http://127.0.0.1:9/health")
-        assert time.perf_counter() - t0 < 0.1 and "circuit breaker" in str(ei.value)
+        assert "circuit breaker" in str(ei.value)
+        assert len(attempts) == 1                             # skipped: the host was not tried again
+        with pytest.raises(httpx.ConnectError):
+            await c.post("http://127.0.0.1:9/health")         # actions are always tried
+        assert len(attempts) == 2
     web._PeerClient._down.clear()
 
 

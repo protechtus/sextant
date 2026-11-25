@@ -98,6 +98,7 @@ def check_report_links(report_path: Path, workers: int = _MAX_WORKERS) -> list[d
     Returns [] when the file has no references: frontmatter or cannot be read.
     """
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     try:
@@ -111,7 +112,7 @@ def check_report_links(report_path: Path, workers: int = _MAX_WORKERS) -> list[d
     if end == -1:
         return []
     try:
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        fm = _load_mapping(raw[3:end], fast=False)
     except Exception:
         return []
 
@@ -139,6 +140,7 @@ def remove_broken_links(report_path: Path, broken_urls: list[str]) -> bool:
     if not broken_urls:
         return False
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
 
     try:
         raw = report_path.read_text(encoding="utf-8")
@@ -152,7 +154,7 @@ def remove_broken_links(report_path: Path, broken_urls: list[str]) -> bool:
         return False
 
     try:
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        fm = _load_mapping(raw[3:end], fast=False)
     except Exception:
         return False
 

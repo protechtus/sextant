@@ -26,7 +26,31 @@ _DEFAULT_MIN_AGE_DAYS = 180
 _DEFAULT_MAX_HEALTH = 0.5
 
 
-def _build_inbound_refs(memory_root: Path, on_text=None, read=None) -> dict[str, int]:
+def _scan_files(memory_root: Path) -> list[Path]:
+    """Every note the orphan scan looks at, in walk order (the path parts are taken once per file)."""
+    out = []
+    for f in memory_root.rglob("*.md"):
+        if f.name.startswith("_"):
+            continue
+        parts = f.relative_to(memory_root).parts
+        if any(p in _SKIP_DIRS for p in parts) or is_excluded_mirror(parts):
+            continue
+        out.append(f)
+    return out
+
+
+def _frontmatter_head(text: str) -> str:
+    """The part of a note that ``health_from_text`` reads: the frontmatter block up to its closing
+    line, or "" when there is none. ``health_from_text(_frontmatter_head(t))`` equals
+    ``health_from_text(t)`` for every text, so a scan can keep the small head and score it later."""
+    if not text.startswith("---"):
+        return ""
+    end = text.find("\n---", 3)
+    return "" if end == -1 else text[:end + 4]
+
+
+def _build_inbound_refs(memory_root: Path, on_text=None, read=None,
+                        files: Optional[list] = None) -> dict[str, int]:
     """Return {file_stem -> inbound_ref_count} for all .md files in memory_root.
 
     An inbound ref is counted when any OTHER .memory/ file's body mentions the
@@ -37,13 +61,9 @@ def _build_inbound_refs(memory_root: Path, on_text=None, read=None) -> dict[str,
     ``on_text(path, text)``, when given, receives each note's text as it is read, so a caller that
     needs the text too does not read every note a second time (AG92, sweep 24). ``read(path) -> str``,
     when given, replaces ``path.read_text`` (doctor serves the notes it already read, AG112).
+    ``files``, when given, is the list ``_scan_files(memory_root)`` returned (the caller walked already).
     """
-    all_files = [
-        f for f in memory_root.rglob("*.md")
-        if not any(p in _SKIP_DIRS for p in f.relative_to(memory_root).parts)
-        and not is_excluded_mirror(f.relative_to(memory_root).parts)
-        and not f.name.startswith("_")
-    ]
+    all_files = _scan_files(memory_root) if files is None else files
     stems = {f.stem: f for f in all_files}
     inbound: dict[str, int] = {s: 0 for s in stems}
 
@@ -87,6 +107,10 @@ def _build_inbound_refs(memory_root: Path, on_text=None, read=None) -> dict[str,
 
     fast_token_set = set(fast_stems)
     gram_lengths = sorted({len(g) for g in gram_stems})
+    # No stem under 4 characters is looked for, and a run of 4 or more token characters is matched
+    # whole by `{4,}` exactly as by `+`, so without n-gram stems (which need every token, in order)
+    # the short tokens are never built (SEX-046: 4.9 s -> 3.9 s of tokenising at 20,000 notes).
+    long_token_re = re.compile(r"[A-Za-z0-9_-]{4,}")
 
     from atlas_plus._readahead import read_texts
 
@@ -107,10 +131,15 @@ def _build_inbound_refs(memory_root: Path, on_text=None, read=None) -> dict[str,
         this_stem = md_file.stem
         # ASCII text lower-cases per character, so once for the whole note gives the same tokens;
         # other text keeps the per-token form (`İ` lower-cases to i + a combining dot).
-        toks = (token_re.findall(content.lower()) if content.isascii()
-                else [t.lower() for t in token_re.findall(content)])
-        tokens = set(toks)
-        for tok in tokens & fast_token_set:
+        tok_re = token_re if gram_stems else long_token_re
+        toks = (tok_re.findall(content.lower()) if content.isascii()
+                else [t.lower() for t in tok_re.findall(content)])
+        if gram_stems:
+            tokens = set(toks)
+            found = tokens & fast_token_set
+        else:
+            found = fast_token_set.intersection(toks)
+        for tok in found:
             for stem in fast_stems[tok]:
                 if stem != this_stem:
                     inbound[stem] += 1
@@ -195,39 +224,42 @@ def find_orphan_candidates(
 
     # Build inbound reference map for the full memory root (not just scope); the same read scores
     # each note's health, which used to read every note a second time (AG92: 8.4 s of doctor's 22 s
-    # at 20,000 notes). Only the small health dicts are kept, never the text.
-    healths: dict = {}
+    # at 20,000 notes). Only each note's frontmatter block is kept, never the text, and it is scored
+    # when the loop below reaches the note: a referenced note is never scored, and a small `limit`
+    # (the dashboard panel asks for 5) stops long before the last note (SEX-046: the YAML parse of
+    # every note was 2.4 s at 20,000 notes).
+    heads: dict = {}
 
-    def _score(path: Path, text: str) -> None:
-        healths[path] = health_from_text(text, today)
+    def _keep_head(path: Path, text: str) -> None:
+        heads[path] = _frontmatter_head(text)
 
-    inbound_map = _build_inbound_refs(memory_root, on_text=_score, read=read)
+    all_files = _scan_files(memory_root)
+    inbound_map = _build_inbound_refs(memory_root, on_text=_keep_head, read=read, files=all_files)
 
     results = []
 
-    for md_file in sorted(scan_root.rglob("*.md")):
-        rel_parts = md_file.relative_to(memory_root).parts
-        if any(p in _SKIP_DIRS for p in rel_parts):
-            continue
-        if is_excluded_mirror(rel_parts):
-            continue
-        if md_file.name.startswith("_"):
+    if scan_root == memory_root:
+        candidates = sorted(all_files)  # the walk above, not a second one
+    else:
+        wanted = set(all_files)
+        candidates = [f for f in sorted(scan_root.rglob("*.md")) if f in wanted]
+
+    for md_file in candidates:
+        stem = md_file.stem
+        inbound = inbound_map.get(stem, 0)
+        if inbound > max_inbound_refs:
             continue
 
         # One read and one YAML parse per file: compute_file_health already returns the
         # frontmatter (the second parse doubled doctor's orphan scan, AG11 sweep 10).
-        health = healths.pop(md_file, None) or compute_file_health(md_file, today, read=read)
+        head = heads.pop(md_file, None)
+        health = (health_from_text(head, today) if head is not None
+                  else compute_file_health(md_file, today, read=read))
         fm: dict = health.get("frontmatter") or {}
         h_score = health["score"]
-        stem = md_file.stem
-        inbound = inbound_map.get(stem, 0)
-        age = _file_age_days(md_file, fm, today)
-
-        # Apply filters
         if h_score > max_health:
             continue
-        if inbound > max_inbound_refs:
-            continue
+        age = _file_age_days(md_file, fm, today)
         if age is None or age < min_age_days:
             continue
 

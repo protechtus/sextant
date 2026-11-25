@@ -1226,6 +1226,7 @@ def _show_research_index(arg: str = "") -> None:
     """List research reports sorted by date (newest first), with quality scores."""
     import re
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     import os
     from pathlib import Path as _Path
 
@@ -1254,7 +1255,7 @@ def _show_research_index(arg: str = "") -> None:
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _load_mapping(raw[3:end], fast=False)
         except Exception:
             continue
 
@@ -2137,6 +2138,7 @@ def _show_quality(arg: str = "") -> None:
     import os as _os
     from pathlib import Path as _Path
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
 
     arg = arg.strip()
 
@@ -2167,7 +2169,7 @@ def _show_quality(arg: str = "") -> None:
             end = raw.find("\n---", 3)
             if end == -1:
                 continue
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _load_mapping(raw[3:end], fast=False)
             topic = str(fm.get("topic", fm.get("tags", "")) or "").lower()
             if topic_filter and topic_filter not in topic and topic_filter not in md_file.name.lower():
                 continue

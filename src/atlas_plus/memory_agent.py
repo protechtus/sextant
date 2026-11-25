@@ -79,6 +79,7 @@ def _recent_projects_from_history(days: int = 14) -> list[str]:
 def scan_stale_projects(since_days: int = 14) -> list[dict]:
     """Find projects active in recent sessions whose memory file is outdated."""
     import yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
 
     recent = _recent_projects_from_history(days=since_days)
     stale: list[dict] = []
@@ -95,7 +96,7 @@ def scan_stale_projects(since_days: int = 14) -> list[dict]:
             if raw.startswith("---"):
                 end = raw.find("\n---", 3)
                 if end != -1:
-                    fm = yaml.safe_load(raw[3:end]) or {}
+                    fm = _load_mapping(raw[3:end], fast=False)
                     updated_raw = fm.get("updated", "")
                     if updated_raw:
                         updated_dt = datetime.strptime(str(updated_raw)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -115,6 +116,7 @@ def scan_decisions_to_revisit() -> list[dict]:
     revisit_if lists -- a proxy for 'conditions may have changed'.
     """
     import yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
 
     decisions_dir = MEMORY_ROOT / "decisions"
     if not decisions_dir.exists():
@@ -131,7 +133,7 @@ def scan_decisions_to_revisit() -> list[dict]:
             end = raw.find("\n---", 3)
             if end == -1:
                 continue
-            fm = yaml.safe_load(raw[3:end]) or {}
+            fm = _load_mapping(raw[3:end], fast=False)
 
             if fm.get("status") != "active":
                 continue

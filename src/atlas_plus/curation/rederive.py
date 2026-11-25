@@ -56,6 +56,7 @@ _EXCLUDED_DOC_DIRS = {
 
 
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 
 @dataclass
@@ -99,7 +100,7 @@ def _parse_frontmatter_body(path: Path) -> tuple[dict, str]:
         return {}, raw
     import yaml
     try:
-        fm = _fast_yaml_load(raw[3:end]) or {}
+        fm = _load_mapping(raw[3:end])
     except yaml.YAMLError:
         # One malformed-frontmatter file must not crash the whole curation scan.
         return {}, raw[end + 4:]

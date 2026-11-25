@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from atlas_plus.mcp.memory_server.config import MEMORY_ROOT
 
@@ -18,7 +19,7 @@ def _parse_frontmatter(path: Path) -> dict:
         end = text.find("---", 3)
         if end == -1:
             return {}
-        return yaml.safe_load(text[3:end].strip()) or {}
+        return _load_mapping(text[3:end].strip(), fast=False)
     except Exception:
         return {}
 
@@ -48,7 +49,7 @@ def _split_body(path: Path) -> tuple[dict, str]:
         end = text.find("---", 3)
         if end == -1:
             return {}, text
-        fm = yaml.safe_load(text[3:end].strip()) or {}
+        fm = _load_mapping(text[3:end].strip(), fast=False)
         body = text[end + 3:].strip()
         return fm, body
     except Exception:

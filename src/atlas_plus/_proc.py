@@ -23,9 +23,14 @@ job) is not ended; the call still returns on time, but that process keeps runnin
 
 A missing program raises ``FileNotFoundError`` and any other start failure raises ``OSError``,
 exactly as ``subprocess.Popen`` does; everything after the start is reported in the result.
+
+``run_bounded_async`` is the same contract for a coroutine (it needs an event loop that supports
+subprocesses: the default loop on every platform, the proactor loop on Windows). Cancelling the
+awaiting task ends the tree too.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
@@ -34,7 +39,7 @@ import time
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-__all__ = ["BoundedResult", "run_bounded"]
+__all__ = ["BoundedResult", "run_bounded", "run_bounded_async"]
 
 _CHUNK = 64 * 1024
 _KILL_GRACE_SECONDS = 5.0   # wait for the killed child to be reaped
@@ -254,4 +259,137 @@ def run_bounded(
         timed_out=timed_out,
         truncated=out.truncated,
         stdout_total=out.total,
+    )
+
+
+class _AsyncCollector(asyncio.SubprocessProtocol):
+    """Keep the head of stdout and the tail of stderr; note the real exit, not the pipes' EOF."""
+
+    def __init__(self, loop, max_bytes: int, tail_bytes: int) -> None:
+        self._max = max(0, int(max_bytes))
+        self._tail = max(0, int(tail_bytes))
+        self.out = bytearray()
+        self.err = bytearray()
+        self.total = 0
+        self.truncated = False
+        self.exited = loop.create_future()   # set when the child itself ends
+        self.closed = loop.create_future()   # set when every pipe is closed too
+
+    def pipe_data_received(self, fd: int, data: bytes) -> None:
+        if fd == 1:
+            self.total += len(data)
+            room = self._max - len(self.out)
+            if room > 0:
+                self.out += data[:room]
+            if len(data) > room:
+                self.truncated = True  # keep draining so the child never blocks on a full pipe
+        elif fd == 2:
+            self.err += data
+            if len(self.err) > self._tail:
+                del self.err[: len(self.err) - self._tail]
+
+    def process_exited(self) -> None:
+        if not self.exited.done():
+            self.exited.set_result(None)
+
+    def connection_lost(self, exc) -> None:
+        if not self.closed.done():
+            self.closed.set_result(None)
+
+
+def _end_async_tree(popen, job) -> None:
+    """The tree kill for a child the event loop owns. POSIX: signal the group only (``Popen.kill``
+    polls, and a poll here could reap the child under the loop's own child watcher)."""
+    if os.name == "nt":
+        _kill_tree(popen, job)
+    else:
+        try:
+            os.killpg(popen.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
+async def run_bounded_async(
+    argv: Sequence[str],
+    *,
+    timeout: float,
+    max_bytes: int,
+    stderr_tail_bytes: int = 64 * 1024,
+    env: Mapping[str, str] | None = None,
+    cwd: str | os.PathLike | None = None,
+    input: str | bytes | None = None,
+    no_window: bool = False,
+) -> BoundedResult:
+    """``run_bounded`` for a coroutine: the same arguments, result, limits and exceptions.
+
+    The wait is on the child's exit, not on its pipes: a grandchild holding stdout is ended at the
+    deadline like the child (``timed_out``). Cancelling the awaiting task ends the whole tree and
+    re-raises ``CancelledError``. The pipes are closed before the call returns.
+    """
+    if isinstance(argv, (str, bytes)):
+        raise TypeError("argv must be a list of arguments, not a string")
+    argv = [os.fspath(a) for a in argv]
+    if isinstance(input, str):
+        input = input.encode("utf-8")
+    elif input is not None and not isinstance(input, (bytes, bytearray, memoryview)):
+        raise TypeError("input must be str or bytes")
+    kwargs: dict = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) if no_window else 0)
+    else:
+        kwargs["start_new_session"] = True
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, float(timeout))
+    transport, proto = await loop.subprocess_exec(
+        lambda: _AsyncCollector(loop, max_bytes, stderr_tail_bytes), *argv,
+        stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=dict(env) if env is not None else None, cwd=cwd, **kwargs)
+    popen = transport.get_extra_info("subprocess")
+    job = None
+    if os.name == "nt":
+        job = _new_job()
+        if job is not None and not job[0].AssignProcessToJobObject(job[1], int(popen._handle)):
+            job[0].CloseHandle(job[1])
+            job = None
+    timed_out = False
+    try:
+        if input is not None:
+            stdin = transport.get_pipe_transport(0)
+            try:
+                stdin.write(bytes(input))  # buffered by the loop; a child that never reads still ends
+                stdin.write_eof()
+            except (OSError, RuntimeError):
+                pass
+        try:
+            await asyncio.wait_for(asyncio.shield(proto.exited), max(0.0, deadline - loop.time()))
+            # the child is gone; a grandchild may still hold a pipe: wait for EOF until the deadline only
+            await asyncio.wait_for(asyncio.shield(proto.closed), max(0.0, deadline - loop.time()))
+        except asyncio.TimeoutError:
+            timed_out = True
+        if timed_out:
+            await loop.run_in_executor(None, _end_async_tree, popen, job)
+            try:
+                await asyncio.wait_for(asyncio.shield(proto.exited), _KILL_GRACE_SECONDS)
+                await asyncio.wait_for(asyncio.shield(proto.closed), _JOIN_GRACE_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+    except BaseException:  # cancelled (or Ctrl+C) while waiting: the tree is not left behind
+        if transport.get_returncode() is None or not proto.closed.done():
+            _end_async_tree(popen, job)
+        raise
+    finally:
+        if job is not None:
+            if transport.get_returncode() is None or not proto.closed.done():
+                job[0].TerminateJobObject(job[1], 1)
+            job[0].CloseHandle(job[1])
+        transport.close()
+    return BoundedResult(
+        returncode=transport.get_returncode(),
+        stdout=bytes(proto.out),
+        stderr_tail=bytes(proto.err),
+        timed_out=timed_out,
+        truncated=proto.truncated,
+        stdout_total=proto.total,
     )

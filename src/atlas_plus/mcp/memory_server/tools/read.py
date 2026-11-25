@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from ..config import MAX_READ_BYTES, MEMORY_ROOT, safe_resolve_within
 
@@ -44,7 +45,7 @@ def memory_read(path: str) -> dict:
         end = raw.find("\n---", 3)
         if end != -1:
             try:
-                frontmatter = yaml.safe_load(raw[3:end].strip()) or {}
+                frontmatter = _load_mapping(raw[3:end].strip(), fast=False)
             except Exception:
                 pass
             body = raw[end + 4:].strip()

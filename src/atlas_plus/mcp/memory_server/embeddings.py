@@ -183,6 +183,11 @@ def rebuild_index(embedder=None, force: bool = False) -> dict:
             seen.add(rel)
             body = _body_of(Path(abs_path))
             if not body:
+                if rel in existing:
+                    # a vector made before the note became empty to the index (the untouched init template,
+                    # embedded before AG111: SEX-052 item 9) is dropped, not kept as a hit forever
+                    conn.execute("DELETE FROM memory_vectors WHERE path = ?", (rel,))
+                    removed += 1
                 continue
             content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
             if not force and existing.get(rel) == content_hash:

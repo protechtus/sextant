@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from atlas_plus.autonomous import require_autonomous_writes
 from atlas_plus import paths as atlas_paths
@@ -106,7 +107,7 @@ def _parse_item(path: Path) -> Optional[InboxItem]:
         end = text.find("---", 3)
         if end == -1:
             return None
-        fm = yaml.safe_load(text[3:end]) or {}
+        fm = _load_mapping(text[3:end], fast=False)
         body = text[end + 3:].strip()
         tags = fm.get("tags") or []
         if not isinstance(tags, list):

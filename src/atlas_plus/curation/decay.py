@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from atlas_plus.mcp.memory_server.config import MEMORY_ROOT
 from atlas_plus.temporal_graph.decay_model import DecayAction, assess
@@ -71,7 +72,7 @@ def _frontmatter_of(raw) -> dict:
         end = raw.find("\n---", 3)
         if end == -1:
             return {}
-        return _fast_yaml_load(raw[3:end]) or {}
+        return _load_mapping(raw[3:end])
     except Exception:
         return {}
 

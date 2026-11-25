@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence, Union
 
 from atlas_plus import _readahead
-from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+from atlas_plus._yaml import load_mapping
 
 # Text kept per pass, in characters. A corpus above it is still read correctly: the notes past the
 # limit are simply read again by each section, as before.
@@ -165,7 +165,7 @@ def load_frontmatter(block: str) -> Any:
     share one load. A block that does not parse raises as before and is not remembered."""
     cur = _ACTIVE.get()
     if cur is None:
-        return _fast_yaml_load(block)
+        return load_mapping(block)
     # Blank lines before the first key mean nothing to YAML, and they are the whole difference between
     # the two cuts the sections make ("\ntitle: x" and "title: x"): one key, one load for both.
     key = block.lstrip("\r\n")
@@ -174,5 +174,5 @@ def load_frontmatter(block: str) -> Any:
     except KeyError:
         pass
     cur.parses += 1
-    value = cur.fms[key] = _fast_yaml_load(key)
+    value = cur.fms[key] = load_mapping(key)
     return value

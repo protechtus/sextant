@@ -1678,11 +1678,12 @@ def _research_gap(ctx: ExecutorContext) -> ExecutionResult:
         quality_score: float | None = None
         try:
             import yaml as _yaml
+            from atlas_plus._yaml import load_mapping as _load_mapping
             raw = Path(report_path).read_text(encoding="utf-8", errors="replace")
             if raw.startswith("---"):
                 end = raw.find("\n---", 3)
                 if end != -1:
-                    fm = _yaml.safe_load(raw[3:end]) or {}
+                    fm = _load_mapping(raw[3:end], fast=False)
                     qs = fm.get("quality_score")
                     if qs is not None:
                         quality_score = float(qs)

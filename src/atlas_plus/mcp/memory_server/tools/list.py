@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from atlas_plus.curation.scan import is_excluded_mirror
 
@@ -40,7 +41,7 @@ def _parse_frontmatter(text: str) -> dict:
     if end == -1:
         return {}
     try:
-        return yaml.safe_load(text[3:end].strip()) or {}
+        return _load_mapping(text[3:end].strip(), fast=False)
     except Exception:
         return {}
 

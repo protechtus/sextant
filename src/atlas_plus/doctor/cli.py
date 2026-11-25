@@ -27,9 +27,9 @@ from atlas_plus import paths as atlas_paths
 
 
 def _yaml_load(text: str):
-    """safe_load through libyaml when it is installed (AG23, sweep 12)."""
-    import yaml as _y
-    return _y.load(text, Loader=getattr(_y, "CSafeLoader", _y.SafeLoader))
+    """safe_load through libyaml when it is installed (AG23, sweep 12); a mapping always (AG119)."""
+    from atlas_plus._yaml import load_mapping
+    return load_mapping(text)   # a non-mapping top block is no frontmatter (AG119)
 
 BRAIN_URL    = os.environ.get("ATLAS_BRAIN_URL",   "http://127.0.0.1:8767")
 MCP_PORT     = atlas_paths.env_int("ATLAS_MCP_PORT", 8765)

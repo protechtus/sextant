@@ -369,11 +369,19 @@ def cmd_checkin(args: argparse.Namespace) -> int:
                     print("in sync with hub" + (f" ({n} proposal(s) awaiting the hub's review)" if n else ""))
                 return 0
             result = client.checkin({"manifest_hash": local["manifest_hash"]})
+            inert = None
+            if result.get("server_manifest_hash") != local["manifest_hash"] and not restored:
+                # MN92 F5: a reported delete or a file too large for the hub keeps the hashes apart forever;
+                # say that sync will not act on it instead of a bare "different corpus state"
+                plan, _l, _r = client.plan(root, share=share_list)
+                if not (plan.to_pull or plan.to_push or plan.conflicts or plan.hub_older or plan.hub_restored):
+                    _rd = [r for r in plan.remote_deleted if r not in plan.kept_local_edits]
+                    inert = (len(_rd), len(plan.local_deleted), len(plan.too_large), len(plan.kept_local_edits))
     except Exception as exc:  # noqa: BLE001 - a bad token or a dead hub is a message, not a traceback
-        from atlas_plus.branding import prog as _prog
+        from atlas_plus.sync.client import token_rejected
         detail = str(exc)
         if "401" in detail:
-            detail = "unauthorized: token rejected by hub"
+            detail = token_rejected()
         print(f"checkin refused: {detail}", file=sys.stderr)
         return 2
     if restored:  # it said "different corpus state" about a hub restored from a backup (AG88)
@@ -386,6 +394,14 @@ def cmd_checkin(args: argparse.Namespace) -> int:
         print(f"not current: {HUB_OLDER.format(n=len(older))}")
         return 1
     same = result.get("server_manifest_hash") == local["manifest_hash"]
+    if not same and inert is not None and any(inert):
+        n_rd, n_ld, n_big, n_kept = inert
+        bits = [f"{n} {what}" for n, what in ((n_rd, "deleted remotely"), (n_ld, "deleted locally"),
+                                              (n_kept, "edited here, deleted on the hub"),
+                                              (n_big, "too large for the hub")) if n]
+        print(f"not current: only differences sync will not act on: {', '.join(bits)}; see `{_prog_name()} plan` "
+              "(remove or archive the file on every side to clear it; docs/HOWTO-sync.md, Deletes)")
+        return 1
     print("in sync with hub" if same else f"hub has different corpus state (run: {_prog_name()} plan)")
     return 0 if same else 1
 

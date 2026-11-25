@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from atlas_plus._yaml import load_mapping as _load_mapping
 
 from atlas_plus import paths as atlas_paths
 from atlas_plus.temporal_graph.models import (
@@ -214,7 +215,7 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     if end == -1:
         return {}, text
     try:
-        fm = yaml.safe_load(text[3:end]) or {}
+        fm = _load_mapping(text[3:end], fast=False)
     except Exception:
         fm = {}
     return fm, text[end + 4:].strip()

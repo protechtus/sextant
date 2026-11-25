@@ -58,13 +58,13 @@ def test_result_equals_the_scan_without_the_skip(corpus, monkeypatch):
 
 def test_yaml_is_parsed_only_where_the_key_can_be(corpus, monkeypatch):
     parsed: list[str] = []
-    real = decay._fast_yaml_load
+    real = decay._load_mapping
 
     def load(text):
         parsed.append(text)
         return real(text)
 
-    monkeypatch.setattr(decay, "_fast_yaml_load", load)
+    monkeypatch.setattr(decay, "_load_mapping", load)
     _scan()
     with_key = [n for n, t in corpus.items()
                 if t.startswith("---") and "\n---" in t[3:] and ("half_life" in t[3:t.find("\n---", 3)]
@@ -75,8 +75,8 @@ def test_yaml_is_parsed_only_where_the_key_can_be(corpus, monkeypatch):
 
 def test_a_default_half_life_still_reads_every_note(corpus, monkeypatch):
     parsed: list[str] = []
-    real = decay._fast_yaml_load
-    monkeypatch.setattr(decay, "_fast_yaml_load", lambda text: (parsed.append(text), real(text))[1])
+    real = decay._load_mapping
+    monkeypatch.setattr(decay, "_load_mapping", lambda text: (parsed.append(text), real(text))[1])
     out = _scan(threshold=30)
     names = {d["path"].rsplit("/", 1)[-1] for d in out}
     assert {"plain-00.md", "plain-07.md", "explicit.md"} <= names

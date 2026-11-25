@@ -94,8 +94,8 @@ def test_one_report_loads_each_frontmatter_block_once(tmp_path, monkeypatch):
     root = tmp_path / ".memory"
     notes = _corpus(root)
     loads: list[str] = []
-    real = cp._fast_yaml_load
-    monkeypatch.setattr(cp, "_fast_yaml_load", lambda block: loads.append(block) or real(block))
+    real = cp.load_mapping
+    monkeypatch.setattr(cp, "load_mapping", lambda block: loads.append(block) or real(block))
     w.generate_report(memory_root=root, dry_run=True)
     assert loads, "the sections no longer load frontmatter through the shared pass"
     assert len(loads) == len(set(loads))                             # no block was loaded twice
@@ -105,7 +105,7 @@ def test_one_report_loads_each_frontmatter_block_once(tmp_path, monkeypatch):
 
 
 def test_leading_line_breaks_do_not_change_what_a_block_loads_as():
-    from atlas_plus._yaml import fast_safe_load
+    from atlas_plus._yaml import load_mapping
     blocks = [
         "title: x\nupdated: 2020-01-01\ntags: [a, b]",
         "title: 'quoted: colon'\nlist:\n  - one\n  - two\nnested:\n  k: v",
@@ -117,7 +117,7 @@ def test_leading_line_breaks_do_not_change_what_a_block_loads_as():
     with cp.shared_pass() as cur:
         for b in blocks:
             for lead in ("", "\n", "\r\n", "\n\n"):
-                assert cp.load_frontmatter(lead + b) == fast_safe_load(lead + b), (lead, b)
+                assert cp.load_frontmatter(lead + b) == load_mapping(lead + b), (lead, b)
         assert cur.parses == len(blocks)
 
 

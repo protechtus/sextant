@@ -272,6 +272,7 @@ def find_similar_research_reports(
     cutoff_ordinal = today.toordinal() - max_age_days
     results = []
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
 
     for md_file in sorted(reports_dir.glob("*.md"), reverse=True):
         if md_file.name.startswith("_"):
@@ -286,7 +287,7 @@ def find_similar_research_reports(
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _load_mapping(raw[3:end], fast=False)
         except Exception:
             continue
 
@@ -350,6 +351,7 @@ def _apply_quality_gate(report_path: Path, report_body: str) -> None:
     """
     import re as _re
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
 
     min_words = int(os.environ.get("ATLAS_RESEARCH_MIN_WORDS", str(_QUALITY_GATE_MIN_WORDS)))
 
@@ -365,7 +367,7 @@ def _apply_quality_gate(report_path: Path, report_body: str) -> None:
     if end == -1:
         return
     try:
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        fm = _load_mapping(raw[3:end], fast=False)
     except Exception:
         return
 
@@ -685,7 +687,8 @@ def inject_references_frontmatter(report_path: Path) -> int:
     # Check idempotency: are all discovered URLs already in references:?
     try:
         import yaml as _yaml
-        fm = _yaml.safe_load(fm_block) or {}
+        from atlas_plus._yaml import load_mapping as _load_mapping
+        fm = _load_mapping(fm_block, fast=False)
     except Exception:
         fm = {}
     existing_refs = fm.get("references") or []
@@ -745,7 +748,8 @@ def inject_abstract(report_path: Path) -> bool:
 
     try:
         import yaml as _yaml
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        from atlas_plus._yaml import load_mapping as _load_mapping
+        fm = _load_mapping(raw[3:end], fast=False)
     except Exception:
         return False
 
@@ -808,7 +812,8 @@ def inject_cross_refs(report_path: Path, memory_root: Optional[Path] = None) -> 
 
     try:
         import yaml as _yaml
-        fm = _yaml.safe_load(raw[3:end]) or {}
+        from atlas_plus._yaml import load_mapping as _load_mapping
+        fm = _load_mapping(raw[3:end], fast=False)
     except Exception:
         return 0
 

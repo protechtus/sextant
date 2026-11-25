@@ -541,6 +541,7 @@ async def _research_quality_daily() -> None:
         scored = 0
         skipped = 0
         import yaml as _yaml
+        from atlas_plus._yaml import load_mapping as _load_mapping
         for md_file in reports_dir.rglob("*.md"):
             if md_file.name.startswith("_"):
                 continue
@@ -554,7 +555,7 @@ async def _research_quality_daily() -> None:
             if end == -1:
                 continue
             try:
-                fm = _yaml.safe_load(raw[3:end]) or {}
+                fm = _load_mapping(raw[3:end], fast=False)
             except Exception:
                 continue
             if fm.get("quality_score") is not None:

@@ -548,6 +548,7 @@ def cmd_age_stats(
     from pathlib import Path as _Path
     from atlas_plus.mcp.memory_server.config import MEMORY_ROOT as _MEM_ROOT
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     from datetime import date as _date
 
     root = _MEM_ROOT
@@ -572,7 +573,7 @@ def cmd_age_stats(
             if raw.startswith("---"):
                 end = raw.find("\n---", 3)
                 if end != -1:
-                    fm = _yaml.safe_load(raw[3:end]) or {}
+                    fm = _load_mapping(raw[3:end], fast=False)
                     upd = fm.get("updated")
                     if upd:
                         updated = _date.fromisoformat(str(upd)[:10])
@@ -702,6 +703,7 @@ def cmd_convergence(
     import os
     import re
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     from datetime import datetime, timezone, date
 
     scan_root = MEMORY_ROOT / scope if scope else MEMORY_ROOT
@@ -724,7 +726,7 @@ def cmd_convergence(
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(text[3:end]) or {}
+            fm = _load_mapping(text[3:end], fast=False)
         except Exception:
             continue
         contradictions = fm.get("contradictions", [])
@@ -857,6 +859,7 @@ def cmd_decisions(
     import json as _json
     import re
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     from datetime import date, datetime, timezone
 
     decisions_dir = MEMORY_ROOT / "decisions"
@@ -880,7 +883,7 @@ def cmd_decisions(
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(text[3:end]) or {}
+            fm = _load_mapping(text[3:end], fast=False)
         except Exception:
             continue
 
@@ -1537,6 +1540,7 @@ def cmd_research_index(
     import os
     import re
     import yaml as _yaml
+    from atlas_plus._yaml import load_mapping as _load_mapping
     from datetime import date as _date, timedelta
 
     state_dir = atlas_paths.state_dir()
@@ -1562,7 +1566,7 @@ def cmd_research_index(
         if end == -1:
             continue
         try:
-            fm = _yaml.safe_load(raw[3:end]) or {}
+            fm = _load_mapping(raw[3:end], fast=False)
         except Exception:
             continue
 

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+from atlas_plus._yaml import load_mapping_or_none
 
 # libyaml when present: the pure-Python loader was most of the rebuild time (AG23, sweep 12).
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
@@ -1305,7 +1306,9 @@ def _parse_md(raw: str) -> tuple[str, str, float | None]:
                     raise ValueError("frontmatter too large to parse")   # a 50 MB tag list cost a minute per search (AG22)
                 # libyaml accepts `key:\tvalue`, the pure loader every reader uses refuses it
                 # (FN6): parse such frontmatter the way the readers do, so index and read agree.
-                fm = yaml.load(fm_str, Loader=yaml.SafeLoader if "\t" in fm_str else _YAML_LOADER) or {}
+                fm = load_mapping_or_none(fm_str, fast="	" not in fm_str)
+                if fm is None:   # a rule line over a sentence or a list: the block is text (AG119)
+                    fm, body = {}, raw.strip()
                 confirmed_ts = _parse_confirmed_ts(fm)
             except Exception:
                 fm = {}
@@ -1416,6 +1419,41 @@ _BATCH_NOTES = 500        # a build commits every this many notes ...
 _BATCH_SECS = 2.0         # ... or this many seconds: a killed 20,000-note first index kept nothing and started over (MN87, AG99)
 
 
+_SCAFFOLD_NOTE = "identity/user.md"
+_SCAFFOLD_MARK = "Introduce yourself to your own memory"
+
+
+def _stale_scaffold_rows(conn, todo, seen, db_state, rowids) -> list:
+    """The identity note when its index row still holds the init template's instructions although the
+    note itself is unchanged (SEX-052 item 9): an index built before AG111 kept the template as a search
+    hit until the note changed. Queued once with a force flag; after the re-index the row no longer holds
+    the mark, so a healed or never-affected index costs one rowid lookup and writes nothing. A note the
+    user rewrote (the mark kept on purpose, not the template) is never forced, so it never re-indexes on
+    every search."""
+    rel = _SCAFFOLD_NOTE
+    if rel not in seen or rel not in db_state or any(t[0] == rel for t in todo):
+        return []
+    try:
+        rid = rowids.get(rel)
+        row = None
+        if rid is not None:
+            row = conn.execute("SELECT path, body FROM memory_fts WHERE rowid=?", (int(rid),)).fetchone()
+        if row is None or row[0] != rel:
+            row = conn.execute("SELECT path, body FROM memory_fts WHERE path=?", (rel,)).fetchone()
+    except (sqlite3.Error, TypeError, ValueError):
+        return []
+    if row is None or _SCAFFOLD_MARK not in (row[1] or ""):
+        return []
+    try:
+        raw = (MEMORY_ROOT / rel).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return []
+    if without_scaffold(raw) is None or _SCAFFOLD_MARK in _parse_md(raw)[1]:
+        return []   # the user's own text holds the phrase: indexed as written, never re-forced
+    mtime, size = db_state[rel]
+    return [(rel, mtime, size)]
+
+
 def _index_pass(resuming: bool = False) -> int:
     """Index every note whose (mtime, size) differs from memory_files and drop the rows of vanished notes.
 
@@ -1443,6 +1481,8 @@ def _index_pass(resuming: bool = False) -> int:
             seen.add(rel)
             if db_state.get(rel) != (mtime, size):
                 todo.append((rel, mtime, size))
+        forced = _stale_scaffold_rows(conn, todo, seen, db_state, rowids)
+        todo.extend(forced)
         _t0 = time.monotonic()
         if len(todo) >= _NOTICE_MIN_NOTES:  # a pull, sync or restore re-indexes thousands of notes: say so before the wait (AG84)
             if resuming and db_state:
@@ -1465,7 +1505,7 @@ def _index_pass(resuming: bool = False) -> int:
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")   # the write lock before the re-check below
             cur_row = conn.execute("SELECT mtime, size, fts_rowid FROM memory_files WHERE path=?", (rel,)).fetchone()
-            if cur_row is not None and (cur_row[0], cur_row[1]) == (mtime, size):
+            if cur_row is not None and (cur_row[0], cur_row[1]) == (mtime, size) and (rel, mtime, size) not in forced:
                 continue   # another process indexed this version since the scan above
             rid = cur_row[2] if cur_row is not None else None
             if isinstance(raw, OSError):

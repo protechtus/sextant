@@ -51,6 +51,16 @@ sextant-sync checkin     # cheap "am I current?" heartbeat: exit 0 in sync, 1 no
 sextant-sync status      # local corpus, conflicts, inbox
 ```
 
+With a plain `http://` hub address that is not this machine (a tailnet address included), `status`
+prints a warning that the token and your notes travel unencrypted: the tool cannot tell a VPN such
+as Tailscale or WireGuard from an open network. On a tailnet the tunnel encrypts the traffic, so the
+warning is expected there; anywhere else, put the hub behind a TLS proxy and use its `https://` address.
+
+If the hub stops answering in the middle of a `sync` (it was stopped, or the network dropped), the
+client stops at the first failed request, prints one line with what was transferred, what is unknown
+(sent but not confirmed: `sextant-sync plan` shows where each file stands) and what was not
+transferred, and exits 1. Start the hub again and run `sextant-sync sync`: it resumes.
+
 If you ran `sextant-init` on the device, its template `identity/user.md`
 differs from the hub's real one, so the very first sync reports a
 conflict and parks the hub's copy under `_atlas/sync-conflicts/`. That is
@@ -170,3 +180,7 @@ you edited, the sync reports it as deleted remotely and leaves your copy.
 Never propagated automatically (archive-not-delete). A file deleted on one
 side is REPORTED by `sextant-sync plan` and left alone; deliberate removal is
 an operator action on each side.
+Until the file is removed (or archived) on every side, the corpora differ, so `sextant-sync checkin`
+keeps exiting 1; its line then says that the only differences are ones sync will not act on
+("only differences sync will not act on: 1 deleted remotely ..."). A file too large for the hub is
+reported the same way.

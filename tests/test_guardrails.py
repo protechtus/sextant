@@ -1373,13 +1373,21 @@ ALLOW_G15: list[Allow] = [
 ]
 
 
+# The async ways of starting a child (KL6, sweep 35): both private async callers killed the direct child only
+# at their timeout and left a grandchild running. atlas_plus._proc.run_bounded_async is the one place for them.
+_G15_ASYNC = ("create_subprocess_exec", "create_subprocess_shell", "subprocess_exec", "subprocess_shell")
+
+
 def _g15_hits(text: str) -> list[int]:
-    """Lines of blocking subprocess calls that capture the child's output."""
+    """Lines of blocking subprocess calls that capture the child's output, and of every async child start."""
     out = set()
     for n in ast.walk(ast.parse(text)):
         if not isinstance(n, ast.Call):
             continue
         name = _dotted(n.func)
+        if name.split(".")[-1] in _G15_ASYNC:
+            out.add(n.lineno)
+            continue
         if not (name.startswith(("subprocess.", "_subprocess.", "sp.")) and name.split(".")[-1] in ("run", "check_output")):
             continue
         kws = {k.arg: _dotted(k.value) for k in n.keywords if k.arg}
@@ -1401,7 +1409,8 @@ def test_g15_captured_child_output_goes_through_the_bounded_helper():
         for lineno in _g15_hits(p.read_text(encoding="utf-8", errors="replace")):
             if not _allowed(_rel(p), _g15_call_text(p, lineno), ALLOW_G15):
                 offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
-    _report(offenders, "LES-G15", "run a program whose output you read with atlas_plus._proc.run_bounded(argv, "
+    _report(offenders, "LES-G15", "(async code: await atlas_plus._proc.run_bounded_async) "
+                                  "run a program whose output you read with atlas_plus._proc.run_bounded(argv, "
                                   "timeout=..., max_bytes=...): subprocess.run does not end the child's tree at the "
                                   "timeout and reads the whole output before any size check")
 
@@ -1411,13 +1420,16 @@ def test_the_g15_scan_sees_each_shape():
            "r = subprocess.run(argv, capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)\n"
            "out = subprocess.check_output(argv, timeout=5, stdin=subprocess.DEVNULL)\n"
            "r = subprocess.run(argv, stdout=subprocess.PIPE, timeout=5, stdin=subprocess.DEVNULL)\n"
-           "r = _subprocess.run(argv, stderr=_subprocess.PIPE, timeout=5, stdin=_subprocess.DEVNULL)\n")
+           "r = _subprocess.run(argv, stderr=_subprocess.PIPE, timeout=5, stdin=_subprocess.DEVNULL)\n"
+           "proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE)\n"
+           "proc = await asyncio.create_subprocess_shell(cmd)\n"
+           "transport, protocol = await loop.subprocess_exec(factory, *argv)\n")
     good = ("from atlas_plus import _proc\n"
             "res = _proc.run_bounded(argv, timeout=5, max_bytes=1_000_000)\n"
             "subprocess.run(argv, timeout=5, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)\n"
             "subprocess.run(argv, timeout=5, stdin=subprocess.DEVNULL, stdout=log_file)\n"
             "p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)\n")
-    assert _g15_hits(bad) == [2, 3, 4, 5]
+    assert _g15_hits(bad) == [2, 3, 4, 5, 6, 7, 8]
     assert not _g15_hits(good)
 
 
@@ -1590,3 +1602,254 @@ def test_the_g18_scan_sees_each_shape():
             "# `sextant nothing` in a comment is not printed\n")
     assert [ln for ln, _ in _g18_hits(bad, scripts, subs)] == [1, 2, 3, 4]
     assert not _g18_hits(good, scripts, subs)
+
+
+# The dashboard's own pages are Python strings (scanned above); a file under web/static that names a
+# command is served to a stranger too (SEX-052 item 17). The vendored minified files are skipped by
+# name: they are third-party code, never a message of this project.
+_G18_STATIC = SRC / "web" / "static"
+ALLOW_G18_STATIC: list[tuple[str, str]] = [
+    ("tailwind-*.js", "vendored Tailwind CSS runtime (third-party, minified), not a message of this project"),
+]
+
+
+def _g18_text_hits(text: str, scripts: set[str], subs: set[str]) -> list[tuple[int, str]]:
+    allowed = {name for name, _reason in ALLOW_G18}
+    out = set()
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for m in _G18_NAME.finditer(line):
+            name = m.group(1)
+            if name.startswith("sextant") and name[7:8] in (" ", "\t"):
+                ok = name.split()[1] in subs
+            else:
+                ok = name in scripts or name in allowed
+            if not ok:
+                out.add((lineno, name))
+    return sorted(out)
+
+
+def test_g18_static_files_name_only_commands_that_exist():
+    for pattern, reason in ALLOW_G18_STATIC:
+        assert reason.strip(), f"ALLOW_G18_STATIC entry {pattern} has no reason"
+    scripts, subs = _g18_real_commands()
+    files = sorted(p for p in _G18_STATIC.rglob("*") if p.suffix.lower() in (".js", ".html", ".htm")) \
+        if _G18_STATIC.is_dir() else []
+    offenders, skipped = [], []
+    for p in files:
+        if any(fnmatch.fnmatch(p.name, pat) for pat, _r in ALLOW_G18_STATIC):
+            skipped.append(p.name)
+            continue
+        for lineno, name in _g18_text_hits(p.read_text(encoding="utf-8", errors="replace"), scripts, subs):
+            offenders.append(f"{_rel(p)}:{lineno}: names `{name}`, which is not a command")
+    for pat, _r in ALLOW_G18_STATIC:   # a stale skip entry is removed, not kept
+        assert not files or any(fnmatch.fnmatch(n, pat) for n in skipped), f"ALLOW_G18_STATIC {pat} matches no file"
+    _report(offenders, "LES-G18", "a page under web/static names only commands that exist")
+
+
+def test_the_g18_static_scan_sees_each_shape():
+    scripts, subs = {"sextant", "sextant-fts-rebuild"}, {"init", "verify"}
+    bad = ("<p>Run <code>sextant fts-rebuild</code></p>\n"
+           "el.textContent = 'run \"sextant-rebuild\" first';\n"
+           "const t = `try sextant nothing`;\n")
+    good = ("<p>Run <code>sextant-fts-rebuild</code>, then <code>sextant verify</code></p>\n"
+            "localStorage.getItem('atlas-theme');\n")
+    assert [ln for ln, _ in _g18_text_hits(bad, scripts, subs)] == [1, 2]
+    assert _g18_text_hits("x = `sextant nothing`", scripts, subs) == [(1, "sextant nothing")]
+    assert not _g18_text_hits(good, scripts, subs)
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G19  no daemon thread reads through sys.stdin (LES-090)
+#   2026-11-25 (AG116): `sextant context` read its payload on a daemon thread through
+#   sys.stdin.buffer; when the pipe never closed, that thread held the BufferedReader's lock and
+#   interpreter shutdown died on it ("Fatal Python error: _enter_buffered_busy", exit 139). A daemon
+#   reader reads the file descriptor (os.read(sys.stdin.fileno(), ...)), as hooks/scope.py does.
+#   Reading a CHILD's stdout on a daemon thread (roundtrip.py's _pump) is fine: that stream belongs
+#   to the child and is not the interpreter's sys.stdin. The scan reads the target function's own
+#   body (nested defs included); a reader it calls in another function is out of its sight.
+# ----------------------------------------------------------------------------------------------
+
+# (relative path, snippet on the line, reason)
+ALLOW_G19: list[Allow] = [
+    ("src/atlas_plus/hooks/scope.py", "sys.stdin.read(1_000_000)",
+     "the fallback only when stdin has no file descriptor (a replaced in-memory stream): no "
+     "BufferedReader over a pipe, so no lock held at shutdown"),
+]
+_G19_SAFE_ATTRS = ("fileno", "isatty", "encoding", "errors", "closed", "name", "mode")
+
+
+def _g19_is_stdin(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "stdin"
+            and isinstance(node.value, ast.Name) and node.value.id.lstrip("_") == "sys")
+
+
+def _g19_daemon_targets(tree: ast.AST) -> set[str]:
+    names = set()
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and _dotted(n.func).split(".")[-1] == "Thread"):
+            continue
+        kws = {kw.arg: kw.value for kw in n.keywords if kw.arg}
+        daemon = kws.get("daemon")
+        if not (isinstance(daemon, ast.Constant) and daemon.value is True):
+            continue
+        target = kws.get("target")
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, ast.Attribute):
+            names.add(target.attr)
+    return names
+
+
+def _g19_hits(text: str) -> list[int]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    targets = _g19_daemon_targets(tree)
+    hits = set()
+    for fn in ast.walk(tree):
+        if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in targets):
+            continue
+        parents = {}
+        for p in ast.walk(fn):
+            for c in ast.iter_child_nodes(p):
+                parents[id(c)] = p
+        for n in ast.walk(fn):
+            if not _g19_is_stdin(n):
+                continue
+            up = parents.get(id(n))
+            if isinstance(up, ast.Attribute) and up.value is n and up.attr in _G19_SAFE_ATTRS:
+                continue   # sys.stdin.fileno() / .isatty(): no read through the stream
+            hits.add(n.lineno)
+    return sorted(hits)
+
+
+def test_g19_no_daemon_thread_reads_through_sys_stdin():
+    for _path, _snip, reason in ALLOW_G19:
+        assert reason.strip()
+    offenders, seen = [], set()
+    for p in _py_files(SRC):
+        rel = _rel(p)
+        for lineno in _g19_hits(p.read_text(encoding="utf-8", errors="replace")):
+            seen.add(rel)
+            if not _allowed(rel, _line(p, lineno), ALLOW_G19):
+                offenders.append(f"{rel}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G19", "a daemon thread reads the descriptor (os.read(sys.stdin.fileno(), n)), "
+                                  "never sys.stdin or sys.stdin.buffer: a reader blocked at exit kills "
+                                  "the interpreter (exit 139)")
+    for path, _snip, _reason in ALLOW_G19:   # a stale entry is removed, not kept
+        assert path in seen or not (REPO / path).exists(), f"ALLOW_G19 entry {path} matches nothing"
+
+
+def test_the_g19_scan_sees_each_shape():
+    bad = ("import sys, threading\n"
+           "def _read():\n"
+           "    box['raw'] = sys.stdin.buffer.read()\n"
+           "threading.Thread(target=_read, daemon=True).start()\n"
+           "class W:\n"
+           "    def _loop(self):\n"
+           "        for line in sys.stdin:\n"
+           "            pass\n"
+           "    def go(self):\n"
+           "        import threading as _th\n"
+           "        _th.Thread(target=self._loop, daemon=True).start()\n"
+           "def _r2():\n"
+           "    import sys as _sys\n"
+           "    return _sys.stdin.readline()\n"
+           "threading.Thread(target=_r2, name='x', daemon=True)\n")
+    assert _g19_hits(bad) == [3, 7, 14]
+    good = ("import os, sys, threading\n"
+            "def _read():\n"
+            "    fd = sys.stdin.fileno()\n"
+            "    if sys.stdin.isatty(): return\n"
+            "    box['raw'] = os.read(fd, 65536)\n"
+            "threading.Thread(target=_read, daemon=True).start()\n"
+            "def _fg():\n"
+            "    return sys.stdin.read()\n"
+            "threading.Thread(target=_fg).start()\n"
+            "def _pump():\n"
+            "    return proc.stdout.readline()\n"
+            "threading.Thread(target=_pump, daemon=True).start()\n")
+    assert _g19_hits(good) == []
+
+
+# --- G20 (AG119, sweep 35): a note's frontmatter goes through atlas_plus._yaml.load_mapping ---------
+# A note may open with a rule line over a sentence, a list, a number: YAML gives a str/list/int, and
+# a caller's `.get` raised AttributeError (the orphan scan, `review stale`, `review report` ...).
+# Every YAML load outside _yaml.py is a finding unless it is on this reviewed list (config and data
+# files where a non-mapping is legitimate, or a load followed by its own isinstance(..., dict)
+# check). The list only shrinks. Keys: (path under atlas_plus, enclosing function) -> reason.
+_G20_REVIEWED = {
+    ("mcp/memory_server/routing.py", "_load_routes"):
+        "the routing CONFIG file, not a note; a non-mapping is caught by the isinstance below it",
+    ("mcp/memory_server/tools/anti.py", "list_anti"):
+        "anti-memory entries: each block is checked with isinstance(entry, dict) before use",
+    ("intake/frontmatter.py", "parse_frontmatter"):
+        "checked with isinstance(data, dict) right after the load; non-mapping is text",
+    ("import_cmd.py", "_existing_bodies"): "one scalar value (origin:), checked with isinstance(v, str)",
+    ("import_cmd.py", "_corpus_index"): "one scalar value (origin:), checked with isinstance(v, str)",
+    ("import_cmd.py", "_import_copies"): "one scalar value (original_path:), checked with isinstance(stamped, str)",
+    ("import_cmd.py", "_stamp_existing_frontmatter"):
+        "None becomes {} and anything but a mapping returns the note unchanged (isinstance right after the load)",
+    ("curation/health.py", "health_from_text"):
+        "checked with isinstance(fm, dict) right after the load (no_frontmatter)",
+}
+_G20_NAMES = {"fast_safe_load", "_fast_yaml_load"}
+_G20_ATTRS = {"safe_load", "full_load", "unsafe_load", "load_all", "safe_load_all"}
+
+
+def _g20_hits(tree):
+    """(line, enclosing function) of every YAML load call in a parsed module."""
+    hits = []
+
+    def walk(node, func):
+        for child in ast.iter_child_nodes(node):
+            f = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else func
+            if isinstance(child, ast.Call):
+                fn = child.func
+                if isinstance(fn, ast.Name) and fn.id in _G20_NAMES:
+                    hits.append((child.lineno, func))
+                elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) and (
+                        fn.attr in _G20_ATTRS
+                        or (fn.attr == "load" and fn.value.id.lstrip("_").lower() in ("yaml", "yaml2", "y"))):
+                    hits.append((child.lineno, func))
+            walk(child, f)
+
+    walk(tree, "<module>")
+    return hits
+
+
+def test_g20_frontmatter_loads_go_through_load_mapping():
+    found, offenders = set(), []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if rel == "_yaml.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for line, func in _g20_hits(tree):
+            if (rel, func) in _G20_REVIEWED:
+                found.add((rel, func))
+            else:
+                offenders.append(f"{rel}:{line} in {func}()")
+    assert not offenders, (
+        "G20: a YAML load outside atlas_plus/_yaml.py; a note's frontmatter goes through "
+        "_yaml.load_mapping (or load_mapping_or_none), a config/data load goes on _G20_REVIEWED "
+        "with its reason:\n  " + "\n  ".join(offenders))
+    # A reviewed entry whose load is gone is removed (the list only shrinks). On a tree without one of
+    # these modules (a public build) the entry is simply absent.
+    stale = [k for k in _G20_REVIEWED if (SRC / k[0]).exists() and k not in found]
+    assert not stale, f"G20: reviewed entries with no YAML load any more: {stale}"
+
+
+def test_g20_self_test_flags_planted_offenders():
+    bad = ("import yaml\nimport yaml as _yaml\nfrom atlas_plus._yaml import fast_safe_load as _fast_yaml_load\n"
+           "def a(t):\n    return yaml.safe_load(t) or {}\n"
+           "def b(t):\n    return _yaml.load(t, Loader=_yaml.SafeLoader).get('x')\n"
+           "def c(t):\n    return _fast_yaml_load(t) or {}\n"
+           "def d(t):\n    return fast_safe_load(t)['k']\n")
+    good = ("from atlas_plus._yaml import load_mapping\nimport json\n"
+            "def a(t):\n    return load_mapping(t).get('x')\n"
+            "def b(t):\n    return json.loads(t)\n"
+            "def c(p):\n    return p.load()\n")
+    assert [f for _, f in _g20_hits(ast.parse(bad))] == ["a", "b", "c", "d"]
+    assert not _g20_hits(ast.parse(good))
