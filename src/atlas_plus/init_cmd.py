@@ -229,15 +229,18 @@ def main() -> None:
         print("\nEverything already exists -- nothing to do.")
 
     if not args.dry_run:
+        # Each command as THIS install must type it: bare `sextant verify` was "not recognized" in a
+        # shell without the venv activated, while setup printed the full path (SEX-043 f, AG107).
+        c = _next_step.command
         print(
             "\nNext steps:\n"
             "  1. Edit identity/user.md -- introduce yourself to your memory.\n"
-            "  2. Wire your MCP client: run `sextant setup` -- it prints the one-line\n"
+            f"  2. Wire your MCP client: run {c('setup')} -- it prints the one-line\n"
             "     `claude mcp add ...` for THIS install (paths baked in) and the JSON for\n"
             "     Claude Desktop or Cursor.\n"
-            "  3. Prove it works: `sextant verify` (it writes one small test fact to\n"
+            f"  3. Prove it works: {c('verify')} (it writes one small test fact to\n"
             "     projects/demo.md in your corpus and searches it back; delete that file any time).\n"
-            "  4. See what's here: `sextant components`. Check health: `sextant doctor`.\n"
+            f"  4. See what's here: {c('components')}. Check health: {c('doctor')}.\n"
         )
     sys.exit(0)
 

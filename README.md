@@ -15,7 +15,7 @@
 py -3.12 -m venv .venv                                # Windows: any 3.11+ that `py --list` shows (py -3.13, py -3.11); macOS/Linux: python3 -m venv .venv (3.11+)
 .venv\Scripts\Activate.ps1                            # PowerShell; Git Bash: . .venv/Scripts/activate; macOS/Linux: . .venv/bin/activate. Every NEW window needs this line again before `sextant` is found
 pip --version                                         # STOP unless this names .venv: the venv or its activation failed (delete .venv, fix the line above). PowerShell said "running scripts is disabled"? Run  Set-ExecutionPolicy -Scope Process RemoteSigned  (this window only), then the Activate line again
-pip install sextant-ai                                # the released package; NOT `pip install sextant` (an unrelated project that takes over the `sextant` command; `sextant-doctor` names the way back)
+pip install sextant-ai                                # the released package; NOT `pip install sextant` (an unrelated project that takes over the `sextant` command; from 0.1.1 on, `sextant-doctor` names the way back)
 sextant init                                          # a corpus (plain Markdown) and a state dir
 sextant setup                                         # prints the registration line for your client (Claude Code, Codex, opencode): run it, then restart the client
 sextant verify                                        # proves the round-trip; your client is connected once the setup line has run

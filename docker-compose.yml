@@ -18,8 +18,8 @@ x-sextant: &sextant
   volumes:
     - sextant-data:/data
   environment: &sextant-env
-    ATLAS_MCP_TOKEN: ${ATLAS_MCP_TOKEN:?set ATLAS_MCP_TOKEN in the environment}
-    ATLAS_WEB_API_KEY: ${ATLAS_WEB_API_KEY:?set ATLAS_WEB_API_KEY in the environment}
+    ATLAS_MCP_TOKEN: ${ATLAS_MCP_TOKEN:?set ATLAS_MCP_TOKEN - the python3 line at the top of docker-compose.yml writes both keys to .env (docs/HOWTO-docker.md, Quickstart)}
+    ATLAS_WEB_API_KEY: ${ATLAS_WEB_API_KEY:?set ATLAS_WEB_API_KEY - the python3 line at the top of docker-compose.yml writes both keys to .env (docs/HOWTO-docker.md, Quickstart)}
     ATLAS_BRAIN_API_KEY: ${ATLAS_BRAIN_API_KEY:-}
 
 services:

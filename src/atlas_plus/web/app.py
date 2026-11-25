@@ -4689,8 +4689,10 @@ async def memory_search(request: Request, q: str = ""):
                 # the substring grep below answered `لله`, `רגיש` and an emoji where both said "No hits" (MN74)
                 from atlas_plus.mcp.memory_server.fts import fts5_available as _fts5_ok
                 if _fts5_ok():
+                    from atlas_plus._next_step import EMPTY_SEARCH as _empty  # what to try next (AG107)
                     return (f'<div class="text-slate-500 text-xs">No hits for &quot;{_html_mod.escape(q)}&quot;: search '
-                            f'matches whole words, the same as <code>sextant search</code> and the MCP tool.</div>')
+                            f'matches whole words, the same as <code>sextant search</code> and the MCP tool. '
+                            f'{_html_mod.escape(_empty.split(". ", 1)[1])}</div>')
             if fts_results:
                 top_score = float(fts_results[0].get("score", 0))
                 if top_score < 0.2:
@@ -4785,7 +4787,9 @@ async def memory_search(request: Request, q: str = ""):
                 pass
 
         if not results:
-            return f'<div class="text-slate-500 text-xs">No matches for &quot;{_html_mod.escape(q)}&quot;</div>'
+            from atlas_plus._next_step import EMPTY_SEARCH as _empty  # same next step as the CLI and MCP (AG107)
+            return (f'<div class="text-slate-500 text-xs">No matches for &quot;{_html_mod.escape(q)}&quot;. '
+                    f'{_html_mod.escape(_empty.split(". ", 1)[1])}</div>')
 
         rows = [f'<div class="text-slate-500 text-xs mb-2">{len(results)} file(s) matched (substring search: the keyword '
                 f'index is unavailable, so a word inside a longer word counts)</div>',

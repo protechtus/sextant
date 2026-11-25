@@ -62,8 +62,24 @@ def _mode(p: Path) -> int:
     return stat.S_IMODE(os.stat(p).st_mode)
 
 
+def modes_ignored(path, mounts_text=None, windows=os.name == "nt") -> bool:
+    """True when `path` sits on a mount where chmod changes nothing (a Windows drive under WSL
+    without the metadata option, FAT, SMB): the mode tests below then cannot pass and skip with
+    the reason instead of failing (SEX-048, AG107). `_fsutil.mode_fix` is the one judge."""
+    if windows:
+        return False
+    from atlas_plus import _fsutil
+    return not _fsutil.mode_fix(str(path), mounts_text).startswith("chmod ")
+
+
+@pytest.fixture
+def honours_modes(tmp_path):
+    if modes_ignored(tmp_path):
+        pytest.skip(f"the temp folder {tmp_path} is on a mount that ignores chmod; mode bits cannot be tested there")
+
+
 @posix_only
-def test_init_creates_memory_and_state_roots_0700(tmp_path, monkeypatch):
+def test_init_creates_memory_and_state_roots_0700(tmp_path, monkeypatch, honours_modes):
     ws = _fresh_ws(tmp_path, monkeypatch)
     old = os.umask(0o022)
     try:
@@ -77,7 +93,7 @@ def test_init_creates_memory_and_state_roots_0700(tmp_path, monkeypatch):
 
 
 @posix_only
-def test_init_leaves_an_existing_root_alone_and_doctor_names_the_fix(tmp_path, monkeypatch):
+def test_init_leaves_an_existing_root_alone_and_doctor_names_the_fix(tmp_path, monkeypatch, honours_modes):
     ws = _fresh_ws(tmp_path, monkeypatch)
     (ws / ".memory").mkdir(mode=0o755)
     (ws / ".atlas").mkdir(mode=0o755)
@@ -99,7 +115,7 @@ def test_init_leaves_an_existing_root_alone_and_doctor_names_the_fix(tmp_path, m
 
 
 @posix_only
-def test_sync_registry_dir_is_private_even_before_init(tmp_path, monkeypatch):
+def test_sync_registry_dir_is_private_even_before_init(tmp_path, monkeypatch, honours_modes):
     ws = _fresh_ws(tmp_path, monkeypatch)
     old = os.umask(0o022)
     try:
@@ -112,7 +128,7 @@ def test_sync_registry_dir_is_private_even_before_init(tmp_path, monkeypatch):
     assert _mode(ws / ".atlas" / "sync") == 0o700
 
 
-def test_doctor_permissions_check_is_empty_on_windows_or_private_roots(tmp_path, monkeypatch):
+def test_doctor_permissions_check_is_empty_on_windows_or_private_roots(tmp_path, monkeypatch, honours_modes):
     from atlas_plus import _fsutil
     d = tmp_path / "private"
     _fsutil.make_private_dir(d)

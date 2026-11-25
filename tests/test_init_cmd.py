@@ -92,4 +92,5 @@ def test_setup_says_which_part_is_needed_and_names_the_short_verify():
     from atlas_plus import setup_cmd
     text = setup_cmd.render(setup_cmd.describe())
     assert "ONE of the numbered sections" in text
-    assert "`sextant verify` is the same command" in text
+    from atlas_plus import _next_step  # one form, the one this install types (AG107, SEX-043 f)
+    assert f"Verify: {_next_step.command('verify')}" in text

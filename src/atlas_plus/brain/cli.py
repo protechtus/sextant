@@ -544,7 +544,9 @@ def _save_fact(arg: str) -> None:
             else:
                 console.print(f"[red]Save failed: {error or result}[/red]")
         else:
-            console.print(f"[green]{'Already remembered in' if result.get('already_remembered') else 'Saved to'}[/green] {result.get('file', scope)}")
+            from atlas_plus._next_step import stored_where
+            console.print(f"[green]{'Already remembered in' if result.get('already_remembered') else 'Saved to'}[/green] "
+                          f"{result.get('file', scope)}{'' if result.get('already_remembered') else stored_where(scope)}")
     except Exception as exc:
         console.print(f"[red]Save error: {exc}[/red]")
 

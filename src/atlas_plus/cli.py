@@ -393,6 +393,14 @@ def cmd_web(ctx: typer.Context) -> None:
 def cmd_context(ctx: typer.Context) -> None:
     """Print the session priming text (same as sextant-session-start); with words, the task-matched
     facts (same as atlas-prime "<task words>")."""
+    from atlas_plus import paths as _paths
+    if not _paths.memory_root().exists():
+        # Before init the block came back empty, rc 0, with no direction (SEX-047, AG107). stderr only:
+        # stdout stays the priming block the hooks and scripts read; both forms (words / none) say it.
+        import sys
+        from atlas_plus import _next_step as _ns
+        print(f"No corpus at {_paths.memory_root()} yet, so there is nothing to prime from."
+              f"{_ns.corpus_elsewhere()}\nNext: {_ns.command('init')}", file=sys.stderr)
     if ctx.args:
         from atlas_plus.hooks.prime import main as prime_main
 
@@ -494,8 +502,8 @@ def cmd_remember(
     if result.get("already_remembered"):
         console.print(f"Already remembered in {result['file']} (the same fact stands there; nothing written)")
         return
-    where = (" (preference:<topic> is stored in the feedback folder)"
-             if scope.strip().lower().startswith("preference:") else "")  # feedback/ surprised a stranger (SEX-050 item 11)
+    from atlas_plus import _next_step as _ns
+    where = _ns.stored_where(scope)  # feedback/ surprised a stranger (SEX-050 item 11); brain /save says the same (AG107)
     console.print(f"Remembered in {result['file']}{where}")
     if result.get("autocommit_note"):
         console.print(f"[yellow]{result['autocommit_note']}[/yellow]")  # AG57

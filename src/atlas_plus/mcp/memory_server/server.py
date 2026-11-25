@@ -346,6 +346,8 @@ def memory_search_tool(query: str, scope: str = "", limit: int = 10, full: int =
         # the agent waited a minute and was told nothing (AG84): name the one-time index work
         response["index_rebuilt"] = _work
     if not results:
+        from atlas_plus._next_step import EMPTY_SEARCH as _empty
+        response["hint"] = _empty  # an empty list said nothing about what to try next (AG107)
         try:
             from .fts import last_connect_error as _lce
             _err = _lce()

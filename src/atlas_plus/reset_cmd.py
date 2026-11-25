@@ -115,6 +115,14 @@ def main() -> None:
         _pre = uninstall_cmd.derived_state_refusal()
         if _pre:  # the state step would refuse: nothing is wiped (MN66: the corpus went, the state was refused, rc 1)
             _refuse(f"state:  {_pre}", "corpus: not reset (the state step would refuse; nothing was changed)")
+    if do_corpus and not atlas_paths.memory_root().exists():
+        # A reset never creates what was not there: `reset --corpus` with no --yes on a missing corpus
+        # exited 0 after laying down a fresh one (SEX-047, AG107). Nothing to reset is a refusal.
+        from atlas_plus import _next_step
+        _refuse(*(["state:  not reset (no corpus to reset; nothing was changed)"] if do_state else []),
+                f"corpus: there is no corpus at {atlas_paths.memory_root()}; nothing to reset, nothing was "
+                f"changed. Next: {_next_step.command('init')} creates one (or set ATLAS_WORKSPACE_ROOT to "
+                "the folder that holds yours).")
     if do_corpus:
         refusal = uninstall_cmd.corpus_target_refusal() or uninstall_cmd.confirm_corpus_removal(args.yes, args.confirm_path)  # (AG73)
         if refusal is not None:

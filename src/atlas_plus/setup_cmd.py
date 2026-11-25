@@ -508,9 +508,10 @@ def render(info: dict, client: str = "all") -> str:
                       "one NAT, Docker's bridge included, shares that counter: ATLAS_MCP_TRUSTED_PEERS=<ip> "
                       "exempts a peer you own)",
                       f"   Full server setup (systemd, Caddy, Tailscale): {h['docs']}", ""]
-        lines.append(f"Verify: {info['verify']}   (starts the server over stdio, writes one fact under "
-                     "project:demo, searches it back; `sextant verify` is the same command when the "
-                     "environment is active)")
+        # One form, the one THIS install must type, the same as init's next steps (SEX-043 f, AG107).
+        from atlas_plus import _next_step
+        lines.append(f"Verify: {_next_step.command('verify')}   (starts the server over stdio, writes one fact "
+                     "under project:demo in your corpus, searches it back)")
     return "\n".join(lines)
 
 
@@ -843,8 +844,14 @@ def main(argv: list[str] | None = None) -> int:
                   "or leave --out off and paste what is printed.", file=sys.stderr)
             return 1
         except ValueError as exc:
-            print(f"sextant setup: {exc}", file=sys.stderr)
-            return 1
+            # The prose alone left a first-timer at the error (AG107): every refusal of --out names the
+            # next command through _next_step, the JSON and the TOML writer alike.
+            from atlas_plus import _next_step
+            return _next_step.say(
+                f"sextant setup: {exc}",
+                f"rename {args.out} (for example to {Path(args.out).name}.old) and run this setup command "
+                f"again, or run {_next_step.command('setup --client ' + str(args.client))} without --out "
+                "and paste what it prints into the file by hand.")
     # Only a requested SHELL line that could not be printed is a failure: the JSON blocks need
     # no shell quoting and are complete (AG6, pipeline sweep 2026-11-11). The refusal must be
     # the requested piece's own (AG76).

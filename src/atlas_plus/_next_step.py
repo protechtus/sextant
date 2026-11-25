@@ -120,6 +120,20 @@ def upgrade_line(kind: str | None = None) -> str:
     return f"`{PYPI_UPGRADE}` (a source install updates differently: docs/GETTING-STARTED.md)"
 
 
+def stored_where(scope: str) -> str:
+    """The clause a remember confirmation adds for a scope whose folder differs from its name:
+    preference:<topic> lands in the feedback folder (SEX-050 item 11). `sextant remember` and
+    sextant-brain's /save print the same clause (AG107)."""
+    return (" (preference:<topic> is stored in the feedback folder)"
+            if str(scope).strip().lower().startswith("preference:") else "")
+
+
+EMPTY_SEARCH = ("Nothing matched. Try fewer or other words (keyword search needs a word that appears in "
+                "a note), drop the scope, or store the fact first.")
+"""What to try after an empty search: the MCP search tool and the dashboard's search box say it the
+way `sextant search` does (SEX-047, AG107)."""
+
+
 def help_hint(prog: str) -> str:
     return f"Run `{prog} --help` to see what it takes."
 
