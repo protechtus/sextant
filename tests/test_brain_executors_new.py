@@ -161,7 +161,7 @@ class TestVerifyExecutor:
                 stdout = "1579 passed in 2.30s"
                 stderr = ""
 
-            with patch("atlas_plus.brain.executors.subprocess.run", return_value=Passed()):
+            with patch("atlas_plus.brain.executors._bounded_text_run", return_value=Passed()):
                 result = run_executor(task, ctx)
 
         assert result.status == "done"
@@ -177,7 +177,7 @@ class TestVerifyExecutor:
                 stdout = "3 failed, 1576 passed in 3.10s"
                 stderr = ""
 
-            with patch("atlas_plus.brain.executors.subprocess.run", return_value=Failed()):
+            with patch("atlas_plus.brain.executors._bounded_text_run", return_value=Failed()):
                 result = run_executor(task, ctx)
 
         assert result.status == "failed"
@@ -194,7 +194,7 @@ class TestVerifyExecutor:
                 stdout = "1579 passed"
                 stderr = ""
 
-            with patch("atlas_plus.brain.executors.subprocess.run", return_value=Passed()), \
+            with patch("atlas_plus.brain.executors._bounded_text_run", return_value=Passed()), \
                  patch("atlas_plus.brain.executors._check_gate", return_value=None):
                 result = run_executor(task, ctx)
 
@@ -478,7 +478,7 @@ class TestPytestExecutor:
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "pytest")
             mock = self._mock_run(0, "42 passed")
-            with patch("atlas_plus.brain.executors.subprocess.run", return_value=mock):
+            with patch("atlas_plus.brain.executors._bounded_text_run", return_value=mock):
                 result = run_executor(task, ctx)
         assert result.status == "done"
         assert "pytest passed" in result.text
@@ -487,7 +487,7 @@ class TestPytestExecutor:
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "pytest")
             mock = self._mock_run(1, "", "2 failed")
-            with patch("atlas_plus.brain.executors.subprocess.run", return_value=mock):
+            with patch("atlas_plus.brain.executors._bounded_text_run", return_value=mock):
                 result = run_executor(task, ctx)
         assert result.status == "failed"
         assert "pytest failed" in result.text
@@ -496,7 +496,7 @@ class TestPytestExecutor:
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "pytest")
             mock = self._mock_run(0, "10 passed")
-            with patch("atlas_plus.brain.executors.subprocess.run", return_value=mock):
+            with patch("atlas_plus.brain.executors._bounded_text_run", return_value=mock):
                 result = run_executor(task, ctx)
         assert result.artifact_path is not None
 
@@ -560,7 +560,7 @@ class TestSubprocessReportExecutors:
     def test_gaps_report_done_on_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "gaps_report")
-            with patch("atlas_plus.brain.executors.subprocess.run",
+            with patch("atlas_plus.brain.executors._bounded_text_run",
                        return_value=self._mock_run(0)):
                 result = run_executor(task, ctx)
         assert result.status == "done"
@@ -568,7 +568,7 @@ class TestSubprocessReportExecutors:
     def test_gaps_report_failed_on_nonzero(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "gaps_report")
-            with patch("atlas_plus.brain.executors.subprocess.run",
+            with patch("atlas_plus.brain.executors._bounded_text_run",
                        return_value=self._mock_run(1)):
                 result = run_executor(task, ctx)
         assert result.status == "failed"
@@ -576,7 +576,7 @@ class TestSubprocessReportExecutors:
     def test_convergence_report_done_on_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "convergence_report")
-            with patch("atlas_plus.brain.executors.subprocess.run",
+            with patch("atlas_plus.brain.executors._bounded_text_run",
                        return_value=self._mock_run(0)):
                 result = run_executor(task, ctx)
         assert result.status == "done"
@@ -584,7 +584,7 @@ class TestSubprocessReportExecutors:
     def test_convergence_report_failed_on_nonzero(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "convergence_report")
-            with patch("atlas_plus.brain.executors.subprocess.run",
+            with patch("atlas_plus.brain.executors._bounded_text_run",
                        return_value=self._mock_run(1)):
                 result = run_executor(task, ctx)
         assert result.status == "failed"
@@ -592,7 +592,7 @@ class TestSubprocessReportExecutors:
     def test_curation_report_done_on_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "curation_report")
-            with patch("atlas_plus.brain.executors.subprocess.run",
+            with patch("atlas_plus.brain.executors._bounded_text_run",
                        return_value=self._mock_run(0)):
                 result = run_executor(task, ctx)
         assert result.status == "done"
@@ -600,7 +600,7 @@ class TestSubprocessReportExecutors:
     def test_curation_report_failed_on_nonzero(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "curation_report")
-            with patch("atlas_plus.brain.executors.subprocess.run",
+            with patch("atlas_plus.brain.executors._bounded_text_run",
                        return_value=self._mock_run(1)):
                 result = run_executor(task, ctx)
         assert result.status == "failed"
@@ -619,7 +619,7 @@ class TestSuggestFactsReviewExecutor:
     def test_returns_done_on_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "suggest_facts_review")
-            with patch("atlas_plus.brain.executors.subprocess.run") as mock_run:
+            with patch("atlas_plus.brain.executors._bounded_text_run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0, stdout="3 facts queued", stderr="")
                 result = run_executor(task, ctx)
         assert result.status == "done"
@@ -627,7 +627,7 @@ class TestSuggestFactsReviewExecutor:
     def test_returns_failed_on_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "suggest_facts_review")
-            with patch("atlas_plus.brain.executors.subprocess.run") as mock_run:
+            with patch("atlas_plus.brain.executors._bounded_text_run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
                 result = run_executor(task, ctx)
         assert result.status == "failed"

@@ -561,7 +561,20 @@ def main() -> None:
         except Exception:
             pass
     else:
-        lines += ["## Active project", "(not in a known project directory)", ""]
+        lines += ["## Active project", "(not in a known project directory)"]
+        # A fact remembered under project:<name> was found by search and never shown here, with no
+        # word why (SEX-052 item 6): name the project notes and where their facts appear.
+        try:
+            _pnames = sorted(n.stem for n in (MEMORY_ROOT / "projects").glob("*.md") if not n.name.startswith("_"))
+        except OSError:
+            _pnames = []
+        if _pnames:
+            from atlas_plus import _next_step as _ns
+            _shown = ", ".join(_ol(n) for n in _pnames[:5]) + (f" and {len(_pnames) - 5} more" if len(_pnames) > 5 else "")
+            lines.append(f"Project notes: {_shown}. Their facts show here when this runs inside the project's folder "
+                         f"under {_ol(str(PROJECTS_ROOT))}; any time: {_ns.command('search <words>')} "
+                         f"or {_ns.command('context <words>')}.")
+        lines.append("")
 
     # --- Previous session state (on resume after compaction) ---
     if IS_RESUME and SESSION_STATE_FILE.exists():

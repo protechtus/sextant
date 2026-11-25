@@ -23,6 +23,18 @@ In short, since 0.1.0: the first minutes of a new install. Every failure ends wi
 
 ### Changed
 
+- `sextant context` and the SessionStart hook crashed at exit when their input was inherited and never closed, as in a script or a CI step: the whole output, then `Fatal Python error: _enter_buffered_busy` and exit code 139 (AG116, sweep 34; SEX-052). A helper thread was still blocked reading standard input through Python's buffered reader when the interpreter shut down. The payload is now read from the file descriptor; a piped payload is read as before.
+
+- Outside a project folder, `sextant context` names the corpus's project notes and says where their facts appear (inside the project's folder, or any time through `search <words>` and `context <words>`). A fact remembered under `project:<name>` was found by search and silently absent from the context (AG116; SEX-052).
+
+- `sextant doctor` parses each note's frontmatter once, shared by the contradiction, decision, quality and untagged checks (AG116; SEX-052). Output is byte-identical; the gain is small (about 6 percent warm at 2,000 notes).
+
+- The decay scan behind the next-actions panel and the report skips the YAML parse for a note whose frontmatter cannot carry `half_life` (SEX-046): about 6.2 s became about 3.3 s warm at 20,000 notes; the result equals the scan without the skip on every frontmatter shape tested.
+
+- Guardrail G18 (lesson LES-089): every `sextant <word>`, `sextant-<word>` and `atlas-<word>` that a message names must be a console script or a subcommand; it fails if `sextant fts-rebuild` comes back. A persona test accepts the full program path that the next-step line prints when the environment is not on PATH.
+
+- Keel (KL5, sweep 34; private modules): the remaining nine capturing calls of `brain/executors.py` (the pytest and verify runs, the gaps, convergence, curation and suggest-facts reports, the shared reporting helper, both research runners) run through the bounded helper; a child's captured output is capped at 4 MB. Guardrail G15's list no longer holds `brain/executors.py`.
+
 - The MCP SDK, both majors (AG114, sweep 33; ATL-072). `serverInfo.version` is now Sextant's own version on the MCP SDK 1.x and 2.x: it was the SDK's version on 1.x and empty on 2.x. One helper in `mcp/memory_server/_sdk.py` sets it. Correction to the entry below: the CI test job installs without `constraints.txt`, so since the dependency reads `<3` CI has run the whole suite on SDK 2.3.0 on Ubuntu, macOS and Windows, and it was 1.x that went untested. A new CI job, `mcp-sdk-1`, forces `mcp>=1.28.1,<2` on the three systems and runs the MCP and round-trip tests. `sextant verify` starts the server with the interpreter it runs on, never a `sextant-mcp` found on PATH (checked, unchanged).
 
 - `constraints.txt` regenerated from a clean environment on 2026-11-25 (Python 3.11): fastapi 0.165.0, pydantic 2.14.4, pydantic-core 2.50.5, typer 0.29.2, watchdog 7.1.1, PyYAML 6.0.4, anthropic 2.14.0, annotated-doc 0.0.7, certifi 2026.11.20, packaging 26.4, sse-starlette 3.7.1 and `mcp` 2.3.0 with its new `mcp-types`; `httpx-sse` and `pydantic-settings` left with the 1.x SDK. pip-audit finds nothing. These are the versions the CI test job had already installed and passed on.

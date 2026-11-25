@@ -18,7 +18,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -669,8 +669,8 @@ class MemoryFile:
 
     ``text`` is None when the file could not be read (preserves each consumer's
     skip-on-read-error behaviour). Frontmatter is intentionally NOT parsed here -- each
-    consumer parses ``text`` with its own exact gate, so the dedup saves the file READ
-    (the expensive part) with zero behavioural drift.
+    consumer applies its own gate, and the YAML is parsed once per note through _note_fm()
+    (SEX-052 item 13), so the scan saves both the file READ and the repeated parse.
     """
     rel: str             # posix-style path relative to the scan root
     parts: tuple         # relative path parts
@@ -679,6 +679,33 @@ class MemoryFile:
     not_utf8: bool = False   # decoded with replacement characters (a cp932/latin-1 note, AG17)
     bom: bool = False        # the file began with a UTF-8 byte order mark (stripped from ``text``)
     bad_name: bool = False   # the file NAME is not valid UTF-8 (a legacy-encoded name, MN17)
+    # the parsed frontmatter, filled by _note_fm() on first use and shared by every check
+    fm_cache: dict = field(default_factory=dict, compare=False, repr=False)
+
+
+def _note_fm(rec: "MemoryFile"):
+    """The note's frontmatter parsed ONCE and shared by the checks (SEX-052 item 13: four checks
+    parsed each note's YAML again, 2.8 s at 2,000 notes). None when the note is unreadable, has
+    no `---` block, the block is unterminated or the YAML does not parse; else what the YAML
+    loads to (``{}`` for an empty block), exactly what each check computed itself before."""
+    if "fm" not in rec.fm_cache:
+        fm = None
+        raw = rec.text
+        if raw is not None and raw.startswith("---"):
+            end = raw.find("\n---", 3)
+            if end != -1:
+                try:
+                    fm = _yaml_load(raw[3:end]) or {}
+                except Exception:
+                    fm = None
+        rec.fm_cache["fm"] = fm
+    return rec.fm_cache["fm"]
+
+
+def _rec_tagged(rec: "MemoryFile") -> bool:
+    """_fm_tagged() on the shared parse."""
+    fm = _note_fm(rec)
+    return bool(isinstance(fm, dict) and (fm.get("tags") or fm.get("tag")))
 
 
 def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
@@ -1006,14 +1033,8 @@ def check_convergence(scan: Optional[list["MemoryFile"]] = None) -> dict:
                 continue
             if "contradictions:" not in text:
                 continue
-            if not text.startswith("---"):
-                continue
-            end = text.find("\n---", 3)
-            if end == -1:
-                continue
-            try:
-                fm = _yaml_load(text[3:end]) or {}
-            except Exception:
+            fm = _note_fm(rec)
+            if fm is None:
                 continue
             contras = fm.get("contradictions", [])
             if contras and isinstance(contras, list) and len(contras) > 0:
@@ -1036,22 +1057,31 @@ def check_decisions(scan: Optional[list["MemoryFile"]] = None) -> dict:
         stale = 0
         stale_titles: list[str] = []
         read = scan_reader(scan, MEMORY_ROOT) or (lambda p: p.read_text(encoding="utf-8", errors="replace"))
+        scanned = {} if scan is None else {MEMORY_ROOT.joinpath(*mf.parts): mf for mf in scan
+                                           if mf is not None and not mf.bad_name}
         for path in sorted(decisions_dir.glob("*.md")):
             if path.name.startswith("_"):
                 continue
-            try:
-                text = read(path)
-            except OSError:
-                continue
-            if not text.startswith("---"):
-                continue
-            end = text.find("\n---", 3)
-            if end == -1:
-                continue
-            try:
-                fm = _yaml_load(text[3:end]) or {}
-            except Exception:
-                continue
+            mf = scanned.get(path)
+            if mf is not None:
+                # a byte order mark kept the note out before (its text did not start with ---)
+                fm = None if mf.bom else _note_fm(mf)
+                if fm is None:
+                    continue
+            else:
+                try:
+                    text = read(path)
+                except OSError:
+                    continue
+                if not text.startswith("---"):
+                    continue
+                end = text.find("\n---", 3)
+                if end == -1:
+                    continue
+                try:
+                    fm = _yaml_load(text[3:end]) or {}
+                except Exception:
+                    continue
             total += 1
             title = str(fm.get("title", path.stem))[:40]
             made_str = str(fm.get("made", ""))[:10]
@@ -1203,17 +1233,8 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
         if not _quality_counted(rec):
             continue
         total += 1
-        raw = rec.text
-        if raw is None:
-            continue
-        if not raw.startswith("---"):
-            continue
-        end = raw.find("\n---", 3)
-        if end == -1:
-            continue
-        try:
-            fm = _yaml_load(raw[3:end]) or {}
-        except Exception:
+        fm = _note_fm(rec)
+        if fm is None:
             continue
 
         # Confirmation
@@ -1228,7 +1249,7 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
                 pass
 
         # Tags
-        if _fm_tagged(raw):
+        if _rec_tagged(rec):
             tagged += 1
 
         # Confidence
@@ -1293,7 +1314,7 @@ def check_untagged_by_scope(scan: Optional[list["MemoryFile"]] = None) -> dict[s
         scope = f.parts[0]
         if scope.startswith(".") or not _quality_counted(f):
             continue
-        if not _fm_tagged(f.text):  # an unreadable note counts as untagged, as in the total
+        if not _rec_tagged(f):  # an unreadable note counts as untagged, as in the total
             scope_counts[scope] = scope_counts.get(scope, 0) + 1
     return scope_counts
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -814,7 +815,11 @@ def test_init_points_at_setup_and_verify(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         init_main()
     out = capsys.readouterr().out
-    assert "sextant setup" in out and "sextant verify" in out and "deploy/" not in out
+    # the program is bare `sextant` when the shell finds this install, else its full path
+    # (`...\Scripts\sextant.exe setup`, quoted when the path has a space): both name the step (SEX-052 item 14)
+    for sub in ("setup", "verify"):
+        assert re.search(r"(?:^|[\s`'\"/\\])sextant(?:\.exe)?\"? " + sub + r"\b", out), (sub, out)
+    assert "deploy/" not in out
 
 
 def test_remember_help_carries_no_internal_history():

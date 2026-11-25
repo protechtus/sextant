@@ -85,7 +85,7 @@ class TestVerifyExecutorEnv:
 
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "verify")
-            with patch("subprocess.run", side_effect=fake_run):
+            with patch("atlas_plus.brain.executors._bounded_text_run", side_effect=fake_run):
                 result = run_executor(task, ctx)
 
         assert result.status == "done"
@@ -106,7 +106,7 @@ class TestVerifyExecutorEnv:
 
         with tempfile.TemporaryDirectory() as tmp:
             task, ctx = _ctx(Path(tmp), "pytest")
-            with patch("subprocess.run", side_effect=fake_run):
+            with patch("atlas_plus.brain.executors._bounded_text_run", side_effect=fake_run):
                 result = run_executor(task, ctx)
 
         assert result.status == "done"

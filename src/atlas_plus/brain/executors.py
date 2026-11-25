@@ -443,15 +443,11 @@ def _clean_pytest_env() -> dict[str, str]:
 def _pytest(ctx: ExecutorContext) -> ExecutionResult:
     python = _pytest_python(_PROJECT_ROOT)
     cmd = [str(python), "-m", "pytest", *_DEFAULT_PYTEST_ARGS]
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        cwd=str(_PROJECT_ROOT),
-        capture_output=True,
-        text=True,
         timeout=_PYTEST_TIMEOUT_SECONDS,
-        encoding="utf-8",
-        errors="replace",
-        env=_clean_pytest_env(), stdin=subprocess.DEVNULL,
+        cwd=str(_PROJECT_ROOT),
+        env=_clean_pytest_env(),
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "pytest passed" if completed.returncode == 0 else "pytest failed"
@@ -564,15 +560,11 @@ def _gaps_report(ctx: ExecutorContext) -> ExecutionResult:
         "--autofile",
         "--autoticket",
     ]
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        env=_utf8_env(),
-        cwd=str(_PROJECT_ROOT),
-        capture_output=True,
-        text=True,
         timeout=120,
-        encoding="utf-8",
-        errors="replace", stdin=subprocess.DEVNULL,
+        cwd=str(_PROJECT_ROOT),
+        env=_utf8_env(),
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "Gaps report complete" if completed.returncode == 0 else "Gaps report failed"
@@ -629,15 +621,11 @@ def _convergence_report(ctx: ExecutorContext) -> ExecutionResult:
         "convergence",
         "--write",
     ]
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        env=_utf8_env(),
-        cwd=str(_PROJECT_ROOT),
-        capture_output=True,
-        text=True,
         timeout=60,
-        encoding="utf-8",
-        errors="replace", stdin=subprocess.DEVNULL,
+        cwd=str(_PROJECT_ROOT),
+        env=_utf8_env(),
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "Convergence report complete" if completed.returncode == 0 else "Convergence report failed"
@@ -677,15 +665,11 @@ def _curation_report(ctx: ExecutorContext) -> ExecutionResult:
         "report",
     ]
     try:
-        completed = subprocess.run(
+        completed = _bounded_text_run(
             cmd,
-            env=_utf8_env(),
-            cwd=str(_PROJECT_ROOT),
-            capture_output=True,
-            text=True,
             timeout=900,  # full curation report over the whole memory; 300 still timed out twice in Oct 2026 nightly runs (growing corpus), raised 2026-10-12
-            encoding="utf-8",
-            errors="replace", stdin=subprocess.DEVNULL,
+            cwd=str(_PROJECT_ROOT),
+            env=_utf8_env(),
         )
     except subprocess.TimeoutExpired:
         # Without this, the timeout escaped as a raw exception and the task
@@ -746,15 +730,11 @@ def _suggest_facts_review(ctx: ExecutorContext) -> ExecutionResult:
         "claude-code",
         "--dry-run",
     ]
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        env=_utf8_env(),
-        cwd=str(_PROJECT_ROOT),
-        capture_output=True,
-        text=True,
         timeout=240,
-        encoding="utf-8",
-        errors="replace", stdin=subprocess.DEVNULL,
+        cwd=str(_PROJECT_ROOT),
+        env=_utf8_env(),
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "Suggest-facts review complete" if completed.returncode == 0 else "Suggest-facts review failed"
@@ -811,15 +791,11 @@ def _run_reporting_subprocess(
     artifact, and map the return code to done/failed.
     """
     try:
-        completed = subprocess.run(
+        completed = _bounded_text_run(
             cmd,
-            env=_utf8_env(),
-            cwd=str(_PROJECT_ROOT),
-            capture_output=True,
-            text=True,
             timeout=timeout,
-            encoding="utf-8",
-            errors="replace", stdin=subprocess.DEVNULL,
+            cwd=str(_PROJECT_ROOT),
+            env=_utf8_env(),
         )
     except subprocess.TimeoutExpired as exc:
         # Fail gracefully with a legible artifact instead of crashing the worker
@@ -951,14 +927,10 @@ def _research_runner(ctx: ExecutorContext) -> ExecutionResult:
     python = _pytest_python(_PROJECT_ROOT)
     cmd = [str(python), str(runner_path)] + runner_args
 
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        env=_utf8_env(),
-        capture_output=True,
-        text=True,
         timeout=_PYTEST_TIMEOUT_SECONDS,
-        encoding="utf-8",
-        errors="replace", stdin=subprocess.DEVNULL,
+        env=_utf8_env(),
     )
 
     if completed.returncode == 0 and not completed.stdout.strip():
@@ -1029,14 +1001,10 @@ def _research_runner_api(ctx: ExecutorContext) -> ExecutionResult:
     # API runs can take a while (30+ reports x 60s each)
     api_timeout = max(_PYTEST_TIMEOUT_SECONDS, 7200)
 
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        env=_utf8_env(),
-        capture_output=True,
-        text=True,
         timeout=api_timeout,
-        encoding="utf-8",
-        errors="replace", stdin=subprocess.DEVNULL,
+        env=_utf8_env(),
     )
 
     if completed.returncode == 0 and not completed.stdout.strip():
@@ -1752,15 +1720,11 @@ def _verify(ctx: ExecutorContext) -> ExecutionResult:
     """
     python = _pytest_python(_PROJECT_ROOT)
     cmd = [str(python), "-m", "pytest", "--tb=short", "-q", "-p", "no:cacheprovider"]
-    completed = subprocess.run(
+    completed = _bounded_text_run(
         cmd,
-        cwd=str(_PROJECT_ROOT),
-        capture_output=True,
-        text=True,
         timeout=_PYTEST_TIMEOUT_SECONDS,
-        encoding="utf-8",
-        errors="replace",
-        env=_clean_pytest_env(), stdin=subprocess.DEVNULL,
+        cwd=str(_PROJECT_ROOT),
+        env=_clean_pytest_env(),
     )
     status = "done" if completed.returncode == 0 else "failed"
     summary = "verify passed" if completed.returncode == 0 else "verify failed"

@@ -49,9 +49,26 @@ def read_payload(timeout: float = 2.0) -> dict:
     box: dict = {}
 
     def _read() -> None:
+        # The file descriptor, not sys.stdin.buffer: a reader still blocked on a pipe that never
+        # closes held the BufferedReader's lock, and interpreter shutdown died on it ("Fatal Python
+        # error: _enter_buffered_busy", exit 139 from `sextant context` in a shell; AG116).
         try:
-            buf = getattr(sys.stdin, "buffer", None)
-            box["raw"] = buf.read(1_000_000) if buf is not None else sys.stdin.read(1_000_000)
+            fd = sys.stdin.fileno()
+        except (OSError, ValueError, AttributeError):
+            fd = None
+        try:
+            if fd is None:
+                box["raw"] = sys.stdin.read(1_000_000)
+                return
+            chunks: list = []
+            got = 0
+            while got < 1_000_000:
+                chunk = os.read(fd, min(65536, 1_000_000 - got))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                got += len(chunk)
+            box["raw"] = b"".join(chunks)
         except Exception:  # noqa: BLE001
             pass
 

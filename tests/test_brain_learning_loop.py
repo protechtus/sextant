@@ -91,12 +91,12 @@ class TestChildProcessesGetUtf8Stdio:
         assert "a → b" in Path(result.artifact_path).read_text(encoding="utf-8")
 
     def test_every_python_child_call_passes_the_env(self):
-        """Tree check on the executor module: each subprocess.run of a python child carries env=_utf8_env()."""
+        """Tree check on the executor module: each bounded run of a python child carries env=_utf8_env()."""
         import inspect
         from atlas_plus.brain import executors
         src = inspect.getsource(executors)
-        calls = [i for i in range(len(src)) if src.startswith("completed = subprocess.run(", i)]
-        assert calls, "no subprocess.run sites found"
+        calls = [i for i in range(len(src)) if src.startswith("completed = _bounded_text_run(", i)]
+        assert calls, "no _bounded_text_run sites found"
         missing = []
         for i in calls:
             window = src[i:i + 500]
@@ -105,7 +105,7 @@ class TestChildProcessesGetUtf8Stdio:
                 continue  # claude CLI invocations are not python children
             if "env=" not in window:
                 missing.append(src[:i].count("\n") + 1)
-        assert not missing, f"subprocess.run without env at lines {missing}"
+        assert not missing, f"_bounded_text_run without env at lines {missing}"
 
 
 # ---------------------------------------------------------------- C

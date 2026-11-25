@@ -1363,7 +1363,6 @@ if __name__ == "__main__" and sys.argv[1:2] == ["--g8-child"]:
 #   with the reason it is still there; a NEW capturing call outside the helper fails this test.
 # ----------------------------------------------------------------------------------------------
 
-_G15_WAITING = "predates the helper; on the list of callers to move (AG105 report, sweep 28)"
 ALLOW_G15: list[Allow] = [
     ("src/atlas_plus/_proc.py", "*", "the helper itself"),
     ("src/atlas_plus/gitsafe.py", "*", "the git helper: one short git command, hooks and helpers neutralised, 5 to 10 s timeout"),
@@ -1371,7 +1370,6 @@ ALLOW_G15: list[Allow] = [
     ("src/atlas_plus/hooks/session_start.py", "*", "one short git command with a timeout, through the git helper's environment"),
     ("src/atlas_plus/brain/learning.py", "*", "git log with -n: the output is bounded by the command itself"),
     ("src/atlas_plus/github_intake/gh.py", "*", "one gh API call with a timeout; no child tree"),
-    ("src/atlas_plus/brain/executors.py", "*", _G15_WAITING),
 ]
 
 
@@ -1501,3 +1499,94 @@ def test_g17_no_test_finds_a_real_agent_program(tmp_path, monkeypatch):
     assert shutil.which("sextant-g17-probe"), "the probe program must resolve: the fixture hides too much"
     for name in ("claude", "codex", "opencode", "claude.cmd", "CLAUDE"):
         assert shutil.which(name) is None, f"a test could start the real {name}"
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G18  every command a message names exists (LES-089)
+#   2026-11-25 (AG115): the MCP reply and the dashboard told a stranger to run `sextant fts-rebuild`,
+#   which is not a subcommand (the program is `sextant-fts-rebuild`). A message that names a command
+#   is checked against the real ones: the console scripts in pyproject.toml and the subcommands and
+#   groups of the umbrella app (atlas_plus/cli.py, its hidden redirects included: they answer).
+#   Docstrings are not messages; a name built at run time (`_next_step.script()`) is not a literal.
+# ----------------------------------------------------------------------------------------------
+
+# (name a literal spells, reason it is not a command to run)
+ALLOW_G18: list[tuple[str, str]] = [
+    ("atlas-memory", "the project name in a Brain prompt example (`atlas-memory+`), not a program"),
+    ("atlas-tasks", "the dashboard's CSV download file name, not a program"),
+    ("atlas-theme", "the dashboard's localStorage key, not a program"),
+    ("sextant-ai", "the PyPI package name in a `pip install \"sextant-ai[...]\"` line, not a program"),
+]
+
+# an opener (backtick, quote, <code>) then `sextant <word>`, `sextant-<word>` or `atlas-<word>`
+_G18_NAME = re.compile(r"""(?:`|<code>|(?<![\w-])["'])((?:sextant|atlas)-[a-z][a-z0-9-]*[a-z0-9]|sextant[ \t]+[a-z][a-z0-9-]*)""")
+
+
+def _g18_real_commands() -> tuple[set[str], set[str]]:
+    import tomllib
+
+    scripts = set(tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"])
+    builder = REPO / "scripts" / "build_public_repo.py"
+    if "sextant" not in scripts and builder.exists():
+        # The source tree carries only the atlas-* names; the build adds the sextant names from its alias table.
+        scripts |= set(re.findall(r'\("atlas-[a-z-]+", "(sextant[a-z-]*)"\)', builder.read_text(encoding="utf-8")))
+    from atlas_plus import cli
+
+    subs = {c.name or c.callback.__name__.replace("_", "-") for c in cli.app.registered_commands}
+    subs |= {g.name or "" for g in cli.app.registered_groups}
+    return scripts, subs
+
+
+def _g18_hits(text: str, scripts: set[str], subs: set[str]) -> list[tuple[int, str]]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    docs = set()
+    for d in ast.walk(tree):
+        if (isinstance(d, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and d.body
+                and isinstance(d.body[0], ast.Expr) and isinstance(d.body[0].value, ast.Constant)):
+            docs.add(id(d.body[0].value))
+    allowed = {name for name, _reason in ALLOW_G18}
+    out = set()
+    for n in ast.walk(tree):
+        if id(n) in docs or not (isinstance(n, ast.Constant) and isinstance(n.value, str)):
+            continue
+        for m in _G18_NAME.finditer(n.value):
+            name = m.group(1)
+            if name.startswith("sextant") and name[7:8] in (" ", "\t"):
+                ok = name.split()[1] in subs
+            else:
+                ok = name in scripts or name in allowed
+            if not ok:
+                out.add((n.lineno, name))
+    return sorted(out)
+
+
+def test_g18_every_command_a_message_names_exists():
+    for name, reason in ALLOW_G18:
+        assert reason.strip(), f"ALLOW_G18 entry {name} has no reason"
+    scripts, subs = _g18_real_commands()
+    assert "sextant" in scripts and {"init", "setup", "verify", "doctor"} <= subs, "the command lists did not load"
+    offenders = []
+    for p in _py_files(SRC):
+        for lineno, name in _g18_hits(p.read_text(encoding="utf-8", errors="replace"), scripts, subs):
+            offenders.append(f"{_rel(p)}:{lineno}: names `{name}`, which is not a command")
+    _report(offenders, "LES-G18", "a message names only commands that exist: a console script from "
+                                  "pyproject.toml or a subcommand of `sextant`; build standalone names "
+                                  "with atlas_plus._next_step.script() and subcommands with sub()")
+
+
+def test_the_g18_scan_sees_each_shape():
+    scripts, subs = {"sextant", "sextant-fts-rebuild"}, {"init", "verify"}
+    bad = ('print("Run `sextant fts-rebuild` to rebuild")\n'
+           "html = '<p>Run <code>sextant fts-rebuild</code></p>'\n"
+           "msg = 'then run \"sextant-rebuild\"'\n"
+           "x = f'try `atlas-nothing --help` ({n})'\n")
+    good = ('"""Docstring: `sextant fts-rebuild` used to be named here."""\n'
+            'print("Run `sextant-fts-rebuild`, then `sextant verify`")\n'
+            "print(f'Run {script(\"fts-rebuild\")}')\n"
+            "theme = 'atlas-theme'\n"
+            "# `sextant nothing` in a comment is not printed\n")
+    assert [ln for ln, _ in _g18_hits(bad, scripts, subs)] == [1, 2, 3, 4]
+    assert not _g18_hits(good, scripts, subs)

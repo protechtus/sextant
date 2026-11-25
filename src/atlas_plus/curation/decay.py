@@ -76,6 +76,18 @@ def _frontmatter_of(raw) -> dict:
         return {}
 
 
+def _may_set_half_life(raw) -> bool:
+    """False only when the note's frontmatter cannot carry a `half_life` key: no frontmatter, or its text
+    holds neither the word nor a backslash (a double-quoted YAML key can spell the word with escapes)."""
+    if not isinstance(raw, str) or not raw.startswith("---"):
+        return False
+    end = raw.find("\n---", 3)
+    if end == -1:
+        return False
+    head = raw[3:end]
+    return "half_life" in head or "\\" in head
+
+
 def find_decayed_facts(
     threshold_days: int = 30,
     scope: str = "",
@@ -111,7 +123,10 @@ def find_decayed_facts(
         wanted.append(md_file)
 
     # Read ahead on threads: one by one, 20,000 notes outside the file cache took 150 s (SEX-046).
+    explicit_only = threshold_days <= 0
     for md_file, raw in read_texts(wanted):
+        if explicit_only and not _may_set_half_life(raw):
+            continue  # no `half_life:` to find: skip the YAML parse (6 s of 20,000 parses; SEX-046)
         fm = _frontmatter_of(raw)
         if not fm:
             continue

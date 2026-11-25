@@ -48,7 +48,7 @@ def test_worker_once_runs_pytest_executor_and_writes_report(monkeypatch, tmp_pat
         calls.append(cmd)
         return Completed()
 
-    monkeypatch.setattr(worker.executors.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker.executors, "_bounded_text_run", fake_run)
     task = ts.create_task("run focused tests", kind="pytest", db_path=db)
 
     processed = worker.run_once(db_path=db, artifact_root=tmp_path, worker_id="w1")
@@ -123,7 +123,7 @@ def test_worker_once_runs_gaps_report_executor_and_writes_report(monkeypatch, tm
         calls.append(cmd)
         return Completed()
 
-    monkeypatch.setattr(worker.executors.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker.executors, "_bounded_text_run", fake_run)
     task = ts.create_task("write gaps report", kind="gaps_report", db_path=db)
 
     processed = worker.run_once(db_path=db, artifact_root=tmp_path, worker_id="w1")
@@ -155,7 +155,7 @@ def test_worker_once_runs_curation_report_executor_and_writes_report(monkeypatch
         calls.append(cmd)
         return Completed()
 
-    monkeypatch.setattr(worker.executors.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker.executors, "_bounded_text_run", fake_run)
     task = ts.create_task("write curation report", kind="curation_report", db_path=db)
 
     processed = worker.run_once(db_path=db, artifact_root=tmp_path, worker_id="w1")
@@ -184,7 +184,7 @@ def test_worker_once_runs_suggest_facts_review_executor_and_writes_report(monkey
         calls.append(cmd)
         return Completed()
 
-    monkeypatch.setattr(worker.executors.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker.executors, "_bounded_text_run", fake_run)
     task = ts.create_task("review suggest facts", kind="suggest_facts_review", db_path=db)
 
     processed = worker.run_once(db_path=db, artifact_root=tmp_path, worker_id="w1")

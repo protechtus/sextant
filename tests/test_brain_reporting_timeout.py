@@ -38,7 +38,7 @@ def test_timeout_produces_failed_result_not_exception(tmp_path, monkeypatch):
     def _raise_timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=["x"], timeout=1, output="partial stdout", stderr="partial stderr")
 
-    monkeypatch.setattr(executors.subprocess, "run", _raise_timeout)
+    monkeypatch.setattr(executors, "_bounded_text_run", _raise_timeout)
 
     result = _run_reporting_subprocess(
         _ctx(tmp_path), ["py", "-m", "atlas_plus.curation.reflexion_loop"],
@@ -57,7 +57,7 @@ def test_success_path_still_reports_done(tmp_path, monkeypatch):
     def _ok(*args, **kwargs):
         return subprocess.CompletedProcess(["x"], returncode=0, stdout="all good", stderr="")
 
-    monkeypatch.setattr(executors.subprocess, "run", _ok)
+    monkeypatch.setattr(executors, "_bounded_text_run", _ok)
 
     result = _run_reporting_subprocess(_ctx(tmp_path), ["x"], "dream.md", "Dream")
     assert result.status == "done"
@@ -67,7 +67,7 @@ def test_nonzero_exit_reports_failed(tmp_path, monkeypatch):
     def _fail(*args, **kwargs):
         return subprocess.CompletedProcess(["x"], returncode=2, stdout="", stderr="boom")
 
-    monkeypatch.setattr(executors.subprocess, "run", _fail)
+    monkeypatch.setattr(executors, "_bounded_text_run", _fail)
 
     result = _run_reporting_subprocess(_ctx(tmp_path), ["x"], "dream.md", "Dream")
     assert result.status == "failed"
