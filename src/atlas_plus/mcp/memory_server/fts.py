@@ -105,6 +105,10 @@ _BREAK_RE = re.compile("[\n\u3001\u3002\uff0c\uff0e\uff1b\uff1a\uff01\uff1f\u300
 
 def _cjk_split(text: str) -> str:
     """Insert the separator between adjacent CJK characters and on CJK/ASCII boundaries."""
+    if _CJK_RE.search(text) is None:
+        # Both substitutions need a CJK character to match; one scan instead of two on the common
+        # case (SEX-046: 10 of 113 s of a 20,000-note rebuild went here on text with none).
+        return text
     text = _CJK_RUN_RE.sub(lambda m: _CJK_SEP.join(m.group(0)), text)
     return _CJK_ASCII_BOUNDARY_RE.sub(_CJK_SEP, text)
 
@@ -1229,10 +1233,16 @@ def _needs_rebuild() -> bool:
         if not row:
             return True
         last_indexed = float(row[0])
-        for _, mtime, _size in _walk_memory_stats():
-            if mtime > last_indexed:
+        # A newer mtime is an edit; a path the index does not hold is an added or renamed note (a rename and a
+        # copy keep the mtime); fewer notes than the index holds is a removal. `--if-stale` answered "already
+        # fresh" to the last three (AG108).
+        recorded = {r[0] for r in conn.execute("SELECT path FROM memory_files")}
+        seen = 0
+        for rel, mtime, _size in _walk_memory_stats():
+            if mtime > last_indexed or rel not in recorded:
                 return True
-        return False
+            seen += 1
+        return seen != len(recorded)
     finally:
         conn.close()
 
@@ -1254,8 +1264,34 @@ def _index_format_tag():
     return row[0] if row else ""
 
 
+def without_scaffold(raw: str) -> str | None:
+    """A note with `sextant init`'s identity template removed, or None when it does not start with it.
+    The template's instructions ("write it the way you would brief a sharp new collaborator") are not a
+    memory and came back as a search hit (SEX-044 finding 6f, AG111); facts `remember --scope identity`
+    appended under it stay. Only the exact template is removed, never a line the user rewrote. The
+    keyword index and the embeddings both use this."""
+    if "Introduce yourself to your own memory" not in raw[:2048]:
+        return None
+    from atlas_plus.init_cmd import _IDENTITY_TEMPLATE
+    text = raw.lstrip("\ufeff").replace("\r\n", "\n").lstrip()
+    tpl = _IDENTITY_TEMPLATE.strip()
+    if not text.startswith(tpl):
+        return None
+    head = tpl[: tpl.find("\n---", 3) + 4]   # the frontmatter stays: its title is still the display name
+    return head + "\n" + text[len(tpl):].lstrip("\n")
+
+
+def is_untouched_scaffold(raw: str) -> bool:
+    """True when a note is the identity template and nothing else (AG111)."""
+    rest = without_scaffold(raw)
+    return rest is not None and not _parse_md(rest)[1]
+
+
 def _parse_md(raw: str) -> tuple[str, str, float | None]:
     """Split a memory file into (frontmatter_json, body, confirmed_ts)."""
+    _rest = without_scaffold(raw)
+    if _rest is not None:
+        raw = _rest   # the init template's instructions are not a memory; appended facts stay (AG111)
     frontmatter_json = "{}"
     body = raw
     confirmed_ts = None
@@ -1420,16 +1456,19 @@ def _index_pass(resuming: bool = False) -> int:
         if any(rowids.get(rel) is None for rel, _m, _s in todo):
             fts_paths = {r[0] for r in conn.execute("SELECT path FROM memory_fts")}
         batch, batch_t0 = 0, time.monotonic()
-        for rel, mtime, size in todo:
+        # The notes are read ahead on threads, in this order (SEX-046: a cold open costs ~7.4 ms a note on
+        # Windows, 15 of a 23 s first build at 2,000 notes); a note another process indexed meanwhile is read
+        # and dropped, an unreadable one is skipped as before.
+        from atlas_plus import _readahead
+        texts = _readahead.read_texts([MEMORY_ROOT / rel for rel, _m, _s in todo], encoding="utf-8-sig")
+        for (rel, mtime, size), (_path, raw) in zip(todo, texts):
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")   # the write lock before the re-check below
             cur_row = conn.execute("SELECT mtime, size, fts_rowid FROM memory_files WHERE path=?", (rel,)).fetchone()
             if cur_row is not None and (cur_row[0], cur_row[1]) == (mtime, size):
                 continue   # another process indexed this version since the scan above
             rid = cur_row[2] if cur_row is not None else None
-            try:
-                raw = (MEMORY_ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
-            except OSError:
+            if isinstance(raw, OSError):
                 continue
             frontmatter_json, body, confirmed_ts = _parse_md(raw)
             if rid is not None or fts_paths is None or rel in fts_paths:
@@ -1475,6 +1514,14 @@ _CORRUPTION_MARKERS = ("malformed", "not a database", "vtable constructor failed
 
 
 _LAST_CONNECT_ERROR: dict[str, str] = {"text": ""}
+
+
+def _open_failure(exc: Exception) -> str:
+    """A label for an index that could not be opened: a state directory that is a file is not a busy
+    database (SEX-048 1b: the log said "db busy" and "locked" around the real cause)."""
+    if "is a file, not a directory" in str(exc):
+        return "the state directory cannot be used; Next: move that file aside, or point ATLAS_STATE_DIR at a folder"
+    return "the index database is busy or locked"
 
 
 def last_connect_error() -> str:
@@ -1687,7 +1734,7 @@ def search(query: str, scope: str = "", limit: int = 10,
             _last_fresh_sweep = time.monotonic()
             _swept_gen = gen_before
         except sqlite3.OperationalError as exc:
-            log.warning("freshness update skipped (db busy): %s -- serving current index", exc)
+            log.warning("freshness update skipped (%s): %s -- serving current index", _open_failure(exc), exc)
             if (_index_format_tag() or "").startswith(_BUILDING):   # never a silent half-index (AG99)
                 _notice("Sextant: the search index is still being built by another process; results may miss notes.")
         except sqlite3.DatabaseError as exc:
@@ -1709,7 +1756,8 @@ def search(query: str, scope: str = "", limit: int = 10,
                           "install a Python whose sqlite3 was built with FTS5 (python.org, uv and the "
                           "distro packages all have it) -- returning empty results", exc)
                 return []
-            log.warning("FTS connect failed (not corruption, e.g. locked): %s -- returning empty results", exc)
+            log.warning("FTS connect failed (not corruption: %s): %s -- returning empty results",
+                        _open_failure(exc), exc)
             _LAST_CONNECT_ERROR["text"] = str(exc)
             return []
         if not _healed and _heal_malformed():

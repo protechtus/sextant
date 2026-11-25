@@ -34,6 +34,10 @@ session that produced the fact). This is an interactive write -- your
 request is the consent. Nothing writes in the background unless you
 enable `ATLAS_AUTONOMOUS` (see docs/CONFIGURATION.md).
 
+Scopes are stored in lowercase, with spaces turned into dashes: `--scope
+Project:Alpha` and `project:alpha` are the same note, `projects/alpha.md`
+(the confirmation line says so when what you typed was changed).
+
 Three specialized flavors matter more than they look:
 
 - **Decisions**: "record the decision to use X because Y, revisit if Z"

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -27,6 +26,8 @@ from typing import Optional
 import logging
 
 import httpx
+
+from atlas_plus import _proc
 
 _STATUS_CACHE_TTL = 15.0  # seconds between full Ollama re-pings
 _last_refresh: float = float("-inf")  # not 0.0: CLOCK_MONOTONIC starts at boot (AG60)
@@ -392,6 +393,15 @@ def route(instruction: str, override: Optional[str] = None) -> Agent:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+_MAX_OUTPUT_BYTES = 1024 * 1024
+
+
+def _cli_output(result) -> str:
+    """stdout, else the stderr tail, with universal newlines (as subprocess.run(text=True) gave them)."""
+    text = result.stdout_text() or result.stderr_text()
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def dispatch(agent: Agent, instruction: str, session_id: str, timeout: int = 300) -> str:
     """Run an instruction through the given agent. Returns result text.
 
@@ -411,34 +421,27 @@ def dispatch(agent: Agent, instruction: str, session_id: str, timeout: int = 300
         cli = CLAUDE_CLI if agent.agent_type == "claude-cli" else CODEX_CLI
         safe = instruction.replace("<", "").replace(">", "")[:2000]
         try:
-            result = subprocess.run(
-                [cli, "--print", safe],
-                capture_output=True, text=True, timeout=timeout,
-                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-            )
-            output = (result.stdout or result.stderr or "").strip()
-            if result.returncode != 0:
-                return f"[{agent.name}] exited {result.returncode}: {output[:500]}"
-            return output[:4000]
-        except subprocess.TimeoutExpired:
-            return f"[{agent.name}] timed out after {timeout}s"
+            # KL3: the whole tree ends at the timeout (the CLI starts MCP servers that inherit its stdout)
+            result = _proc.run_bounded([cli, "--print", safe], timeout=timeout, max_bytes=_MAX_OUTPUT_BYTES)
         except FileNotFoundError:
             return f"[{agent.name}] CLI not found: {cli!r}"
+        if result.timed_out:
+            return f"[{agent.name}] timed out after {timeout}s"
+        output = _cli_output(result)
+        if result.returncode != 0:
+            return f"[{agent.name}] exited {result.returncode}: {output[:500]}"
+        return output[:4000]
 
     if agent.agent_type == "opencode-cli":
         safe = instruction.replace("<", "").replace(">", "")[:2000]
         try:
-            result = subprocess.run(
-                [OPENCODE_CLI, "run", safe],
-                capture_output=True, text=True, timeout=timeout,
-                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-            )
-            output = (result.stdout or result.stderr or "").strip()
+            result = _proc.run_bounded([OPENCODE_CLI, "run", safe], timeout=timeout, max_bytes=_MAX_OUTPUT_BYTES)
+            if result.timed_out:
+                return f"[opencode] timed out after {timeout}s"
+            output = _cli_output(result)
             if result.returncode != 0:
                 return f"[opencode] exited {result.returncode}: {output[:500]}"
             return output[:4000]
-        except subprocess.TimeoutExpired:
-            return f"[opencode] timed out after {timeout}s"
         except FileNotFoundError:
             return f"[opencode] CLI not found: {OPENCODE_CLI!r}"
         except Exception as exc:

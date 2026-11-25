@@ -1095,9 +1095,14 @@ async def agents_html(request: Request):
             f'<span class="{q_color} text-xs font-mono">{q_str}</span>'
             f'</div>'
             f'</div>'
-            f'<button onclick="quickDispatch({name_js})" '
-            f'class="btn btn-cyan text-xs shrink-0 ml-3 mt-1">Dispatch</button>'
-            f'</div>'
+            + (f'<button onclick="quickDispatch({name_js})" '
+               f'class="btn btn-cyan text-xs shrink-0 ml-3 mt-1">Dispatch</button>'
+               if a.get("online") else
+               # Dispatch was offered on an offline agent: the task queued and failed later (SEX-025)
+               '<button disabled title="This agent is offline: a task sent now would fail. Start it, then dispatch." '
+               'aria-disabled="true" class="btn text-xs shrink-0 ml-3 mt-1 opacity-50 cursor-not-allowed">'
+               'Dispatch (offline)</button>')
+            + '</div>'
         )
     rows.append('</div>')
     return HTMLResponse("\n".join(rows))
@@ -4499,11 +4504,15 @@ async def update_ticket_status(ticket_id: str, request: Request):
     """
     _check_auth(request)
     body = await _json_object(request, required=("status",))
-    from atlas_plus.tickets.store import update_ticket_status as _update
+    from atlas_plus.tickets.store import update_ticket_status as _update, ambiguous_hint as _ah, LAST_AMBIGUOUS as _la
+    _la.clear()
     try:
         t = _update(_norm_ref(ticket_id), body["status"])  # `alp-b/ALP-001` keeps its project (AG45)
         return t.as_dict()
-    except (FileNotFoundError, ValueError) as exc:
+    except FileNotFoundError as exc:
+        # An ambiguous bare id was 400 here and 409 on dispatch and detail: one cause, one answer (SEX-026)
+        raise HTTPException(status_code=409 if _ah() else 400, detail=str(exc))
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
@@ -7614,11 +7623,11 @@ def main() -> None:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "::1"])
         log.warning("--no-auth active. Loopback only.")
 
-    if API_KEY and len(API_KEY) < 16:
+    if API_KEY and len(API_KEY) < _next_step.KEY_MIN_LEN:
         # Refuse, not warn: the docs say the dashboard will not run without a real key, and a
         # 5-character one is not a key (persona rerun 2026-11-10).
         print(_next_step.key_setup_lines("ATLAS_WEB_API_KEY", headline=f"ATLAS_WEB_API_KEY is only {len(API_KEY)} "
-                                         "characters; refusing to start (it needs at least 16)"),
+                                         f"characters; refusing to start (it needs at least {_next_step.KEY_MIN_LEN})"),
               file=__import__("sys").stderr)  # the same copyable lines as a missing key (AG106)
         raise SystemExit(1)
     # httpx logs every Brain poll at INFO (a 401 every few seconds when the Brain key is

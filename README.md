@@ -65,7 +65,7 @@ machines; if that has never bothered you, the built-in is the right call.
 - 30 MCP tools -- memory read/write, hybrid search (keyword full-text search fused with local semantic embeddings), temporal knowledge graph, tickets, project state
 - Local Brain -- a background task agent running on Ollama (a free local-model runtime; any OpenAI-compatible server works too) with a durable task queue, worker leases, and retries
 - Telegram bot for full mobile control; scheduled nightly memory-hygiene jobs
-- Session hooks for Claude Code (other clients get the same priming text from `sextant-session-start` to paste into their instructions file, and the MCP server tells every client's agent to search memory first): automatic priming at session start (`deploy/session_start_hook.json` -- your identity notes, house rules, the clock and the current project's note injected before your first message, read-only, safe to enable immediately; facts saved with `sextant remember` come back through search, not through the hook) and summarization at session end (`deploy/stop_hook.json` -- activates once you enable background writes with `ATLAS_AUTONOMOUS=on`; inert until then, and the summary itself needs a reachable model: Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`)
+- Session hooks for Claude Code (other clients get the same priming text from `sextant-session-start` to paste into their instructions file, and the MCP server tells every client's agent to search memory first): automatic priming at session start ([`deploy/session_start_hook.json`](https://github.com/protechtus/sextant/blob/main/deploy/session_start_hook.json) in the repository; a pip install gets the same entry from section 3 of `sextant setup` -- your identity notes, house rules, the clock and the current project's note injected before your first message, read-only, safe to enable immediately; facts saved with `sextant remember` come back through search, not through the hook) and summarization at session end ([`deploy/stop_hook.json`](https://github.com/protechtus/sextant/blob/main/deploy/stop_hook.json), likewise -- activates once `ATLAS_AUTONOMOUS=on` (or `ATLAS_SESSION_AUTONOMOUS=on`) reaches the hook process, which does not inherit your shell's variables: put `--env ATLAS_SESSION_AUTONOMOUS=on` on the hook command, as [GETTING-STARTED explains](https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md#switching-the-stop-hook-on-and-testing-it-by-hand); inert until then, and the summary itself needs a reachable model: Ollama, or a provider key with `ATLAS_LOCAL_ONLY=off`)
 - Thousands of automated tests, run in CI on Linux, macOS, and Windows on every push
 
 ## What it does
@@ -97,7 +97,7 @@ first ([anthropic.com/claude-code](https://claude.com/product/claude-code) has
 the installer for each OS); nothing in this quickstart installs it for you.
 Using Codex CLI or opencode instead? `sextant setup --client codex` and
 `sextant setup --client opencode` print their registration forms, and
-GETTING-STARTED section 4 explains what they do and do not get.
+[GETTING-STARTED section 4](https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md#4-wire-your-mcp-client) explains what they do and do not get.
 
 Prefer containers? Generate a `.env` with your keys first (at minimum
 `ATLAS_MCP_TOKEN`; `ATLAS_WEB_API_KEY` for the dashboard), then
@@ -259,7 +259,8 @@ baked in (required if you relocated the corpus above):
 .venv/bin/sextant setup --client claude-code              # Linux / macOS
 ```
 
-Or type it -- run it from your sextant clone, then restart Claude Code.
+Or type it (CLONE INSTALLS ONLY: a pip install has no clone and no `.venv` here, so use the line
+`sextant setup` prints) -- run it from your sextant clone, then restart Claude Code.
 `-s user` registers it for your whole account (without it, the default
 `local` scope ties the server to this one directory, and it silently will
 not exist when you open Claude Code in your actual projects); `$PWD` bakes
@@ -268,7 +269,7 @@ in the absolute path, and the quotes matter when the path has a space:
 Windows (PowerShell):
 
 ```powershell
-# Run this IN your sextant clone -- $PWD bakes the path in. New terminal tab? cd back first.
+# Clone installs only. Run this IN your sextant clone -- $PWD bakes the path in. New terminal tab? cd back first.
 claude mcp add -s user sextant -- "$PWD\.venv\Scripts\python.exe" -m atlas_plus.mcp.memory_server.server --stdio
 claude mcp list   # expect a sextant row; "failed" means the baked path is wrong
 ```
@@ -276,7 +277,7 @@ claude mcp list   # expect a sextant row; "failed" means the baked path is wrong
 Linux / macOS:
 
 ```bash
-# Run this IN your sextant clone -- $PWD bakes the path in. New terminal tab? cd back first.
+# Clone installs only. Run this IN your sextant clone -- $PWD bakes the path in. New terminal tab? cd back first.
 claude mcp add -s user sextant -- "$PWD/.venv/bin/python" -m atlas_plus.mcp.memory_server.server --stdio
 claude mcp list   # expect a sextant row; "failed" means the baked path is wrong
 ```
@@ -296,7 +297,7 @@ a failed row means re-registering from inside the clone
 walkthrough is in the Uninstalling section of
 [docs/GETTING-STARTED.md](https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md).)
 
-The clone path is load-bearing from here on: the MCP registration, the
+Clone installs only: the clone path is load-bearing from here on: the MCP registration, the
 session-hook commands and the editable install all hard-code it. If you
 move or rename the clone later, re-run `python -m pip install -e .` with
 the venv's own interpreter from the new location (the venv's `pip` and
@@ -310,7 +311,7 @@ form `claude mcp add -s user sextant -- sextant-mcp --stdio` also works when
 The full walkthrough -- config-file locations for Claude Desktop and
 Cursor, the session hooks, troubleshooting -- is
 [docs/GETTING-STARTED.md](https://github.com/protechtus/sextant/blob/main/docs/GETTING-STARTED.md). Prefer hand-merged
-JSON? The snippets live in `deploy/` (`claude_code_config.snippet.json`
+JSON? The snippets live in [`deploy/`](https://github.com/protechtus/sextant/blob/main/deploy) in the repository (a pip install does not have them; `sextant setup` prints the same entries) (`claude_code_config.snippet.json`
 for the server; start-of-session priming and end-of-session summarization
 each ship in two platform forms -- `session_start_hook.json` /
 `stop_hook.json` for Windows, the same names with `.macos.json` for
@@ -384,12 +385,13 @@ For a fuller walkthrough of the control plane, memory model, and scheduler, see
 guide to actually using the memory tools is
 [docs/USAGE.md](https://github.com/protechtus/sextant/blob/main/docs/USAGE.md), and every environment variable is
 cataloged in [docs/CONFIGURATION.md](https://github.com/protechtus/sextant/blob/main/docs/CONFIGURATION.md). Deeper docs
-live in `docs/` (`ARCHITECTURE.md`, the ADRs under `docs/adr/`, and
-per-feature HOWTOs).
+live in the repository's [`docs/`](https://github.com/protechtus/sextant/blob/main/docs) ([`ARCHITECTURE.md`](https://github.com/protechtus/sextant/blob/main/docs/ARCHITECTURE.md), the ADRs under
+[`docs/adr/`](https://github.com/protechtus/sextant/blob/main/docs/adr), and per-feature HOWTOs).
 
 If a freshly released dependency ever breaks the install, fall back to
-the known-good exact pins: append `-c constraints.txt` to the pip
-command above.
+the known-good exact pins: in a clone, append `-c constraints.txt` to the pip
+command above; a pip install passes the file's URL instead:
+`pip install sextant-ai -c https://raw.githubusercontent.com/protechtus/sextant/main/constraints.txt`.
 
 ## Measured
 

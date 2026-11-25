@@ -400,7 +400,7 @@ def render(info: dict, client: str = "all") -> str:
         lines.append("")
     if client in ("all", "claude-code"):
         if client == "all":
-            lines.append("1. Claude Code (one command, any directory; then `claude mcp list`, "
+            lines.append("[required: one client section] 1. Claude Code (one command, any directory; then `claude mcp list`, "
                          "then restart Claude Code):")
         if info.get("claude_code"):
             lines += ["   " + info["claude_code"]]
@@ -423,7 +423,7 @@ def render(info: dict, client: str = "all") -> str:
                       "   " + info["verify_from_windows"], ""]
     if client in ("all", "json"):
         if client == "all":
-            lines.append("2. Claude Desktop, Cursor, or any MCP client that takes JSON: merge "
+            lines.append("[required: one client section] 2. Claude Desktop, Cursor, or any MCP client that takes JSON: merge "
                          "this `mcpServers` entry into the client's config")
             lines.append("   (Claude Desktop: %APPDATA%\\Claude\\claude_desktop_config.json on "
                          "Windows, or for the Microsoft Store build "
@@ -434,7 +434,7 @@ def render(info: dict, client: str = "all") -> str:
         lines += [json.dumps(info["client_config_json"], indent=2), ""]
     if client in ("all", "codex"):
         if client == "all":
-            lines.append("2b. Codex CLI (OpenAI): one command (it writes the TOML; in PowerShell the "
+            lines.append("[required: one client section] 2b. Codex CLI (OpenAI): one command (it writes the TOML; in PowerShell the "
                          "quoted \"--\" matters), or merge the table into ~/.codex/config.toml "
                          "($CODEX_HOME/config.toml if set); then `codex mcp list`:")
         if info.get("codex"):
@@ -443,12 +443,12 @@ def render(info: dict, client: str = "all") -> str:
             lines += [info["codex_toml"], ""]
     if client in ("all", "opencode"):
         if client == "all":
-            lines.append("2c. opencode: merge into opencode.json in the project (or "
+            lines.append("[required: one client section] 2c. opencode: merge into opencode.json in the project (or "
                          "~/.config/opencode/opencode.json); then `opencode mcp list`:")
         lines += [json.dumps(info["opencode_json"], indent=2), ""]
     if client in ("all", "hooks"):
         if client == "all":
-            lines.append("3. Claude Code hooks, optional (session-start priming, end-of-session "
+            lines.append("[optional] 3. Claude Code hooks (session-start priming, end-of-session "
                          "summary): merge into ~/.claude/settings.json, ADDING to any existing "
                          "hooks list. Ask before editing someone else's settings.")
             if info.get("hook_env"):
@@ -482,7 +482,7 @@ def render(info: dict, client: str = "all") -> str:
     if client == "all":
         h = info.get("http") or {}
         if h:
-            lines.append("4. No Claude Code on this machine, or clients elsewhere (a server): run HTTP "
+            lines.append("[optional] 4. No Claude Code on this machine, or clients elsewhere (a server): run HTTP "
                          "mode behind your ingress and register the remote client against it:")
             if not info.get("claude_on_path"):
                 lines.append("   (`claude` is not on PATH here, so section 1 applies on the client machine)")
@@ -765,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
                          "install on one machine needs a different one, and `claude mcp remove`/`get` "
                          "take the same name")
     ap.add_argument("--json", action="store_true", help="machine-readable output of everything")
-    ap.add_argument("--out", default=None, metavar="FILE",
+    ap.add_argument("--out", default=None, metavar="FILE", type=_next_step.user_path,
                     help="also write the output to FILE as UTF-8 without a byte-order mark (PowerShell's "
                          "> redirect adds one, which JSON parsers reject)")
     raw_argv = list(sys.argv[1:] if argv is None else argv)

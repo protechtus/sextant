@@ -131,6 +131,8 @@ class TestMcpToolEvents:
         assert "memory_search_tool" in names
         assert "now_state_tool" in names
         by_name = {t.name: t for t in tools}
-        assert "query" in json.dumps(by_name["memory_search_tool"].inputSchema), (
+        _tool = by_name["memory_search_tool"]
+        _schema = getattr(_tool, "input_schema", None) or getattr(_tool, "inputSchema")  # mcp 2.x / 1.x
+        assert "query" in json.dumps(_schema), (
             "wrapped tool lost its parameter schema"
         )

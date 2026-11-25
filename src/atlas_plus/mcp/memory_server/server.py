@@ -22,7 +22,7 @@ from pathlib import Path
 import sys
 import time
 
-from mcp.server.fastmcp import FastMCP
+from ._sdk import SDK_MAJOR as _SDK_MAJOR, FastMCP
 
 from atlas_plus import activity as _activity
 
@@ -148,8 +148,11 @@ def _instructions() -> str:
 # serverInfo.name is what every client shows on first contact; it said atlas-memory while the
 # product is Sextant (known since sweep 8; fixed for the flip, 2026-11-12). The version in
 # serverInfo is the MCP SDK's own, not ours.
+# mcp 1.x takes the Host policy in the constructor; 2.x (FastMCP renamed MCPServer) takes it
+# where the HTTP app is built, see _run_http_with_auth (ATL-072, sweep 31 AG109).
 mcp = FastMCP("sextant", instructions=_instructions(), website_url="https://usesextant.com",
-              log_level=_LOG_LEVEL, transport_security=_transport_security())
+              log_level=_LOG_LEVEL,
+              **({} if _SDK_MAJOR >= 2 else {"transport_security": _transport_security()}))
 
 # Every tool registration below passes through this wrapper so each call
 # pulses the activity feed (the Helm live map). It records the tool NAME,
@@ -1390,7 +1393,23 @@ def _run_http_with_auth(token: str) -> None:
     """Start HTTP server with bearer token middleware wrapping the MCP ASGI app."""
     import uvicorn
 
-    asgi_app = mcp.streamable_http_app()
+    app = _build_http_app(token)
+    host = os.environ.get("ATLAS_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    _check_port_free(host)
+    # access_log=False: uvicorn's access line carries the query string, and a client that
+    # puts the token in ?key= (refused, but logged raw) would land it in the service log
+    # (claims pass 2026-11-10). The dashboard does the same; the Brain redacts.
+    uvicorn.run(app, host=host, port=MCP_PORT, log_level="info", access_log=False, proxy_headers=False)
+
+
+def _build_http_app(token: str):
+    """The served ASGI app: the SDK's streamable-HTTP app, the bearer check (or /health only
+    with no token), and the Host hint outermost. Built once per process: the SDK's session
+    manager runs once per server instance."""
+    if _SDK_MAJOR >= 2:
+        asgi_app = mcp.streamable_http_app(transport_security=_transport_security())
+    else:
+        asgi_app = mcp.streamable_http_app()
     try:
         asgi_app.router.redirect_slashes = False  # the 307 to http://<Host>/mcp echoed a hostile Host and dropped the TLS scheme (AG56)
     except Exception:  # noqa: BLE001
@@ -1417,10 +1436,12 @@ def _run_http_with_auth(token: str) -> None:
                 return await call_next(request)
 
         asgi_app.add_middleware(_Health)
+    return _HostHintMiddleware(asgi_app)
 
-    # Loopback by default; ATLAS_MCP_HOST=0.0.0.0 is for containers/meshes
-    # where auth is enforced above (tokenless HTTP refuses to start).
-    host = os.environ.get("ATLAS_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+def _check_port_free(host: str) -> None:
+    """Loopback by default; ATLAS_MCP_HOST=0.0.0.0 is for containers/meshes where auth is
+    enforced (tokenless HTTP refuses to start)."""
     # A taken port used to surface as a raw uvicorn bind error after "Application startup
     # complete" (MN9, sweep 10: two installs on one machine). Name the fix before serving.
     import socket as _socket
@@ -1442,10 +1463,6 @@ def _run_http_with_auth(token: str) -> None:
                   "that port. Set ATLAS_MCP_PORT=<free port> for this install (its clients then "
                   "use that port), or stop the other server.", host, MCP_PORT, exc)
         raise SystemExit(3)
-    # access_log=False: uvicorn's access line carries the query string, and a client that
-    # puts the token in ?key= (refused, but logged raw) would land it in the service log
-    # (claims pass 2026-11-10). The dashboard does the same; the Brain redacts.
-    uvicorn.run(_HostHintMiddleware(asgi_app), host=host, port=MCP_PORT, log_level="info", access_log=False, proxy_headers=False)
 
 
 def main() -> None:
@@ -1490,11 +1507,13 @@ def main() -> None:
     # HTTP mode -- fail closed if no token unless --no-auth is explicitly passed.
     # Prevents accidentally exposing an unauthenticated MCP endpoint via tunnel.
     token = _MCP_TOKEN
-    if token and len(token) < 16 and not args.no_auth:  # --no-auth ignores the token entirely
-        from atlas_plus import _next_step
-        log.error("ATLAS_MCP_TOKEN is only %d characters; refusing to start.", len(token))
-        print(_next_step.key_setup_lines("ATLAS_MCP_TOKEN", headline=f"ATLAS_MCP_TOKEN needs at least 16 "
-                                         f"characters (it has {len(token)})"), file=sys.stderr)  # (AG106)
+    from atlas_plus import _next_step
+    if token and len(token) < _next_step.KEY_MIN_LEN and not args.no_auth:  # --no-auth ignores the token entirely
+        log.error("ATLAS_MCP_TOKEN is only %d characters (it needs at least %d); refusing to start.",
+                  len(token), _next_step.KEY_MIN_LEN)
+        print(_next_step.key_setup_lines("ATLAS_MCP_TOKEN", headline=f"ATLAS_MCP_TOKEN needs at least "
+                                         f"{_next_step.KEY_MIN_LEN} characters (it has {len(token)})"),
+              file=sys.stderr)  # (AG106; one minimum for the three servers, SEX-051 F5)
         raise SystemExit(1)
     if not token and not args.no_auth:
         from atlas_plus import _next_step

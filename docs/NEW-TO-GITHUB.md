@@ -76,17 +76,28 @@ py --list
 ```
 
 Good: a list that includes 3.11, 3.12, 3.13 or newer.
-Not good: "not recognized", or only older numbers. Install it one of two ways, then
-open a new window. Both give the same result. Pick whichever feels more familiar.
+Not good: "not recognized", or no line at 3.11 or higher. Only older numbers count
+as not installed: install Python now, one of two ways, then open a new window. Both
+give the same result. Pick whichever feels more familiar.
 
-- **With an installer (download and click).** Go to https://www.python.org/downloads/,
-  press the big download button, and open the file it downloads. If the first screen
-  shows a box named "Add python.exe to PATH", tick it. Then click Install Now.
+- **With an installer (download and click).** Go to https://www.python.org/downloads/.
+  The page offers two downloads for Windows (read on 2026-11-25; that page changes).
+  Choose the second one, the link that begins "Or get the standalone installer", and
+  open the file it downloads. If the first screen shows a box whose name ends in
+  "to PATH" (for example "Add python.exe to PATH"), tick it. Then click Install Now.
+
+  The first button on that page, "Download Python install manager", is a newer tool
+  and has no such box. We have not tested it. Python's own documentation says it may
+  ask to add a folder to your PATH the first time it installs a Python: say yes, open
+  a new window, and type `py list` to see what is installed.
 - **With one command.**
 
   ```powershell
   winget install Python.Python.3.12
   ```
+
+  The first time you use `winget` it may ask whether you agree to the source
+  agreements. Type `Y` and press Enter.
 
 **An AI client that Sextant can connect to** (this page uses Claude Code)
 
@@ -146,6 +157,9 @@ py -3 -m venv .venv
 The last line makes a folder named `.venv`. It is a private copy of Python, so nothing
 you install here can disturb anything else on the computer. It prints nothing when it
 works.
+
+If `mkdir` answers in red that an item with that name already exists, you made the
+folder earlier. That is harmless: carry on with the next line.
 
 ## Step 3: install Sextant
 
@@ -246,13 +260,14 @@ invisible character, and no such folder exists. (An entry that ends in a space o
 line break fails in both PowerShell and the old Command Prompt. An extra `;` at the end
 is harmless.)
 
-First, look. This writes a short report to your Desktop without changing anything:
+First, look. This writes a short report into your user folder without changing
+anything:
 
 ```powershell
-& { "GIT.EXE FOUND AT:"; Get-ChildItem "C:\Program Files\Git","C:\Program Files (x86)\Git","$env:LOCALAPPDATA\Programs\Git" -Filter git.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName; "--- PATH IN THIS WINDOW:"; $env:Path -split ';' | ForEach-Object { "[$_]" }; "--- SAVED USER PATH:"; [Environment]::GetEnvironmentVariable('Path','User') -split ';' | ForEach-Object { "[$_]" } } *> "$HOME\Desktop\path-check.txt"
+& { "GIT.EXE FOUND AT:"; Get-ChildItem "C:\Program Files\Git","C:\Program Files (x86)\Git","$env:LOCALAPPDATA\Programs\Git" -Filter git.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName; "--- PATH IN THIS WINDOW:"; $env:Path -split ';' | ForEach-Object { "[$_]" }; "--- SAVED USER PATH:"; [Environment]::GetEnvironmentVariable('Path','User') -split ';' | ForEach-Object { "[$_]" } } *> "$HOME\path-check.txt"
 ```
 
-Open `path-check.txt`. Every entry is shown inside square brackets, so anything extra
+Open it with `notepad $HOME\path-check.txt`. Every entry is shown inside square brackets, so anything extra
 shows up: `[C:\Program Files\Git\cmd ]` has a space before the closing bracket, and an
 entry with a line break is split across two lines. A healthy entry looks like
 `[C:\Program Files\Git\cmd]`.
@@ -298,16 +313,22 @@ no question is too basic.
 ### Saving what the screen said to a file
 
 When a command prints more than you can scroll back through, run it again with
-`*> "$HOME\Desktop\sextant-log.txt"` added to the end. For example:
+`*> sextant-log.txt` added to the end. For example:
 
 ```powershell
-.\.venv\Scripts\sextant.exe verify *> "$HOME\Desktop\sextant-log.txt"
+.\.venv\Scripts\sextant.exe verify *> sextant-log.txt
 ```
 
 Nothing appears on screen this time. Everything the command would have printed goes
-into a file named `sextant-log.txt` on your Desktop, from the first line to the last.
+into a file named `sextant-log.txt` in the folder you are in (`sextant-install`), from
+the first line to the last. Open it with `notepad sextant-log.txt`.
 Attach that file to your issue. Look through it first: it can contain folder names and
 your Windows user name.
+
+The file can look like a failure when the command worked. Windows PowerShell wraps the
+first notice a program prints in lines such as `python.exe : ...`, `CategoryInfo` and
+`NativeCommandError`. PowerShell adds those lines to a saved file; they are not the
+error. Read the words after the first colon.
 
 ## Updating later
 

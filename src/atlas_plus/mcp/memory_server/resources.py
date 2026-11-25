@@ -6,7 +6,7 @@ drag-and-drop or reference them without calling a tool.
 
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from ._sdk import FastMCP
 
 from atlas_plus.curation.scan import is_excluded_mirror
 

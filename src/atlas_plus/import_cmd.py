@@ -1128,12 +1128,12 @@ def main() -> None:
         prog=_prog(),
         description="Import existing knowledge (report first; --yes to execute).",
     )
-    parser.add_argument("path_pos", nargs="?", default=None, metavar="PATH",
+    parser.add_argument("path_pos", nargs="?", default=None, metavar="PATH", type=_next_step.user_path,
                         help="vault directory, conversations.json, or the export .zip as "
                              "ChatGPT or claude.ai delivered it (source auto-detected)")
     parser.add_argument("--source", choices=["obsidian", "chatgpt", "claude"],
                         help="omit to auto-detect from the path")
-    parser.add_argument("--path", help="same as the positional PATH")
+    parser.add_argument("--path", type=_next_step.user_path, help="same as the positional PATH")
     parser.add_argument("--scope", default="reference/obsidian",
                         help="corpus destination for obsidian imports")
     parser.add_argument("--yes", action="store_true", help="actually write files")

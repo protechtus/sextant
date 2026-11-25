@@ -63,6 +63,11 @@ class Ticket:
             d["reopen_count"] = self.reopen_count
         if self.verified:
             d["verified"] = self.verified
+        # After a folder rename the frontmatter still names the old project: JSON readers (list --json, the MCP
+        # list, the dashboard) got a project that `project/ID` no longer finds. Name the folder too (SEX-026).
+        folder = ticket_folder(self) if self.path else ""
+        if folder and folder != self.project:
+            d["folder"] = folder
         return d
 
     def to_markdown(self) -> str:
@@ -482,7 +487,8 @@ def list_tickets(
         return []
 
     results = []
-    for f in _walk_live_ticket_files(search, recursive=not project):
+    # `list <project>` walked the folder flat and missed `<project>/done/`, which plain `list` showed (SEX-026)
+    for f in _walk_live_ticket_files(search, recursive=True):
         t = _parse_ticket(f)
         if t is None:
             continue

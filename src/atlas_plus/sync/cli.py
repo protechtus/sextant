@@ -105,13 +105,19 @@ def cmd_devices(args: argparse.Namespace) -> int:
         return 0
     from collections import Counter
     names = Counter(d.name.casefold() for d in rows)
+    table = []
     for d in rows:
         seen = checkins.get(d.device_id, {}).get("received_utc", "never")
         flags = " REVOKED" if d.revoked else ""
         scope = d.scope + (f" [{','.join(d.prefixes)}]" if d.prefixes else "")
         # `--all` after a revoke and re-pair showed two identical `laptop` rows (AG88): the id tells them apart
         label = f"{d.name} ({d.device_id})" if names[d.name.casefold()] > 1 else d.name
-        print(f"  {label:<20} {d.kind:<7} {scope:<24} last check-in: {seen}{flags}")
+        table.append((label, d.kind, scope, seen, flags))
+    # The columns were fixed at 20/24: once an id showed, the rows no longer lined up (SEX-023)
+    w_label = max([20] + [len(r[0]) for r in table])
+    w_scope = max([24] + [len(r[2]) for r in table])
+    for label, kind, scope, seen, flags in table:
+        print(f"  {label:<{w_label}} {kind:<7} {scope:<{w_scope}} last check-in: {seen}{flags}")
     if hidden:
         print(f"  ({hidden} revoked, hidden: --all shows them)")
     return 0
@@ -140,6 +146,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         base = store.load_base_manifest("hub") or {}
         last = base.get("generated_utc", "never")
         print(f"  hub: {hub} (last sync base {last})")
+        if _plain_http_remote(hub):  # status said nothing about an http:// hub address (SEX-023)
+            print("  WARNING: the hub address is plain http:// to another machine: the token and your notes "
+                  "travel unencrypted (use https://, a tunnel or a VPN; docs/HOWTO-sync.md)")
     if not rows and not hub:
         print("  role: not paired as a hub, no hub configured (ATLAS_SYNC_HUB)")
     conflicts = root / "_atlas" / "sync-conflicts"
@@ -151,6 +160,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     if proposals:
         print(f"  inbox proposals awaiting review: {proposals} file(s) under _atlas/sync-inbox/")
     return 0
+
+
+def _plain_http_remote(url: str) -> bool:
+    """True for an http:// hub address whose host is not this machine (loopback is not on the wire)."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme.lower() != "http" or not host:
+        return False
+    return not (host == "localhost" or host == "::1" or host.startswith("127."))
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
@@ -214,6 +236,11 @@ def cmd_sync(args: argparse.Namespace) -> int:
         print(f"sync refused: {exc}", file=sys.stderr)
         return 2
     print(report.summary())
+    if args.dry_run:  # it printed only counts: name the files, as `plan` does (SEX-023)
+        for rel in report.would_pull:
+            print(f"  would pull: {rel}")
+        for rel in report.would_push:
+            print(f"  would push: {rel}")
     if args.dry_run and report.hub_restored:
         from atlas_plus.sync.client import RESTORED_HUB_AHEAD
         print(f"  WARNING: {RESTORED_HUB_AHEAD}")
@@ -329,11 +356,14 @@ def cmd_checkin(args: argparse.Namespace) -> int:
                 if plan.hub_restored:
                     from atlas_plus.sync.client import RESTORED_HUB_AHEAD
                     print(f"not current: {RESTORED_HUB_AHEAD} (run: {_prog_name()} plan)")
+                    return 1
                 elif plan.hub_older:
                     from atlas_plus.sync.client import HUB_OLDER
                     print(f"not current: {HUB_OLDER.format(n=len(plan.hub_older))}")
+                    return 1
                 elif plan.to_pull or plan.to_push or plan.conflicts or plan.too_large:
                     print(f"not current: {plan.summary()} (run: {_prog_name()} sync)")
+                    return 1
                 else:
                     n = len(plan.proposed)
                     print("in sync with hub" + (f" ({n} proposal(s) awaiting the hub's review)" if n else ""))
@@ -349,15 +379,15 @@ def cmd_checkin(args: argparse.Namespace) -> int:
     if restored:  # it said "different corpus state" about a hub restored from a backup (AG88)
         from atlas_plus.sync.client import RESTORED_HUB_AHEAD
         print(f"not current: {RESTORED_HUB_AHEAD} (run: {_prog_name()} plan)")
-        return 0
+        return 1  # "not current" exited 0: a heartbeat script could not tell (SEX-023)
     from atlas_plus.sync.client import HUB_OLDER, hub_older_files
     older = hub_older_files(_remote, local["files"])
     if older:  # it said "different corpus state" and plan then pulled the older copies (SEX-017)
         print(f"not current: {HUB_OLDER.format(n=len(older))}")
-        return 0
+        return 1
     same = result.get("server_manifest_hash") == local["manifest_hash"]
     print("in sync with hub" if same else f"hub has different corpus state (run: {_prog_name()} plan)")
-    return 0
+    return 0 if same else 1
 
 
 def _on_older(args: argparse.Namespace) -> str:

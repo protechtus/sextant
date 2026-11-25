@@ -27,13 +27,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 
 log = logging.getLogger("atlas.job_poller")
 
 from atlas_plus.paths import env_int as _env_int  # noqa: E402
+from atlas_plus import _proc  # noqa: E402
 POLL_INTERVAL = _env_int("ATLAS_JOB_POLL_INTERVAL", 60)  # a non-number named, not a traceback (AG77)
 CLAUDE_CLI = os.environ.get("ATLAS_CLAUDE_CLI", "claude")
 JOB_TIMEOUT = _env_int("ATLAS_JOB_TIMEOUT", 300)  # a non-number named, not a traceback (AG77)
@@ -76,21 +76,23 @@ def _run_claude(ticket) -> tuple[bool, str]:
         "Perform only the task described above. Summarize what you did in 2-3 sentences."
     )
     try:
-        result = subprocess.run(
-            [CLAUDE_CLI, "--print", prompt],
-            capture_output=True,
-            text=True,
-            timeout=JOB_TIMEOUT,
-            encoding="utf-8",
-            errors="replace", stdin=subprocess.DEVNULL,
-        )
-        success = result.returncode == 0
-        output = (result.stdout or result.stderr or "").strip()[:500]
-        return success, output
-    except subprocess.TimeoutExpired:
-        return False, f"Timed out after {JOB_TIMEOUT}s"
+        # KL3: the whole tree ends at the timeout (claude starts MCP servers that inherit its stdout)
+        result = _proc.run_bounded([CLAUDE_CLI, "--print", prompt], timeout=JOB_TIMEOUT, max_bytes=_MAX_OUTPUT_BYTES)
     except FileNotFoundError:
         return False, f"claude CLI not found at '{CLAUDE_CLI}'"
+    if result.timed_out:
+        return False, f"Timed out after {JOB_TIMEOUT}s"
+    success = result.returncode == 0
+    output = (_text(result.stdout_text()) or _text(result.stderr_text())).strip()[:500]
+    return success, output
+
+
+_MAX_OUTPUT_BYTES = 1024 * 1024
+
+
+def _text(s: str) -> str:
+    """Universal newlines, as subprocess.run(text=True) gave them."""
+    return s.replace("\r\n", "\n").replace("\r", "\n")
 
 
 _BRAIN_HEADERS: dict = {}  # built lazily

@@ -40,7 +40,7 @@ def _run_main(monkeypatch, argv, func) -> int:
 def test_keygen_command_and_key_missing(posix_hint, monkeypatch):
     assert shlex.split(posix_hint.keygen_command()) == [SPACED, "-c", CODE]
     monkeypatch.setattr(posix_hint, "_windows", lambda: True)
-    assert posix_hint.keygen_command() == f'python -c "{CODE}"'  # Windows: unchanged
+    assert posix_hint.keygen_command() == "& '" + SPACED.replace("'", "''") + f"' -c \"{CODE}\""  # Windows: this interpreter (AG110)
     monkeypatch.delenv("ATLAS_AG104_KEY", raising=False)
     assert posix_hint.key_missing("ATLAS_AG104_KEY") == "ATLAS_AG104_KEY is not set"
     monkeypatch.setenv("ATLAS_AG104_KEY", "")

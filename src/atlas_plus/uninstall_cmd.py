@@ -532,6 +532,38 @@ def state_inventory(state: Path) -> list[tuple[str, str, int]]:
     return out
 
 
+def _is_terminal(stream) -> bool:
+    """A person at a console: on Windows NUL (`< NUL`, Git Bash `< /dev/null`) passes isatty(), so the console mode decides."""
+    try:
+        if not stream or not stream.isatty():
+            return False
+        if os.name != "nt":
+            return True
+        import ctypes, msvcrt  # noqa: E401
+        handle, mode = msvcrt.get_osfhandle(stream.fileno()), ctypes.c_uint32()
+        return bool(ctypes.windll.kernel32.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)))
+    except (ValueError, OSError, AttributeError):
+        return False
+
+
+def _ask_path(prompt: str, ask) -> str:
+    """The typed-back path; without a terminal no prompt is printed (SEX-051 F6): a piped line still
+    confirms, an empty or closed stdin raises EOFError (the caller's refusal)."""
+    import sys
+    if ask is not input:
+        return ask(prompt)
+    stdin = sys.stdin
+    if _is_terminal(stdin):
+        return ask(prompt)
+    try:
+        line = stdin.readline() if stdin else ""
+    except (ValueError, OSError):
+        line = ""
+    if not line:
+        raise EOFError
+    return line.rstrip("\r\n")
+
+
 def confirm_state_removal(yes: bool, confirm_path: str | None, ask=input) -> str | None:
     """The state dir holds irreplaceable data, so removing it takes the same typed confirmation
     as the corpus (audit 2026-11-09). Returns a refusal string or None when authorized."""
@@ -548,10 +580,10 @@ def confirm_state_removal(yes: bool, confirm_path: str | None, ask=input) -> str
         provided = confirm_path
     else:
         try:
-            provided = ask(f"Type the FULL state-dir path to confirm deletion ({expected}): ")
+            provided = _ask_path(f"Type the FULL state-dir path to confirm deletion ({expected}): ", ask)
         except (EOFError, OSError):
-            return ("refused: no interactive terminal to confirm the state path "
-                    "(use --confirm-state-path <path> in scripts)")
+            return ("refused: no interactive terminal to confirm the state path; "
+                    f'add --confirm-state-path "{expected}" (the path typed back exactly)')
     import os as _os
 
     def _norm(p: str) -> str:
@@ -664,12 +696,10 @@ def confirm_corpus_removal(yes: bool, confirm_path: str | None, ask=input) -> st
         provided = confirm_path
     else:
         try:
-            provided = ask(f"Type the FULL corpus path to confirm deletion ({expected}): ")
+            provided = _ask_path(f"Type the FULL corpus path to confirm deletion ({expected}): ", ask)
         except (EOFError, OSError):  # closed/captured stdin (scripts, CI)
-            return (
-                "refused: no interactive terminal to confirm the corpus path "
-                "(use --confirm-path <path> in scripts)"
-            )
+            return ("refused: no interactive terminal to confirm the corpus path; "
+                    f'add --confirm-path "{expected}" (the path typed back exactly)')
     # Separator- and case-insensitive comparison: the confirmation proves the
     # user knows WHICH corpus, and a Windows user pasting the forward-slash
     # form from docs knows exactly that (impatient-persona finding). Any
@@ -721,6 +751,12 @@ def _prog() -> str:
     return _P(sys.argv[0]).stem if sys.argv and sys.argv[0] else "atlas-uninstall"
 
 
+def area_preview(args) -> str:
+    """`--state --dry-run` etc.: the safe preview of the area the user named (SEX-051 F8)."""
+    flags = " ".join(f for f, on in (("--state", args.state), ("--corpus", args.corpus), ("--all", args.all)) if on)
+    return (flags + " --dry-run").strip()
+
+
 def refusal_next(prog: str, preview: str) -> str:
     """The Next line of a destructive command's refusal: a safe preview and --help, never the
     destructive command itself (AG103). `prog` is the name typed (`sextant uninstall`,
@@ -765,11 +801,13 @@ def _main() -> None:
     parser.add_argument(
         "--confirm-path",
         default=None,
+        type=_next_step.user_path,
         help="non-interactive corpus confirmation: must name the corpus path (slash style and trailing separators are tolerated, case only where the filesystem ignores it; anything else refuses)",
     )
     parser.add_argument(
         "--confirm-state-path",
         default=None,
+        type=_next_step.user_path,
         help="non-interactive state-dir confirmation (same rule as --confirm-path, for the state path)",
     )
     args = parser.parse_args()
@@ -851,8 +889,7 @@ def _main() -> None:
             print(f"state:  {state_refusal or 'not removed (corpus confirmation failed; nothing was deleted)'}", file=sys.stderr)
         if do_corpus:
             print(f"corpus: {corpus_refusal or 'not removed'}", file=sys.stderr)
-        flags = " ".join(f for f, on in (("--state", args.state), ("--corpus", args.corpus), ("--all", args.all)) if on)
-        print(f"Next: {refusal_next(_prog(), (flags + ' --dry-run').strip())}", file=sys.stderr)
+        print(f"Next: {refusal_next(_prog(), area_preview(args))}", file=sys.stderr)
         raise SystemExit(1)
 
     failed = False
@@ -865,7 +902,7 @@ def _main() -> None:
         print(f"corpus: {outcome}", flush=True)
         failed = failed or outcome.startswith(("refused", "REFUSED", "failed"))
     if failed:
-        print(f"Next: {refusal_next(_prog(), '--dry-run')}", file=sys.stderr)
+        print(f"Next: {refusal_next(_prog(), area_preview(args))}", file=sys.stderr)  # keep the area typed (SEX-051 F8)
     raise SystemExit(1 if failed else 0)
 
 

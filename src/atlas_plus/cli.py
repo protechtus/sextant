@@ -504,7 +504,7 @@ def cmd_remember(
         return
     from atlas_plus import _next_step as _ns
     where = _ns.stored_where(scope)  # feedback/ surprised a stranger (SEX-050 item 11); brain /save says the same (AG107)
-    console.print(f"Remembered in {result['file']}{where}")
+    console.print(f"Remembered in {result['file']}{where}{_ns.scope_as_stored(scope)}")  # (SEX-048 item 9)
     if result.get("autocommit_note"):
         console.print(f"[yellow]{result['autocommit_note']}[/yellow]")  # AG57
     if result.get("possible_duplicate"):
@@ -810,6 +810,8 @@ _REDIRECTS = {
     "forget": "Facts are plain Markdown: edit or delete the line in the note `sextant search` names. `sextant uninstall` removes the whole corpus.",
     # the upgrade line is filled in when the redirect runs: it depends on how this copy was installed (AG103)
     "update": "Facts are plain Markdown: edit the line in the note `sextant search` names. To upgrade the package: {upgrade}.",
+    # `upgrade` got typer's bare "No such command" with no upgrade line (SEX-044 finding 2b, AG111)
+    "upgrade": "To upgrade the package: {upgrade}. Then run `sextant verify`.",
 }
 
 

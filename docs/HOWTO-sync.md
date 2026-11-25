@@ -47,7 +47,7 @@ export ATLAS_SYNC_DEVICE_TOKEN=paste-token-here
 
 sextant-sync plan        # what would happen (no changes)
 sextant-sync sync        # pull + push; conflicts quarantine for review
-sextant-sync checkin     # cheap "am I current?" heartbeat
+sextant-sync checkin     # cheap "am I current?" heartbeat: exit 0 in sync, 1 not current, 2 refused
 sextant-sync status      # local corpus, conflicts, inbox
 ```
 

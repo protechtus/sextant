@@ -62,7 +62,9 @@ def test_server_key_hint_powershell_line_is_whole(monkeypatch, capsys, modname, 
     monkeypatch.setattr(mod, attr, "")
     assert _run_main(monkeypatch, [argv], mod.main) == 1
     lines = capsys.readouterr().err.splitlines()
-    assert any(ln.strip() == f'PowerShell:  $env:{var} = python -c "{CODE}"' for ln in lines)
+    # the whole line, naming THIS interpreter, not the Store stub's bare `python` (AG110, SEX-051 F4)
+    assert any(ln.strip() == f"PowerShell:  $env:{var} = {_next_step.keygen_command('powershell')}" for ln in lines)
+    assert not any(f'= python -c "{CODE}"' in ln for ln in lines)
 
 
 def test_dashboard_start_says_where_to_open_it(monkeypatch):

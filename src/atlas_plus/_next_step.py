@@ -128,10 +128,32 @@ def stored_where(scope: str) -> str:
             if str(scope).strip().lower().startswith("preference:") else "")
 
 
+def stored_scope(scope: str) -> str:
+    """The scope as stored: routing.resolve_target's folding (`Project:Alpha` is `project:alpha`, SEX-048 item 9)."""
+    import unicodedata
+    if ":" not in str(scope):
+        return str(scope).strip()  # a bare route name: shown as typed
+    key, _, param = str(scope).partition(":")
+    param = unicodedata.normalize("NFC", param.strip()).replace(chr(0x130), "I").lower()
+    return f"{key.strip().lower()}:{param.replace(chr(0x307), '').replace(' ', '-')}"
+
+
+def scope_as_stored(scope: str) -> str:
+    shown = stored_scope(scope)  # said only when the folding changed what was typed
+    return f" (stored as scope {shown}; scopes are lowercase)" if shown != str(scope).strip() else ""
+
+
 EMPTY_SEARCH = ("Nothing matched. Try fewer or other words (keyword search needs a word that appears in "
                 "a note), drop the scope, or store the fact first.")
 """What to try after an empty search: the MCP search tool and the dashboard's search box say it the
 way `sextant search` does (SEX-047, AG107)."""
+
+
+def user_path(raw: str) -> str:
+    """A path argument as the user meant it: a leading `~` is the home folder. PowerShell does not
+    expand `~` for a native program, so `--path ~/MyVault` arrived as the literal `~\\MyVault`
+    ("path not found", SEX-051 F3). Usable as an argparse `type=`."""
+    return os.path.expanduser(raw) if isinstance(raw, str) and raw.startswith("~") else raw
 
 
 def help_hint(prog: str) -> str:
@@ -144,6 +166,8 @@ def say(message: str, next_step: str, code: int = 1) -> int:
     return code
 
 
+KEY_MIN_LEN = 16  # the shortest key the Brain and the dashboard accept; both refusals say it (SEX-051 F5)
+
 _KEYGEN_CODE = '"import secrets; print(secrets.token_urlsafe(32))"'
 
 
@@ -151,13 +175,18 @@ def _windows() -> bool:
     return os.name == "nt"
 
 
-def keygen_command() -> str:
-    """The key one-liner THIS machine runs: Ubuntu has no `python` outside a venv, so `$(python -c ...)`
-    set an EMPTY key (MN88, SEX-048). POSIX: the running interpreter, shell-quoted; Windows: as before."""
-    if _windows():
-        return f"python -c {_KEYGEN_CODE}"
+def keygen_command(shell: str = "") -> str:
+    """The key one-liner for `shell` ("powershell", "cmd", "posix"; default this OS's), naming THIS
+    interpreter: Ubuntu has no `python` outside a venv (MN88), and a Windows bare `python` can be the
+    Store stub, which prints nothing: an EMPTY key (SEX-051 F4). Every form survives a spaced path."""
+    shell = shell or ("powershell" if _windows() else "posix")
+    exe = sys.executable or ("py" if _windows() else "python3")
+    if shell == "powershell":  # single quotes: literal in PowerShell, a quote inside is doubled
+        return "& '" + exe.replace("'", "''") + "' -c " + _KEYGEN_CODE
+    if shell == "cmd":  # the command of a `for /f` line: cmd /c strips the outer (caret-escaped) quotes
+        return f'^""{exe}" -c {_KEYGEN_CODE}^"'
     import shlex
-    return f"{shlex.quote(sys.executable or 'python3')} -c {_KEYGEN_CODE}"
+    return f"{shlex.quote(exe.replace(chr(92), '/') if _windows() else exe)} -c {_KEYGEN_CODE}"
 
 
 def key_missing(var: str) -> str:
@@ -174,12 +203,13 @@ def key_setup_lines(var: str, rerun: str = "re-run", headline: str | None = None
     could not be copied (MN90, SEX-048). `sextant web`, `sextant-mcp` and `sextant-brain` print
     this same block for a missing and a too-short key; the first line keeps the set-but-empty
     wording unless `headline` replaces it."""
-    kg = keygen_command()
     return (f"{headline or key_missing(var)}.\n"
             f"Generate a key and set it, then {rerun}:\n"
-            + (f"  PowerShell:  $env:{var} = {kg}\n"
-               f"               (persist with: setx {var} $env:{var})\n" if _windows() else "")
-            + f"  bash/zsh:    export {var}=$({kg})")
+            + (f"  PowerShell:  $env:{var} = {keygen_command('powershell')}\n"
+               f"               (persist with: setx {var} $env:{var})\n"
+               f"  cmd.exe:     for /f \"delims=\" %k in ('{keygen_command('cmd')}') do set {var}=%k\n"
+               if _windows() else "")
+            + f"  {'Git Bash:  ' if _windows() else 'bash/zsh:  '}  export {var}=$({keygen_command('posix')})")
 
 
 def is_write_refused(exc: BaseException) -> bool:

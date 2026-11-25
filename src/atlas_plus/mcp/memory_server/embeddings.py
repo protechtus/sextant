@@ -131,11 +131,14 @@ def _body_of(path: Path) -> str:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    from .fts import strip_provenance, without_scaffold
+    _rest = without_scaffold(text)
+    if _rest is not None:
+        text = _rest   # the init template's instructions are not a memory (AG111; the keyword index drops them too)
     if text.startswith("---"):
         end = text.find("\n---", 3)
         if end != -1:
             text = text[end + 4:]
-    from .fts import strip_provenance
     return strip_provenance(text).strip()   # the `<!-- source:... -->` tag is not meaning: keyword search drops it too (AG99)
 
 

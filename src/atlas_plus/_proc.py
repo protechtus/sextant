@@ -100,6 +100,32 @@ class _Reader(threading.Thread):
                 pass
 
 
+class _Writer(threading.Thread):
+    """Feed ``data`` to the child's stdin, then close it. A child that never reads blocks this daemon
+    thread, never the caller: the tree kill at the deadline breaks the pipe and the write returns."""
+
+    def __init__(self, stream, data: bytes) -> None:
+        super().__init__(daemon=True)
+        self._stream = stream
+        self._data = data
+
+    def run(self) -> None:
+        fd = self._stream.fileno()
+        view = memoryview(self._data)
+        try:
+            while view:
+                try:
+                    n = os.write(fd, view[:_CHUNK])
+                except OSError:  # the child exited or closed stdin: the rest is not wanted
+                    break
+                view = view[n:]
+        finally:
+            try:
+                self._stream.close()
+            except OSError:
+                pass
+
+
 def _new_job():
     """A Windows job object the child is put into, so its whole tree can be ended at once."""
     try:
@@ -151,9 +177,12 @@ def run_bounded(
     stderr_tail_bytes: int = 64 * 1024,
     env: Mapping[str, str] | None = None,
     cwd: str | os.PathLike | None = None,
+    input: str | bytes | None = None,
 ) -> BoundedResult:
     """Run ``argv`` (a list, never a shell) with stdin closed; return within about ``timeout`` seconds.
 
+    ``input`` (text is encoded as UTF-8) is written to the child's stdin from a thread, then stdin is
+    closed; a child that never reads it still ends at the deadline. Without ``input`` stdin is DEVNULL.
     The call ends the whole process tree at the deadline (``timed_out``), keeps at most ``max_bytes``
     of stdout (``truncated``) and the last ``stderr_tail_bytes`` of stderr. A child that exits but
     leaves a grandchild holding its stdout counts as timed out when the grandchild is still there at
@@ -162,6 +191,10 @@ def run_bounded(
     if isinstance(argv, (str, bytes)):
         raise TypeError("argv must be a list of arguments, not a string")
     argv = [os.fspath(a) for a in argv]
+    if isinstance(input, str):
+        input = input.encode("utf-8")
+    elif input is not None and not isinstance(input, (bytes, bytearray, memoryview)):
+        raise TypeError("input must be str or bytes")
     kwargs: dict = {}
     job = None
     if os.name == "nt":
@@ -169,7 +202,8 @@ def run_bounded(
     else:
         kwargs["start_new_session"] = True
     deadline = time.monotonic() + max(0.0, float(timeout))
-    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    stdin = subprocess.DEVNULL if input is None else subprocess.PIPE
+    proc = subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=dict(env) if env is not None else None, cwd=cwd, bufsize=0, **kwargs)
     if os.name == "nt":
         job = _new_job()
@@ -180,6 +214,8 @@ def run_bounded(
     err = _Reader(proc.stderr, stderr_tail_bytes, keep_tail=True)
     out.start()
     err.start()
+    if input is not None:
+        _Writer(proc.stdin, bytes(input)).start()
     timed_out = False
     try:
         try:

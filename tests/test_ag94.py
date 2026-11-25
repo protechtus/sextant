@@ -121,7 +121,7 @@ def test_checkin_says_the_hub_is_older_instead_of_different_state(tmp_path, monk
     import argparse
     rc = cli.cmd_checkin(argparse.Namespace(hub="http://127.0.0.1:9401", token="t", share=None))
     out = capsys.readouterr().out
-    assert rc == 0 and "OLDER copies of 3 file(s)" in out and "different corpus state" not in out
+    assert rc == 1 and "OLDER copies of 3 file(s)" in out and "different corpus state" not in out  # not current exits 1 (SEX-023)
     rc = cli.cmd_plan(argparse.Namespace(hub="http://127.0.0.1:9401", token="t", share=None, json=False,
                                          pull_older=False, push_newer=False))
     out = capsys.readouterr().out

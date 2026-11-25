@@ -1396,9 +1396,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if _API_KEY and len(_API_KEY) < 16:
-        log.error("ATLAS_BRAIN_API_KEY is only %d characters; refusing to start.", len(_API_KEY))
-        print(_next_step.key_setup_lines("ATLAS_BRAIN_API_KEY", headline=f"ATLAS_BRAIN_API_KEY needs at least 16 "
+    if _API_KEY and len(_API_KEY) < _next_step.KEY_MIN_LEN:
+        log.error("ATLAS_BRAIN_API_KEY is only %d characters (it needs at least %d); refusing to start.",
+                  len(_API_KEY), _next_step.KEY_MIN_LEN)
+        print(_next_step.key_setup_lines("ATLAS_BRAIN_API_KEY", headline=f"ATLAS_BRAIN_API_KEY needs at least {_next_step.KEY_MIN_LEN} "
                                          f"characters (it has {len(_API_KEY)})"), file=sys.stderr)  # (AG106)
         sys.exit(1)
     # Fail closed: refuse to start without a token unless --no-auth is explicit.

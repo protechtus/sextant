@@ -72,6 +72,7 @@ def main() -> None:
     parser.add_argument(
         "--confirm-path",
         default=None,
+        type=_next_step.user_path,
         help="non-interactive corpus confirmation: must name the corpus path (slash style and trailing separators are tolerated, case only where the filesystem ignores it; anything else refuses)",
     )
     parser.add_argument("--dry-run", action="store_true",
@@ -83,8 +84,7 @@ def main() -> None:
     def _refuse(*lines: str) -> None:  # stderr, ending with a safe next step (AG103)
         for line in lines:
             print(line, file=_err)
-        flags = " ".join(f for f, on in (("--state", args.state), ("--corpus", args.corpus), ("--all", args.all)) if on)
-        print(f"Next: {uninstall_cmd.refusal_next(_prog(), (flags + ' --dry-run').strip())}", file=_err)
+        print(f"Next: {uninstall_cmd.refusal_next(_prog(), uninstall_cmd.area_preview(args))}", file=_err)
         raise SystemExit(1)
 
     do_state = args.state or args.all
@@ -139,7 +139,7 @@ def main() -> None:
         print(f"corpus: {outcome}", flush=True)
         failed = failed or outcome.startswith(("refused", "REFUSED", "failed"))
     if failed:
-        print(f"Next: {uninstall_cmd.refusal_next(_prog(), '--dry-run')}", file=_err)
+        print(f"Next: {uninstall_cmd.refusal_next(_prog(), uninstall_cmd.area_preview(args))}", file=_err)  # (SEX-051 F8)
     raise SystemExit(1 if failed else 0)
 
 

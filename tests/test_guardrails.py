@@ -1371,14 +1371,11 @@ ALLOW_G15: list[Allow] = [
     ("src/atlas_plus/hooks/session_start.py", "*", "one short git command with a timeout, through the git helper's environment"),
     ("src/atlas_plus/brain/learning.py", "*", "git log with -n: the output is bounded by the command itself"),
     ("src/atlas_plus/github_intake/gh.py", "*", "one gh API call with a timeout; no child tree"),
-    ("src/atlas_plus/brain/agents.py", "*", _G15_WAITING),
     ("src/atlas_plus/brain/executors.py", "*", _G15_WAITING),
     ("src/atlas_plus/brain/executors_local.py", "*", _G15_WAITING),
     ("src/atlas_plus/doctor/cli.py", "*", _G15_WAITING),
     ("src/atlas_plus/github_intake/actions.py", "*", _G15_WAITING),
-    ("src/atlas_plus/github_intake/investigate.py", "*", _G15_WAITING),
     ("src/atlas_plus/intake/engine.py", "*", _G15_WAITING),
-    ("src/atlas_plus/telegram/job_poller.py", "*", _G15_WAITING),
 ]
 
 
@@ -1428,3 +1425,60 @@ def test_the_g15_scan_sees_each_shape():
             "p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)\n")
     assert _g15_hits(bad) == [2, 3, 4, 5]
     assert not _g15_hits(good)
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G16  the MCP SDK's server class is imported in one module (LES-078)
+#   AG109, sweep 31: mcp 2.x renamed mcp.server.fastmcp.FastMCP to mcp.server.mcpserver.MCPServer
+#   and the old module raises on import. Two modules imported the old name, so on 2.x the server
+#   did not start at all. The class comes from memory_server/_sdk.py, which knows both names; a
+#   second import of either SDK module is the next major's outage.
+# ----------------------------------------------------------------------------------------------
+
+_G16_HOME = "src/atlas_plus/mcp/memory_server/_sdk.py"
+_G16_MODULES = ("mcp.server.fastmcp", "mcp.server.mcpserver")
+
+
+def _g16_hits(text: str) -> list[int]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    hits = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+            if any(n.module == m or n.module.startswith(m + ".") for m in _G16_MODULES):
+                hits.add(n.lineno)
+            if n.module == "mcp.server" and any(a.name in ("fastmcp", "mcpserver", "FastMCP", "MCPServer")
+                                                for a in n.names):
+                hits.add(n.lineno)
+        elif isinstance(n, ast.Import):
+            if any(a.name == m or a.name.startswith(m + ".") for a in n.names for m in _G16_MODULES):
+                hits.add(n.lineno)
+    return sorted(hits)
+
+
+def test_g16_the_mcp_sdk_server_class_is_imported_in_one_module():
+    offenders = []
+    for p in _py_files(SRC):
+        if _rel(p) == _G16_HOME:
+            continue
+        for lineno in _g16_hits(p.read_text(encoding="utf-8", errors="replace")):
+            offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G16", "import the server class from atlas_plus.mcp.memory_server._sdk (FastMCP, "
+                                  "SDK_MAJOR): the SDK renamed its module between majors")
+    assert _g16_hits((REPO / _G16_HOME).read_text(encoding="utf-8")), "the one home no longer imports the SDK"
+
+
+def test_the_g16_scan_sees_each_shape():
+    bad = ("from mcp.server.fastmcp import FastMCP\n"
+           "from mcp.server.mcpserver import MCPServer\n"
+           "import mcp.server.fastmcp as f\n"
+           "from mcp.server import fastmcp\n"
+           "from mcp.server.fastmcp.server import Context\n")
+    good = ("from atlas_plus.mcp.memory_server._sdk import FastMCP, SDK_MAJOR\n"
+            "from mcp.server.transport_security import TransportSecuritySettings\n"
+            "from mcp import types\n"
+            "from .fastmcp import helper\n")
+    assert _g16_hits(bad) == [1, 2, 3, 4, 5]
+    assert not _g16_hits(good)
