@@ -377,7 +377,8 @@ def cmd_dashboard(ctx: typer.Context) -> None:
     # The banner prints inside web.main once every refusal (unknown flag, --port, missing or short
     # key, busy port) has passed: it preceded each of them (AG71 fixed two, AG90 the rest).
     _webapp._START_BANNER = ("Starting the dashboard (same as sextant-web; ATLAS_WEB_HOST and ATLAS_WEB_PORT pick the "
-                             "bind, default 127.0.0.1:8766; the page loads htmx from the internet).")
+                             f"bind: this start {_webapp.WEB_HOST}:{_webapp.WEB_PORT}, default 127.0.0.1:8766; "
+                             "the page loads htmx from the internet).")  # it named only the default (SEX-050 item 9)
 
     _delegate(web_main, "sextant web", ctx.args)
 
@@ -493,7 +494,9 @@ def cmd_remember(
     if result.get("already_remembered"):
         console.print(f"Already remembered in {result['file']} (the same fact stands there; nothing written)")
         return
-    console.print(f"Remembered in {result['file']}")
+    where = (" (preference:<topic> is stored in the feedback folder)"
+             if scope.strip().lower().startswith("preference:") else "")  # feedback/ surprised a stranger (SEX-050 item 11)
+    console.print(f"Remembered in {result['file']}{where}")
     if result.get("autocommit_note"):
         console.print(f"[yellow]{result['autocommit_note']}[/yellow]")  # AG57
     if result.get("possible_duplicate"):

@@ -72,8 +72,10 @@ def test_servers_with_an_empty_key_say_empty(monkeypatch, caplog, capsys, posix_
     monkeypatch.setattr(mod, attr, "")
     with caplog.at_level(logging.ERROR):
         assert _run_main(monkeypatch, [argv], mod.main) == 1
-    capsys.readouterr()
-    assert f"{var} is set but empty" in caplog.text and _runnable(caplog.text)
+    # the key lines go to stderr outside the log record since AG106 (a log record folds them)
+    err = capsys.readouterr().err
+    assert f"{var} is set but empty" in err
+    assert _runnable(next(ln for ln in err.splitlines() if f"export {var}=" in ln))
 
 
 def test_safe_escapes_control_characters():

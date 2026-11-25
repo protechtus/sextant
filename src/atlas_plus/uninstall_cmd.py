@@ -170,6 +170,16 @@ def _rmtree(path: Path) -> None:
     shutil.rmtree(path, onerror=_onerror)
 
 
+def _removal_failed(exc: OSError, target: Path) -> str:
+    """A removal the OS stopped part way (a file held open, a read-only folder) as an outcome line,
+    not a traceback (SEX-047): what stopped it and what to do; the caller adds the Next line."""
+    where = getattr(exc, "filename", None) or target
+    why = exc.strerror or exc.__class__.__name__
+    return (f"failed: removal stopped at {where} ({why}); files before it may already be gone. A running "
+            "Sextant process (sextant-mcp, sextant web, an MCP client) or another program holds it open, "
+            "or it is read-only: close that program or fix the permission, then run this again")
+
+
 def _session_log_info() -> dict:
     """The summarizer's session log + its version copies (REPORT ONLY).
 
@@ -587,16 +597,21 @@ def clear_derived_state(yes: bool) -> str:
     if not yes:
         return "refused: --yes required"
     cleared: list[str] = []
-    for entry in DERIVED_STATE_ENTRIES:
-        p = state / entry
-        if p.is_dir():
-            _rmtree(p); cleared.append(entry + "/")
-        elif p.is_file():
-            p.unlink(); cleared.append(entry)
-    for pattern in DERIVED_STATE_GLOBS:
-        for p in state.glob(pattern):
-            if p.is_file():
-                p.unlink(); cleared.append(p.name)
+    try:
+        for entry in DERIVED_STATE_ENTRIES:
+            p = state / entry
+            if p.is_dir():
+                _rmtree(p); cleared.append(entry + "/")
+            elif p.is_file():
+                p.unlink(); cleared.append(entry)
+        for pattern in DERIVED_STATE_GLOBS:
+            for p in state.glob(pattern):
+                if p.is_file():
+                    p.unlink(); cleared.append(p.name)
+    except RefusedTarget as exc:
+        return f"refused: {exc}"
+    except OSError as exc:
+        return _removal_failed(exc, state)
     return "cleared derived: " + (", ".join(cleared) if cleared else "nothing to clear") + " (transcripts, task DB, ledger, sync, reports kept)"
 
 
@@ -619,6 +634,8 @@ def remove_state(yes: bool, confirm_path: str | None = None, ask=input,
         _rmtree(state)
     except RefusedTarget as exc:
         return f"refused: {exc}"
+    except OSError as exc:
+        return _removal_failed(exc, state)
     return "removed"
 
 
@@ -692,6 +709,8 @@ def remove_corpus(yes: bool, confirm_path: str | None, ask=input,
         _rmtree(corpus)
     except RefusedTarget as exc:
         return f"refused: {exc}"
+    except OSError as exc:
+        return _removal_failed(exc, corpus)
     return "removed"
 
 
@@ -839,12 +858,12 @@ def _main() -> None:
     failed = False
     if do_state:
         outcome = remove_state(args.yes, args.confirm_state_path, preauthorized=True)
-        print(f"state:  {outcome}")
-        failed = failed or outcome.startswith(("refused", "REFUSED"))
+        print(f"state:  {outcome}", flush=True)
+        failed = failed or outcome.startswith(("refused", "REFUSED", "failed"))
     if do_corpus:
         outcome = remove_corpus(args.yes, args.confirm_path, preauthorized=True)
-        print(f"corpus: {outcome}")
-        failed = failed or outcome.startswith(("refused", "REFUSED"))
+        print(f"corpus: {outcome}", flush=True)
+        failed = failed or outcome.startswith(("refused", "REFUSED", "failed"))
     if failed:
         print(f"Next: {refusal_next(_prog(), '--dry-run')}", file=sys.stderr)
     raise SystemExit(1 if failed else 0)

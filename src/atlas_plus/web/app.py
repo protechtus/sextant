@@ -3957,15 +3957,17 @@ _SERVICE_PS_CMDLINE = "$($a.Execute) $($a.Arguments) $($a.WorkingDirectory)"
 
 def _run_powershell(cmd: str, timeout: float = 25.0) -> tuple[int, str]:
     """Run a PowerShell command; return (returncode, combined output). Module-level for test injection."""
-    import subprocess
+    from atlas_plus import _proc
     try:
-        p = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, stdin=subprocess.DEVNULL,
-        )
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
+        # the bounded helper: PowerShell's whole tree ends at the timeout and the output is capped (LES-072)
+        res = _proc.run_bounded(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                                timeout=timeout, max_bytes=2_000_000)
     except Exception as exc:
         return 1, str(exc)
+    if res.timed_out:
+        return 1, f"powershell timed out after {timeout:g} seconds"
+    out = (res.stdout_text() + res.stderr_text()).replace("\r\n", "\n")
+    return (1 if res.returncode is None else res.returncode), out
 
 
 @app.get("/api/services", response_class=HTMLResponse)
@@ -7557,6 +7559,19 @@ def _port_free(host: str, port: int) -> bool:
 _START_BANNER = ""  # set by `sextant dashboard`; printed once the start checks pass (AG90)
 
 
+def open_line(host: str, port: int, keyed: bool = True) -> str:
+    """Where to open the dashboard: the address it really binds (ATLAS_WEB_HOST/ATLAS_WEB_PORT, not
+    the default) and how the key is given; never the key itself (SEX-050 item 9)."""
+    shown = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)  # a wildcard: open loopback
+    if ":" in shown and not shown.startswith("["):
+        shown = f"[{shown}]"  # an IPv6 literal needs brackets in a URL
+    url = f"http://{shown}:{port}/"
+    if not keyed:
+        return f"Open {url} in your browser (--no-auth: no key needed, loopback only)."
+    return (f"Open {url}?key=<your ATLAS_WEB_API_KEY> in your browser once (the key becomes a sign-in "
+            f"cookie); scripts send the header `Authorization: Bearer <key>`.")
+
+
 def main() -> None:
     """Entry point for `python -m atlas_plus.web.app`.
 
@@ -7598,21 +7613,16 @@ def main() -> None:
     if API_KEY and len(API_KEY) < 16:
         # Refuse, not warn: the docs say the dashboard will not run without a real key, and a
         # 5-character one is not a key (persona rerun 2026-11-10).
-        print(f"ATLAS_WEB_API_KEY is only {len(API_KEY)} characters; refusing to start. Generate one: "
-              f"{_next_step.keygen_command()}", file=__import__("sys").stderr)
+        print(_next_step.key_setup_lines("ATLAS_WEB_API_KEY", headline=f"ATLAS_WEB_API_KEY is only {len(API_KEY)} "
+                                         "characters; refusing to start (it needs at least 16)"),
+              file=__import__("sys").stderr)  # the same copyable lines as a missing key (AG106)
         raise SystemExit(1)
     # httpx logs every Brain poll at INFO (a 401 every few seconds when the Brain key is
     # wrong or the Brain is not running); the poll loop reports that once, with a hint.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if not API_KEY and not _ALLOW_NO_AUTH:
-        _kg = _next_step.keygen_command()
         print(
-            f'{_next_step.key_missing("ATLAS_WEB_API_KEY")}.\n'
-            'Generate a key and set it, then re-run:\n'
-            + (f'  PowerShell:  $env:ATLAS_WEB_API_KEY = {_kg}\n'
-               '               (persist with: setx ATLAS_WEB_API_KEY $env:ATLAS_WEB_API_KEY)\n'
-               if os.name == "nt" else '')
-            + f'  bash/zsh:    export ATLAS_WEB_API_KEY=$({_kg})\n'
+            _next_step.key_setup_lines("ATLAS_WEB_API_KEY") + "\n"
             'Or use --no-auth for local dev (loopback only). More: docs/GETTING-STARTED.md, section 6.',
             file=__import__("sys").stderr,
         )
@@ -7627,6 +7637,7 @@ def main() -> None:
     if _START_BANNER:
         print(_START_BANNER, flush=True)
     log.info("%s web dashboard %s on %s:%d", _product(), _pkg_version, WEB_HOST, WEB_PORT)
+    print(open_line(WEB_HOST, WEB_PORT, keyed=not _ALLOW_NO_AUTH), flush=True)  # SEX-050 item 9
     # access_log=False: uvicorn's access log records the path WITH its query
     # string, which put the ?key= bootstrap into service logs (audit
     # 2026-11-09, row 13).

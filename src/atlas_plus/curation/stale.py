@@ -88,13 +88,12 @@ def find_stale(
     today = date.today()
 
     results: list[StaleFile] = []
-    for f in _corpus_pass.md_files(search_root):
-        rel = f.relative_to(root)
-        if any(part in EXCLUDED_DIRS for part in rel.parts):
-            continue
-        if f.name.startswith("_"):
-            continue
-
+    todo = [
+        f for f in _corpus_pass.md_files(search_root)
+        if not any(part in EXCLUDED_DIRS for part in f.relative_to(root).parts) and not f.name.startswith("_")
+    ]
+    _corpus_pass.prefetch(todo)  # inside a report: the notes no earlier section read, on threads (SEX-046)
+    for f in todo:
         fm = _read_frontmatter(f)
         updated = _parse_updated(fm)
         if updated is None:
@@ -110,7 +109,7 @@ def find_stale(
         age_days = (today - updated).days
         if age_days > cutoff_days:
             results.append(StaleFile(
-                path=str(rel).replace("\\", "/"),
+                path=str(f.relative_to(root)).replace("\\", "/"),
                 updated=str(updated),
                 age_days=age_days,
                 title=fm.get("title", f.stem),

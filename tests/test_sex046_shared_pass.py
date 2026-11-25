@@ -250,3 +250,160 @@ def test_a_block_that_does_not_parse_raises_each_time(tmp_path):
             with pytest.raises(Exception):
                 cp.load_frontmatter("a: [unclosed\n")
         assert "a: [unclosed\n" not in cur.fms
+
+
+# --- third round (2026-11-25): the banded walk's memory of yielded pairs, the fact-line fast paths ---
+
+def _clustered_notes(n_notes: int = 420, seed: int = 11) -> list[list[str]]:
+    """Token lists in clusters of near copies, so a pair meets in many bands (the repeats the walk must skip)."""
+    import random
+    rng = random.Random(seed)
+    vocab = [f"tok{i:04d}" for i in range(900)]
+    bases = [rng.sample(vocab, 60) for _ in range(12)]
+    notes = []
+    for i in range(n_notes):
+        base = bases[i % len(bases)]
+        keep = [t for t in base if rng.random() > 0.12]
+        notes.append(keep + rng.sample(vocab, 6))
+    return notes
+
+
+@pytest.mark.parametrize("limit", [0, 3000])
+def test_the_banded_walk_yields_the_same_pairs_however_it_remembers_them(monkeypatch, limit):
+    from atlas_plus.curation import duplicates as d
+    shared = _clustered_notes()
+    remembered = list(d._lsh_pairs(shared, 0.4))
+    assert len(remembered) > 5000, "the corpus must be large enough for the set to be dropped part way"
+    assert len(set(remembered)) == len(remembered), "a pair came back twice"
+    # 0: band keys only (the walk as it was before the set). 3000: the set is dropped part way through.
+    monkeypatch.setattr(d, "_SEEN_PAIRS_MAX", limit)
+    assert list(d._lsh_pairs(shared, 0.4)) == remembered
+
+
+def test_weight_of_ascii_text_is_what_the_ideograph_count_gave():
+    from atlas_plus.curation import duplicates as d
+    samples = ["", "short", "Decision: use the staging cluster for every load test.", "tabs\tand  spaces",
+               "caf\u00e9 au lait every morning", "\u6bce\u671d\u30b3\u30fc\u30d2\u30fc\u3092\u9ed2\u3067\u98f2\u3080",
+               "mixed \u6bce\u671d coffee"]
+    for s in samples:
+        assert d._weight(s) == len(s) + 2 * len(d._CJK_RE.findall(s)), s
+    assert d._weight("\u6bce\u671d\u30b3\u30fc\u30d2\u30fc") == 18  # six characters, three each
+
+
+def test_fact_lines_are_the_ones_the_unconditional_comment_strip_gave():
+    from atlas_plus.curation import duplicates as d
+
+    def oracle(text: str) -> list[str]:
+        body = text
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end != -1:
+                body = text[end + 4:]
+        out = []
+        for line in body.splitlines():
+            s = d._PROVENANCE_RE.sub("", line).strip()
+            if len(s) + 2 * len(d._CJK_RE.findall(s)) < 25 or s.startswith(d._FACT_SKIP_PREFIXES):
+                continue
+            out.append(s)
+        return out
+
+    note = "\n".join([
+        "---", "title: sample", "---", "# Heading that is long enough to count as a line",
+        "The deploy window is Tuesday morning before the standup. <!-- source: human, direct -->",
+        "   <!-- a comment alone on a line that is quite long indeed -->",
+        "A line with an arrow -> and a stray > sign but no comment at all here.",
+        "A broken opener <!-- that never closes on this particular line of text",
+        "Two comments <!-- one --> in the middle <!-- two --> of a long enough sentence.",
+        "| a table row that is long enough to be counted otherwise |",
+        "\u6bce\u671d\u30b3\u30fc\u30d2\u30fc\u3092\u9ed2\u3067\u98f2\u3080 <!-- src -->",
+        "short", "",
+    ])
+    assert d._note_facts(note) == oracle(note)
+    assert len(d._note_facts(note)) >= 4
+    plain = "no frontmatter here, just one long enough line of plain text\nand a second line that is also long enough"
+    assert d._note_facts(plain) == oracle(plain)
+
+
+# --- notes read ahead on threads (2026-11-25) ---
+
+def _many_notes(root: Path, n: int = 150) -> list[Path]:
+    d = root / "reference"
+    d.mkdir(parents=True, exist_ok=True)
+    out = []
+    for i in range(n):
+        p = d / f"note-{i:03d}.md"
+        p.write_text(f"---\ntitle: note {i}\n---\nbody of note number {i} " + "word " * (i % 7) + "\n", encoding="utf-8")
+        out.append(p)
+    return out
+
+
+def test_read_ahead_gives_what_one_by_one_reading_gives(tmp_path):
+    paths = _many_notes(tmp_path)
+    assert len(paths) >= cp.READ_AHEAD_MIN
+    missing = tmp_path / "reference" / "gone.md"
+    asked = paths[:70] + [missing] + paths[70:] + [paths[3]]  # one unreadable, one asked twice
+    got = list(cp.read_texts(asked))
+    assert [p for p, _ in got] == asked
+    for p, text in got:
+        if p == missing:
+            assert isinstance(text, OSError)
+        else:
+            assert text == p.read_text(encoding="utf-8", errors="replace")
+    with cp.shared_pass():
+        assert [(p, t if isinstance(t, str) else type(t)) for p, t in cp.read_texts(asked)] == \
+               [(p, t if isinstance(t, str) else type(t)) for p, t in got]
+
+
+def test_read_ahead_inside_a_pass_opens_each_note_once(tmp_path, counted_reads):
+    paths = _many_notes(tmp_path)
+    with cp.shared_pass() as cur:
+        assert cp.read_text(paths[5]) == paths[5].read_text(encoding="utf-8")  # read before the pool starts
+        before = dict(counted_reads)
+        list(cp.read_texts(paths))
+        cp.prefetch(paths)
+        for p in paths:
+            cp.read_text(p)
+        opened = {k: v - before.get(k, 0) for k, v in counted_reads.items()}
+        assert opened[str(paths[5])] == 0
+        assert all(opened[str(p)] == 1 for p in paths if p != paths[5])
+        assert cur.reads == len(paths)
+
+
+def test_read_ahead_stops_remembering_at_the_same_note(tmp_path):
+    paths = _many_notes(tmp_path)
+    limit = sum(len(p.read_text(encoding="utf-8")) for p in paths[:40])
+    with cp.shared_pass(max_chars=limit) as one:
+        for p in paths:
+            cp.read_text(p)
+        kept_one = set(one.texts)
+    with cp.shared_pass(max_chars=limit) as many:
+        texts = [t for _, t in cp.read_texts(paths)]
+        kept_many = set(many.texts)
+    assert kept_many == kept_one and 0 < len(kept_one) < len(paths)
+    assert texts == [p.read_text(encoding="utf-8") for p in paths]  # past the limit the text still comes back
+
+
+def test_prefetch_outside_a_pass_reads_nothing(tmp_path, counted_reads):
+    paths = _many_notes(tmp_path)
+    cp.prefetch(paths)
+    assert not counted_reads
+
+
+def test_the_scans_find_the_same_with_and_without_read_ahead(tmp_path, monkeypatch):
+    from atlas_plus.curation import duplicates as d, stale
+    paths = _many_notes(tmp_path, 90)
+    for i, p in enumerate(paths[:30]):
+        p.write_text("---\ntitle: copy\nupdated: 2020-01-0%d\n---\nThe staging cluster is rebuilt every Tuesday morning before standup.\n"
+                     "alpha beta gamma delta epsilon zeta eta theta iota kappa %s\n" % (1 + i % 9, "extra" * (i % 3)),
+                     encoding="utf-8")
+
+    def run():
+        with cp.shared_pass():
+            return ([(x.file1, x.file2, round(x.similarity, 6)) for x in d.find_duplicates(memory_root=tmp_path)],
+                    [(s.path, s.age_days) for s in stale.find_stale(memory_root=tmp_path)],
+                    d.find_fact_duplicates(memory_root=tmp_path))
+
+    threaded = run()
+    monkeypatch.setattr(cp, "READ_THREADS", 1)  # one by one, as before
+    assert run() == threaded
+    assert threaded[0] and threaded[1] and threaded[2]

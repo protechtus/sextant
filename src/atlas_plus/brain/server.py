@@ -1397,17 +1397,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if _API_KEY and len(_API_KEY) < 16:
-        log.error("ATLAS_BRAIN_API_KEY is only %d characters; refusing to start. Generate one: %s",
-                  len(_API_KEY), _next_step.keygen_command())
+        log.error("ATLAS_BRAIN_API_KEY is only %d characters; refusing to start.", len(_API_KEY))
+        print(_next_step.key_setup_lines("ATLAS_BRAIN_API_KEY", headline=f"ATLAS_BRAIN_API_KEY needs at least 16 "
+                                         f"characters (it has {len(_API_KEY)})"), file=sys.stderr)  # (AG106)
         sys.exit(1)
     # Fail closed: refuse to start without a token unless --no-auth is explicit.
     if not _API_KEY and not args.no_auth:
-        log.error(
-            "%s. Refusing to start. "
-            "Generate a token: %s "
-            "Set ATLAS_BRAIN_API_KEY, or use --no-auth for local development only.",
-            _next_step.key_missing("ATLAS_BRAIN_API_KEY"), _next_step.keygen_command(),
-        )
+        log.error("Refusing to start without auth.")
+        # One copyable command per line on stderr, not folded inside a log record (MN90, SEX-048).
+        print(_next_step.key_setup_lines("ATLAS_BRAIN_API_KEY", "re-run (or use --no-auth for local development only)"),
+              file=sys.stderr)
         sys.exit(1)
 
     # Hard guard: --no-auth can ONLY bind to loopback. Refuse any other host.

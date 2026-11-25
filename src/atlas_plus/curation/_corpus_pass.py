@@ -16,7 +16,7 @@ from __future__ import annotations
 import contextvars
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Optional, Sequence, Union
 
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
 
@@ -99,6 +99,73 @@ def read_text(path: Path) -> str:
         cur.texts[key] = text
         cur.chars += len(text)
     return text
+
+
+# Notes read ahead on threads. Opening a file that is not in the system's cache costs milliseconds (on
+# Windows it is scanned on open: 7.4 ms a note measured, 150 s for 20,000 notes one by one); the wait is
+# outside the interpreter lock, so eight readers bring it to about 1.2 ms a note. A corpus already in the
+# cache reads no slower this way. Below READ_AHEAD_MIN notes the pool is not worth starting.
+READ_THREADS = 8
+READ_AHEAD_MIN = 64
+_READ_WINDOW = 512  # notes handed to the pool at a time: bounds what is held when nothing is remembered
+
+
+def _read_or_error(path: Path) -> Union[str, OSError]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return exc
+
+
+def read_texts(paths: Sequence[Path]) -> Iterator[tuple[Path, Union[str, OSError]]]:
+    """``(path, text)`` for every path, in the order given; where ``read_text(path)`` would raise, the
+    ``OSError`` comes back in place of the text. The files are read ahead on ``READ_THREADS`` threads.
+    Inside a shared pass a note already read is not read again, and what is read here is remembered by
+    the same rules as ``read_text`` (in the order given, so the memory limit cuts at the same note)."""
+    cur = _ACTIVE.get()
+    paths = list(paths)
+    if READ_THREADS <= 1 or len(paths) < READ_AHEAD_MIN:
+        for p in paths:
+            try:
+                yield p, read_text(p)
+            except OSError as exc:
+                yield p, exc
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=READ_THREADS, thread_name_prefix="atlas-read") as pool:
+        for start in range(0, len(paths), _READ_WINDOW):
+            window = paths[start:start + _READ_WINDOW]
+            if cur is None:
+                todo = window
+            else:
+                todo = [p for p in window if str(p) not in cur.texts and str(p) not in cur.errors]
+            fresh = dict(zip(map(str, todo), pool.map(_read_or_error, todo)))
+            for p in window:
+                key = str(p)
+                if key not in fresh:  # remembered by the pass (or a path given twice): the plain call answers
+                    try:
+                        yield p, read_text(p)
+                    except OSError as exc:
+                        yield p, exc
+                    continue
+                got = fresh.pop(key)
+                if cur is not None:
+                    cur.reads += 1
+                    if isinstance(got, OSError):
+                        cur.errors[key] = got
+                    elif cur.chars + len(got) <= cur.max_chars:
+                        cur.texts[key] = got
+                        cur.chars += len(got)
+                yield p, got
+
+
+def prefetch(paths: Sequence[Path]) -> None:
+    """Inside a shared pass: read every path not yet read, on threads, so the ``read_text`` calls that
+    follow find the text. Outside a pass nothing would be kept, so nothing is read."""
+    if _ACTIVE.get() is None:
+        return
+    for _ in read_texts(paths):
+        pass
 
 
 def load_frontmatter(block: str) -> Any:

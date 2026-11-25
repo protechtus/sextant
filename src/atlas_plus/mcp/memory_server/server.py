@@ -1490,18 +1490,18 @@ def main() -> None:
     token = _MCP_TOKEN
     if token and len(token) < 16 and not args.no_auth:  # --no-auth ignores the token entirely
         from atlas_plus import _next_step
-        log.error("ATLAS_MCP_TOKEN is only %d characters; refusing to start. Generate one: %s",
-                  len(token), _next_step.keygen_command())
+        log.error("ATLAS_MCP_TOKEN is only %d characters; refusing to start.", len(token))
+        print(_next_step.key_setup_lines("ATLAS_MCP_TOKEN", headline=f"ATLAS_MCP_TOKEN needs at least 16 "
+                                         f"characters (it has {len(token)})"), file=sys.stderr)  # (AG106)
         raise SystemExit(1)
     if not token and not args.no_auth:
         from atlas_plus import _next_step
-        log.error(
-            "%s. Refusing to start HTTP mode without auth. "
-            "Generate a token: %s "
-            "Set ATLAS_MCP_TOKEN, or use --no-auth for local development only.",
-            _next_step.key_missing("ATLAS_MCP_TOKEN"), _next_step.keygen_command(),
-        )
-        # The log line wraps in columns; most people who type this want a client connected (AG102).
+        log.error("Refusing to start HTTP mode without auth.")
+        # The key command goes to stderr outside the log record, one command per line: through the
+        # log handler it folded at 80 columns inside a path and could not be copied (MN90, SEX-048).
+        print(_next_step.key_setup_lines("ATLAS_MCP_TOKEN", "re-run (or use --no-auth for local development only)"),
+              file=sys.stderr)
+        # Most people who type this want a client connected (AG102).
         print(f"Next: an MCP client starts this server itself over stdio: {_next_step.command('setup')} prints "
               "the line that registers it. Serving HTTP needs ATLAS_MCP_TOKEN (docs/HOWTO-self-hosting.md).",
               file=sys.stderr)

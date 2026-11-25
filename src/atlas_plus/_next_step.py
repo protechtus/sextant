@@ -154,6 +154,20 @@ def key_missing(var: str) -> str:
     return f"{var} is not set"
 
 
+def key_setup_lines(var: str, rerun: str = "re-run", headline: str | None = None) -> str:
+    """How to make and set `var`, one copyable command per line, for printing to stderr OUTSIDE
+    the log handler: a log record folds at 80 columns in the middle of a path, so the command
+    could not be copied (MN90, SEX-048). `sextant web`, `sextant-mcp` and `sextant-brain` print
+    this same block for a missing and a too-short key; the first line keeps the set-but-empty
+    wording unless `headline` replaces it."""
+    kg = keygen_command()
+    return (f"{headline or key_missing(var)}.\n"
+            f"Generate a key and set it, then {rerun}:\n"
+            + (f"  PowerShell:  $env:{var} = {kg}\n"
+               f"               (persist with: setx {var} $env:{var})\n" if _windows() else "")
+            + f"  bash/zsh:    export {var}=$({kg})")
+
+
 def is_write_refused(exc: BaseException) -> bool:
     """A permission or read-only-filesystem refusal (not a full disk, not a bad name)."""
     import errno

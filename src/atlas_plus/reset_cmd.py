@@ -35,7 +35,7 @@ def reset_state(yes: bool) -> str:
     CLI history, embedding index). Transcripts, the task DB, the intake ledger, sync devices
     and research reports are kept: they are the only copy (data-safety audit 2026-11-09)."""
     outcome = uninstall_cmd.clear_derived_state(yes)
-    if outcome == "absent" or outcome.startswith(("refused", "REFUSED")):
+    if outcome == "absent" or outcome.startswith(("refused", "REFUSED", "failed")):
         return outcome
     make_private_dir(atlas_paths.state_dir())
     return f"reset ({outcome}; indexes rebuild on next use)"
@@ -124,12 +124,12 @@ def main() -> None:
     failed = False
     if do_state:
         outcome = reset_state(args.yes)
-        print(f"state:  {outcome}")
-        failed = failed or outcome.startswith(("refused", "REFUSED"))
+        print(f"state:  {outcome}", flush=True)
+        failed = failed or outcome.startswith(("refused", "REFUSED", "failed"))
     if do_corpus:
         outcome = reset_corpus(args.yes, args.confirm_path)
-        print(f"corpus: {outcome}")
-        failed = failed or outcome.startswith(("refused", "REFUSED"))
+        print(f"corpus: {outcome}", flush=True)
+        failed = failed or outcome.startswith(("refused", "REFUSED", "failed"))
     if failed:
         print(f"Next: {uninstall_cmd.refusal_next(_prog(), '--dry-run')}", file=_err)
     raise SystemExit(1 if failed else 0)

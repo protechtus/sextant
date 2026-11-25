@@ -34,6 +34,9 @@ _LAST_PARTIAL = [0, 0]  # [notes scanned, notes total] when the last scan stoppe
 _EXACT_MAX_WORK = 8_000_000  # about 3 s of exact walk (0.37 us per posting entry, measured)
 _LSH_RECALL = 0.99      # chance that a pair AT the threshold becomes a candidate (higher pairs: more)
 _LAST_APPROX = [False]  # True when the last file-level scan used the MinHash candidates
+# Candidate pairs remembered while the banded walk runs, so a pair is yielded once (SEX-046). About 60 bytes
+# a pair; past this many the walk compares band keys instead (slower, no memory), so the answer is the same.
+_SEEN_PAIRS_MAX = 2_000_000
 
 
 def _exact_max_work() -> int:
@@ -161,6 +164,12 @@ def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = 
     from itertools import combinations
     done_groups: set[tuple] = set()  # a bucket holding exactly the notes of an earlier band's bucket adds nothing
     tick = 0
+    # Every pair yielded so far, as one number, while there are few enough of them: the lookup replaces a
+    # comparison of the two notes' earlier band keys (up to 69 of them) that found nothing for five pairs
+    # in six and was a third of the scan at 20,000 notes (SEX-046). Same pairs in the same order.
+    n_notes = len(shared_toks)
+    seen_max = _SEEN_PAIRS_MAX
+    seen: Optional[set] = set() if seen_max > 0 else None
     for band in bands:
         for members in buckets[band].values():
             if len(members) < 2:
@@ -171,10 +180,18 @@ def _lsh_pairs(shared_toks: list, threshold: float, deadline: Optional[float] = 
             done_groups.add(group)
             for a, c in combinations(members, 2):  # members ascend, so a < c
                 tick += 1
-                if deadline is not None and not tick & 4095 and _time.monotonic() > deadline:
-                    yield None
-                    return
-                if band and any(map(eq, keys[a][:band], keys[c][:band])):
+                if not tick & 4095:
+                    if deadline is not None and _time.monotonic() > deadline:
+                        yield None
+                        return
+                    if seen is not None and len(seen) > seen_max:
+                        seen = None  # too many to remember: the band keys answer from here on
+                if seen is not None:
+                    pair_no = a * n_notes + c
+                    if pair_no in seen:
+                        continue  # an earlier band already yielded this pair
+                    seen.add(pair_no)
+                elif band and any(map(eq, keys[a][:band], keys[c][:band])):
                     continue  # an earlier band already yielded this pair
                 yield a, c
         buckets[band] = {}
@@ -195,7 +212,8 @@ def _tokenize(text: str) -> set[str]:
     if text.isascii():
         # No ideograph, no emoji, nothing to fold: the two scans below cannot match, and a word of one or
         # two letters is never kept (SEX-046: they were a third of the tokenizer's time on English notes).
-        return {w for w in _WORD_RE.findall(text.lower()) if len(w) > 2 and w not in _STOPS}
+        # The distinct words are filtered, not every occurrence (a 900-word note has about 300).
+        return {w for w in set(_WORD_RE.findall(text.lower())).difference(_STOPS) if len(w) > 2}
     if not text.isascii():
         import unicodedata as _ud
         text = _dup_fold(_fold_marks(_recompose(_ud.normalize("NFC", text))))  # AG89: prefixes and emoji as search folds them; one form for a letter with its marks (MN46); Arabic and Hebrew points folded like search does (MN49); joiners and sara am like search (MN55); ASCII skips it (AG60)
@@ -273,6 +291,8 @@ _BITSET_MAX_TOKENS = 131072  # shared tokens; with bit indexes and a bytearray b
 def _weight(s: str) -> int:
     """Length for the minimum-size gates, counting an ideograph or kana as three Latin letters
     (``毎朝コーヒーを黒で飲む`` is a whole fact in 11 characters: FN5, final readiness pass)."""
+    if s.isascii():
+        return len(s)  # no ideograph to count: 2.2 million regex scans in a 20,000-note report (SEX-046)
     return len(s) + 2 * len(_CJK_RE.findall(s))
 
 
@@ -300,7 +320,7 @@ def _note_facts(text: str) -> list[str]:
             body = text[end + 4:]
     out = []
     for line in body.splitlines():
-        s = _PROVENANCE_RE.sub("", line).strip()
+        s = (_PROVENANCE_RE.sub("", line) if "<!--" in line else line).strip()  # the pattern needs a comment opener
         if _weight(s) < 25 or s.startswith(_FACT_SKIP_PREFIXES):
             continue
         out.append(s)
@@ -337,10 +357,8 @@ def find_fact_duplicates(
     import time as _time
     exact: dict[str, list[tuple[str, str]]] = {}
     pending: list[tuple[str, str, str]] = []
-    for f in sorted(files):
-        try:
-            text = _corpus_pass.read_text(f)
-        except OSError:
+    for f, text in _corpus_pass.read_texts(sorted(files)):  # read ahead on threads (SEX-046)
+        if isinstance(text, OSError):
             continue
         rel = str(f.relative_to(root)).replace("\\", "/")
         for fact in _note_facts(text):
@@ -460,12 +478,8 @@ def find_duplicates(
     ]
 
     tokens: dict[Path, set[str]] = {}
-    for f in files:
-        try:
-            text = _corpus_pass.read_text(f)
-            tokens[f] = _tokenize(text)
-        except OSError:
-            tokens[f] = set()
+    for f, text in _corpus_pass.read_texts(files):  # read ahead on threads (SEX-046)
+        tokens[f] = set() if isinstance(text, OSError) else _tokenize(text)
 
     pairs: list[DuplicatePair] = []
     # Size-band prune: Jaccard(A,B) <= min(|A|,|B|) / max(|A|,|B|), so two token
@@ -480,10 +494,13 @@ def find_duplicates(
     # fewer are never compared. The all-pairs walk made `review report` unusable past about
     # 800 notes (AG32, sweep 14: killed at 621 s and 1.4 GB on 5,000 notes). Snippets are read
     # for the pairs kept, not for every candidate.
-    index: dict[str, list[int]] = {}
+    from collections import defaultdict
+    _postings: defaultdict = defaultdict(list)
     for i, f in enumerate(file_list):
         for tok in tokens[f]:
-            index.setdefault(tok, []).append(i)
+            _postings[tok].append(i)
+    index: dict[str, list[int]] = dict(_postings)  # a plain dict from here on: a lookup never adds a key
+    del _postings
     # Prefix filtering (exact): a pair with Jaccard >= t shares at least ceil(t*|A|) of A's tokens,
     # so at least one shared token lies among A's |A| - ceil(t*|A|) + 1 RAREST tokens (one global
     # order: document frequency, then the token). Only those short posting lists are walked; the
@@ -531,7 +548,15 @@ def find_duplicates(
     # One global order (document frequency, then the token), ranked once: sorting each note by a tuple
     # built per token called the key function 7.7 million times on 20,000 notes (SEX-046). Same order.
     _rank = {t: r for r, t in enumerate(sorted(df, key=lambda t: (df[t], t)))}
-    ordered = [sorted(tokens[f], key=_rank.__getitem__) for f in file_list]
+    # A note is ordered when the work estimate or the exact walk reaches it: on a corpus that takes the
+    # banded candidates the estimate stops after a few hundred notes and the rest are never sorted.
+    ordered: list = [None] * len(file_list)
+
+    def _ordered(i: int) -> list:
+        got = ordered[i]
+        if got is None:
+            got = ordered[i] = sorted(tokens[file_list[i]], key=_rank.__getitem__)
+        return got
     _limit = _exact_max_work()
     _r, _b = _lsh_shape(threshold)
     if 1 - (1 - min(max(threshold, 0.05), 0.99) ** _r) ** _b < _LSH_RECALL:
@@ -541,14 +566,15 @@ def find_duplicates(
         for i, si in enumerate(sizes):
             if si:
                 need = int(-(-(threshold * si) // 1))
-                for tok in ordered[i][:max(1, si - need + 1)]:
+                for tok in _ordered(i)[:max(1, si - need + 1)]:
                     work += df[tok]
             if work > 2 * _limit:
                 break
         if work // 2 > _limit:  # each posting entry is walked from one side of the pair only
             _LAST_APPROX[0] = True
     if _LAST_APPROX[0]:
-        shared = [[t for t in o if df[t] >= 2] for o in ordered]
+        # the banded walk only asks which tokens a note has, never their order
+        shared = [[t for t in tokens[f] if df[t] >= 2] for f in file_list]
         reached = bytearray(len(file_list))  # notes that met at least one candidate, for the partial count
         for pair in _lsh_pairs(shared, threshold, _deadline, index):
             if pair is None:  # the budget ran out inside the candidate walk
@@ -578,7 +604,7 @@ def find_duplicates(
         toks1 = tokens[file_list[i]]
         bi = bits[i] if use_bits else 0
         need = int(-(-(thr * si) // 1))                  # ceil(t * |A|)
-        prefix = ordered[i][:max(1, si - need + 1)]
+        prefix = _ordered(i)[:max(1, si - need + 1)]
         cand: set[int] = set()
         for tok in prefix:
             post = index[tok]

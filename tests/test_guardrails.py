@@ -1352,3 +1352,79 @@ if __name__ == "__main__" and sys.argv[1:2] == ["--g8-child"]:
     _cases = _json.loads(sys.stdin.read())
     _out = _g8_child(_cases)
     sys.__stdout__.write(_json.dumps(_out) + "\n")
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G15  a child whose output is captured runs through the bounded helper
+#   Sweeps: KL2 (sweep 27), AG105 (sweep 28). subprocess.run(timeout=) ends only the direct child and
+#   then reads the pipes again without a bound: a grandchild holding stdout kept a 2 s timeout waiting
+#   30 s, and the whole output is in memory before any size check. atlas_plus._proc.run_bounded ends
+#   the process tree and caps what it keeps. The calls that predate the helper are listed below, each
+#   with the reason it is still there; a NEW capturing call outside the helper fails this test.
+# ----------------------------------------------------------------------------------------------
+
+_G15_WAITING = "predates the helper; on the list of callers to move (AG105 report, sweep 28)"
+ALLOW_G15: list[Allow] = [
+    ("src/atlas_plus/_proc.py", "*", "the helper itself"),
+    ("src/atlas_plus/gitsafe.py", "*", "the git helper: one short git command, hooks and helpers neutralised, 5 to 10 s timeout"),
+    ("src/atlas_plus/hooks/pre_compact.py", "*", "one short git command with a timeout, through the git helper's environment"),
+    ("src/atlas_plus/hooks/session_start.py", "*", "one short git command with a timeout, through the git helper's environment"),
+    ("src/atlas_plus/brain/learning.py", "*", "git log with -n: the output is bounded by the command itself"),
+    ("src/atlas_plus/github_intake/gh.py", "*", "one gh API call with a timeout; no child tree"),
+    ("src/atlas_plus/brain/agents.py", "*", _G15_WAITING),
+    ("src/atlas_plus/brain/executors.py", "*", _G15_WAITING),
+    ("src/atlas_plus/brain/executors_local.py", "*", _G15_WAITING),
+    ("src/atlas_plus/doctor/cli.py", "*", _G15_WAITING),
+    ("src/atlas_plus/github_intake/actions.py", "*", _G15_WAITING),
+    ("src/atlas_plus/github_intake/investigate.py", "*", _G15_WAITING),
+    ("src/atlas_plus/intake/engine.py", "*", _G15_WAITING),
+    ("src/atlas_plus/telegram/job_poller.py", "*", _G15_WAITING),
+]
+
+
+def _g15_hits(text: str) -> list[int]:
+    """Lines of blocking subprocess calls that capture the child's output."""
+    out = set()
+    for n in ast.walk(ast.parse(text)):
+        if not isinstance(n, ast.Call):
+            continue
+        name = _dotted(n.func)
+        if not (name.startswith(("subprocess.", "_subprocess.", "sp.")) and name.split(".")[-1] in ("run", "check_output")):
+            continue
+        kws = {k.arg: _dotted(k.value) for k in n.keywords if k.arg}
+        if (name.endswith("check_output") or kws.get("capture_output") == "True"
+                or kws.get("stdout", "").endswith("PIPE") or kws.get("stderr", "").endswith("PIPE")):
+            out.add(n.lineno)
+    return sorted(out)
+
+
+def _g15_call_text(p: Path, lineno: int) -> str:
+    """The call's lines joined: the allowlist snippet may sit on a continuation line."""
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    return " ".join(s.strip() for s in lines[max(0, lineno - 6):lineno + 6])
+
+
+def test_g15_captured_child_output_goes_through_the_bounded_helper():
+    offenders = []
+    for p in _py_files(SRC):
+        for lineno in _g15_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(_rel(p), _g15_call_text(p, lineno), ALLOW_G15):
+                offenders.append(f"{_rel(p)}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G15", "run a program whose output you read with atlas_plus._proc.run_bounded(argv, "
+                                  "timeout=..., max_bytes=...): subprocess.run does not end the child's tree at the "
+                                  "timeout and reads the whole output before any size check")
+
+
+def test_the_g15_scan_sees_each_shape():
+    bad = ("import subprocess\n"
+           "r = subprocess.run(argv, capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)\n"
+           "out = subprocess.check_output(argv, timeout=5, stdin=subprocess.DEVNULL)\n"
+           "r = subprocess.run(argv, stdout=subprocess.PIPE, timeout=5, stdin=subprocess.DEVNULL)\n"
+           "r = _subprocess.run(argv, stderr=_subprocess.PIPE, timeout=5, stdin=_subprocess.DEVNULL)\n")
+    good = ("from atlas_plus import _proc\n"
+            "res = _proc.run_bounded(argv, timeout=5, max_bytes=1_000_000)\n"
+            "subprocess.run(argv, timeout=5, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)\n"
+            "subprocess.run(argv, timeout=5, stdin=subprocess.DEVNULL, stdout=log_file)\n"
+            "p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)\n")
+    assert _g15_hits(bad) == [2, 3, 4, 5]
+    assert not _g15_hits(good)
