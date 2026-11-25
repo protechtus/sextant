@@ -26,7 +26,7 @@ _DEFAULT_MIN_AGE_DAYS = 180
 _DEFAULT_MAX_HEALTH = 0.5
 
 
-def _build_inbound_refs(memory_root: Path, on_text=None) -> dict[str, int]:
+def _build_inbound_refs(memory_root: Path, on_text=None, read=None) -> dict[str, int]:
     """Return {file_stem -> inbound_ref_count} for all .md files in memory_root.
 
     An inbound ref is counted when any OTHER .memory/ file's body mentions the
@@ -35,7 +35,8 @@ def _build_inbound_refs(memory_root: Path, on_text=None) -> dict[str, int]:
     mentions both count.
 
     ``on_text(path, text)``, when given, receives each note's text as it is read, so a caller that
-    needs the text too does not read every note a second time (AG92, sweep 24).
+    needs the text too does not read every note a second time (AG92, sweep 24). ``read(path) -> str``,
+    when given, replaces ``path.read_text`` (doctor serves the notes it already read, AG112).
     """
     all_files = [
         f for f in memory_root.rglob("*.md")
@@ -89,7 +90,8 @@ def _build_inbound_refs(memory_root: Path, on_text=None) -> dict[str, int]:
 
     for md_file in all_files:
         try:
-            content = md_file.read_text(encoding="utf-8", errors="replace")
+            content = (read(md_file) if read is not None
+                       else md_file.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
         if on_text is not None:
@@ -150,6 +152,7 @@ def find_orphan_candidates(
     max_health: float = _DEFAULT_MAX_HEALTH,
     max_inbound_refs: int = 0,
     limit: int = 200,
+    read=None,
 ) -> list[dict]:
     """Find .memory/ files that are likely orphans.
 
@@ -165,6 +168,7 @@ def find_orphan_candidates(
         max_health:       Maximum health score to include (0=all four missing, 1=fully healthy).
         max_inbound_refs: Maximum number of inbound references to qualify as orphan.
         limit:            Maximum results to return.
+        read:             Optional ``read(path) -> str`` used instead of ``path.read_text``.
 
     Returns:
         list[dict] sorted by orphan_score DESC (most orphan-like first):
@@ -189,7 +193,7 @@ def find_orphan_candidates(
     def _score(path: Path, text: str) -> None:
         healths[path] = health_from_text(text, today)
 
-    inbound_map = _build_inbound_refs(memory_root, on_text=_score)
+    inbound_map = _build_inbound_refs(memory_root, on_text=_score, read=read)
 
     results = []
 
@@ -204,7 +208,7 @@ def find_orphan_candidates(
 
         # One read and one YAML parse per file: compute_file_health already returns the
         # frontmatter (the second parse doubled doctor's orphan scan, AG11 sweep 10).
-        health = healths.pop(md_file, None) or compute_file_health(md_file, today)
+        health = healths.pop(md_file, None) or compute_file_health(md_file, today, read=read)
         fm: dict = health.get("frontmatter") or {}
         h_score = health["score"]
         stem = md_file.stem

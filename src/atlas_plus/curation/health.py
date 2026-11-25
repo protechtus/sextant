@@ -26,7 +26,7 @@ _SKIP_DIRS = {"archive", "_sync", "versions", "_atlas", "anti"}
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
 
 
-def compute_file_health(path: Path, today: Optional[date] = None) -> dict:
+def compute_file_health(path: Path, today: Optional[date] = None, read=None) -> dict:
     """Compute a health dict for a single .memory/ markdown file.
 
     Returns:
@@ -36,10 +36,11 @@ def compute_file_health(path: Path, today: Optional[date] = None) -> dict:
           issues: list[str],   # human-readable list of missing fields
           frontmatter: dict,   # raw parsed frontmatter (empty on parse error)
         }
-    Returns {score: 0.0, ...} on unreadable or non-markdown files.
+    Returns {score: 0.0, ...} on unreadable or non-markdown files. ``read(path) -> str``, when given,
+    replaces ``path.read_text`` (doctor serves the notes it already read, AG112).
     """
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read(path) if read is not None else path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return _zero_health()
     return health_from_text(raw, today)
@@ -113,6 +114,7 @@ def scan_memory_health(
     scope: str = "",
     min_health: float = 0.0,
     limit: int = 200,
+    read=None,
 ) -> list[dict]:
     """Scan .memory/ for files and return health dicts for those below min_health.
 
@@ -132,7 +134,7 @@ def scan_memory_health(
         if md_file.name.startswith("_"):
             continue
 
-        health = compute_file_health(md_file, today)
+        health = compute_file_health(md_file, today, read=read)
         score = health["score"]
         if score < min_health or min_health == 0.0:
             rel = str(md_file.relative_to(memory_root)).replace("\\", "/")

@@ -678,6 +678,7 @@ class MemoryFile:
     name: str            # file name
     text: Optional[str]  # full file text, or None if unreadable
     not_utf8: bool = False   # decoded with replacement characters (a cp932/latin-1 note, AG17)
+    bom: bool = False        # the file began with a UTF-8 byte order mark (stripped from ``text``)
     bad_name: bool = False   # the file NAME is not valid UTF-8 (a legacy-encoded name, MN17)
 
 
@@ -693,6 +694,7 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
 
     base = root if root is not None else MEMORY_ROOT
     out: list[MemoryFile] = []
+    todo: list = []
     if not base.exists():
         return out
     import os as _os
@@ -727,29 +729,72 @@ def scan_memory_files(root: Optional[Path] = None) -> list["MemoryFile"]:
                 out.append(MemoryFile(rel=str(rel_path).encode("utf-8", "replace").decode("utf-8"),
                                       parts=rel_path.parts, name=name, text=None, not_utf8=True, bad_name=True))
                 continue
-            _scan_append(out, md, rel_path)
+            todo.append((len(out), md, rel_path))
+            out.append(None)  # type: ignore[arg-type]  # filled below, in walk order
+    # The reads run ahead on threads (a cold open costs ~7 ms a note on Windows; SEX-024, AG112).
+    from atlas_plus._readahead import read_texts
+    slots = {id(md): (i, rel_path) for i, md, rel_path in todo}
+    for md, raw in read_texts([md for _, md, _ in todo], read=_read_note_bytes):
+        i, rel_path = slots[id(md)]
+        out[i] = _scan_entry(md, rel_path, raw)
     return out
 
 
-def _scan_append(out: list, md: Path, rel_path: Path) -> None:
-    if True:
-        not_utf8 = False
+def _read_note_bytes(path: Path):
+    """The note's bytes, or the OSError reading it raised (the read-ahead's ``read=`` contract)."""
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        return exc
+
+
+def _scan_entry(md: Path, rel_path: Path, raw) -> "MemoryFile":
+    not_utf8 = False
+    bom = False
+    text: Optional[str]
+    if isinstance(raw, OSError):
+        text = None
+    else:
         try:
-            raw = md.read_bytes()
-            try:
-                text: Optional[str] = raw.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                text = raw.decode("utf-8", errors="replace")
-                not_utf8 = True
-        except OSError:
-            text = None
-        out.append(MemoryFile(
-            rel=str(rel_path).replace("\\", "/"),
-            parts=rel_path.parts,
-            name=md.name,
-            text=text,
-            not_utf8=not_utf8,
-        ))
+            text = raw.decode("utf-8-sig")
+            bom = raw.startswith(b"\xef\xbb\xbf")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="replace")
+            not_utf8 = True
+    return MemoryFile(
+        rel=str(rel_path).replace("\\", "/"),
+        parts=rel_path.parts,
+        name=md.name,
+        text=text,
+        not_utf8=not_utf8,
+        bom=bom,
+    )
+
+
+def scan_reader(scan: Optional[list["MemoryFile"]], root: Path):
+    """A ``read(path) -> str`` for the curation walkers that serves notes from ``scan`` instead of
+    opening them again: the text is what ``path.read_text(encoding="utf-8", errors="replace")``
+    returns (byte order mark kept, line endings translated), an unreadable note raises OSError,
+    and a path the scan did not cover is read from disk. None when there is no scan."""
+    if scan is None:
+        return None
+    by_path = {root.joinpath(*mf.parts): mf for mf in scan if mf is not None and not mf.bad_name}
+
+    def read(path: Path) -> str:
+        mf = by_path.get(path)
+        if mf is None:
+            return path.read_text(encoding="utf-8", errors="replace")
+        if mf.text is None:
+            raise OSError(f"unreadable: {mf.rel}")
+        text = mf.text.replace("\r\n", "\n").replace("\r", "\n")
+        return "\ufeff" + text if mf.bom else text
+
+    return read
+
+
+def _read_kw(scan: Optional[list["MemoryFile"]]) -> dict:
+    """``{"read": ...}`` serving notes from the shared scan, or no keyword at all without one."""
+    return {} if scan is None else {"read": scan_reader(scan, MEMORY_ROOT)}
 
 
 def check_memory_corpus(scan: Optional[list["MemoryFile"]] = None) -> dict:
@@ -979,7 +1024,7 @@ def check_convergence(scan: Optional[list["MemoryFile"]] = None) -> dict:
         return {"flagged": 0, "error": str(exc)}
 
 
-def check_decisions() -> dict:
+def check_decisions(scan: Optional[list["MemoryFile"]] = None) -> dict:
     """Return count of decision records and how many are stale (>90d without review)."""
     decisions_dir = MEMORY_ROOT / "decisions"
     if not decisions_dir.exists():
@@ -991,11 +1036,12 @@ def check_decisions() -> dict:
         total = 0
         stale = 0
         stale_titles: list[str] = []
+        read = scan_reader(scan, MEMORY_ROOT) or (lambda p: p.read_text(encoding="utf-8", errors="replace"))
         for path in sorted(decisions_dir.glob("*.md")):
             if path.name.startswith("_"):
                 continue
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = read(path)
             except OSError:
                 continue
             if not text.startswith("---"):
@@ -1367,7 +1413,7 @@ def _sparkline(values: list[float]) -> str:
     return "".join(out)
 
 
-def check_memory_health_overview() -> dict:
+def check_memory_health_overview(scan: Optional[list["MemoryFile"]] = None) -> dict:
     """Quick health overview of .memory/ files -- distribution of health scores.
 
     Runs compute_file_health() on all .memory/ files (single rglob pass).
@@ -1386,7 +1432,7 @@ def check_memory_health_overview() -> dict:
         from atlas_plus.curation.health import scan_memory_health
         # every file: a cap of 9,999 made the totals describe the first 9,999 paths of a 20,000-note corpus
         # and call it the whole (SEX-046)
-        results = scan_memory_health(MEMORY_ROOT, limit=sys.maxsize)
+        results = scan_memory_health(MEMORY_ROOT, limit=sys.maxsize, **_read_kw(scan))
         if not results:
             return {"total_files": 0, "score_0": 0, "score_25": 0, "score_50": 0,
                     "score_75": 0, "score_100": 0, "avg_score": 0.0}
@@ -1495,7 +1541,7 @@ def check_dispatcher() -> dict:
         return {"enabled": False, "error": str(exc)}
 
 
-def check_ref_graph() -> dict:
+def check_ref_graph(scan: Optional[list["MemoryFile"]] = None) -> dict:
     """Return the top hub files in .memory/ (most-referenced by other memory files).
 
     Returns {hub_count: int, top: list[{stem, inbound_count}], total_linked_files: int}.
@@ -1504,7 +1550,7 @@ def check_ref_graph() -> dict:
     """
     try:
         from atlas_plus.curation.ref_graph import build_reference_graph, find_hub_files
-        graph = build_reference_graph(MEMORY_ROOT)
+        graph = build_reference_graph(MEMORY_ROOT, **_read_kw(scan))
         hubs = find_hub_files(graph, top_n=5)
         return {
             "total_linked_files": len(graph),
@@ -1515,7 +1561,7 @@ def check_ref_graph() -> dict:
         return {"total_linked_files": 0, "hub_count": 0, "top": [], "error": str(exc)}
 
 
-def check_orphans() -> dict:
+def check_orphans(scan: Optional[list["MemoryFile"]] = None) -> dict:
     """Return count of memory orphan candidates (no inbound refs, low health, old).
 
     Uses conservative thresholds: min_age_days=180, max_health=0.5, max_refs=0.
@@ -1524,7 +1570,8 @@ def check_orphans() -> dict:
     try:
         from atlas_plus.curation.orphan import find_orphan_candidates
         results = find_orphan_candidates(
-            MEMORY_ROOT, min_age_days=180, max_health=0.5, max_inbound_refs=0, limit=50
+            MEMORY_ROOT, min_age_days=180, max_health=0.5, max_inbound_refs=0, limit=50,
+            **_read_kw(scan),
         )
         top3 = [
             {
@@ -2377,9 +2424,9 @@ def collect() -> dict:
         ("memory_gaps",       check_memory_gaps),
         ("research_gaps",     check_research_gaps),
         ("convergence",       lambda: check_convergence(mem_scan)),
-        ("decisions",         check_decisions),
-        ("orphans",           check_orphans),
-        ("ref_graph",         check_ref_graph),
+        ("decisions",         lambda: check_decisions(mem_scan)),
+        ("orphans",           lambda: check_orphans(mem_scan)),
+        ("ref_graph",         lambda: check_ref_graph(mem_scan)),
         ("rederivable",       check_rederivable),
         ("memory_quality",    lambda: check_memory_quality(mem_scan)),
         ("pending_facts",     check_pending_facts),
@@ -2393,7 +2440,7 @@ def collect() -> dict:
         ("fsdiff_count",      check_fsdiff_count),
         ("memory_trends",     lambda: read_trends(days=7)),
         ("research_quality",  check_research_quality),
-        ("memory_health",     check_memory_health_overview),
+        ("memory_health",     lambda: check_memory_health_overview(mem_scan)),
         ("untagged_by_scope", lambda: check_untagged_by_scope(mem_scan)),
         ("tui_activity",      check_tui_activity),
         ("spend",             check_spend),

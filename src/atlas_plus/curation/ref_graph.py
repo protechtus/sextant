@@ -28,7 +28,7 @@ _WIKI_LINK_RE = re.compile(r"\[\[([^\]|#]+?)(?:\|[^\]]+)?\]\]")
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)#]+?\.md)\)")
 
 
-def build_reference_graph(memory_root: Path) -> dict[str, list[str]]:
+def build_reference_graph(memory_root: Path, read=None) -> dict[str, list[str]]:
     """Build a `{stem -> [referenced stems]}` adjacency list for .memory/ files.
 
     Returns:
@@ -53,7 +53,8 @@ def build_reference_graph(memory_root: Path) -> dict[str, list[str]]:
     graph: dict[str, list[str]] = {}
     for md_file in all_files:
         try:
-            content = md_file.read_text(encoding="utf-8", errors="replace")
+            content = (read(md_file) if read is not None
+                       else md_file.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
 

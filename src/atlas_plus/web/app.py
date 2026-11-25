@@ -3196,8 +3196,38 @@ def _generate_report_isolated():
         return report_dry_run()
 
 
+def _indexed_frontmatter(memory_root) -> Optional[dict]:
+    """{relative path: frontmatter dict} from the search index (the source `memory_topics_tool`
+    aggregates from), brought up to date first; None when there is no index for this corpus yet (a panel
+    never builds a whole index) or it cannot be read (SEX-019, AG112: the cold walk parsed every note)."""
+    import json as _json
+    try:
+        from atlas_plus.mcp.memory_server import fts as _fts
+        if Path(_fts.MEMORY_ROOT) != Path(memory_root) or not Path(_fts.FTS_DB).is_file():
+            return None
+        _fts.update_incremental()
+        conn = _fts._connect()
+        try:
+            rows = conn.execute("SELECT path, frontmatter_json FROM memory_fts").fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - the file walk below is the answer of record
+        return None
+    out: dict = {}
+    for rel, fm_json in rows:
+        try:
+            out[rel] = _json.loads(fm_json) or {}
+        except ValueError:
+            continue
+    return out
+
+
 def _build_topic_index(memory_root) -> dict[str, list[str]]:
-    """Scan .memory/ for frontmatter tags: fields. Return {tag: [path, ...]} sorted by count desc."""
+    """Scan .memory/ for frontmatter tags: fields. Return {tag: [path, ...]} sorted by count desc.
+
+    The walk decides which notes count and in what order; each note's frontmatter comes from the search
+    index when it has the note, and only the notes it lacks are read and parsed here."""
+    indexed = _indexed_frontmatter(memory_root)
     import yaml as _yaml
     from atlas_plus._fsutil import inside as _fs_inside
     from atlas_plus.curation import _corpus_pass  # shared with the other report sections (SEX-046)
@@ -3214,18 +3244,23 @@ def _build_topic_index(memory_root) -> dict[str, list[str]]:
             continue
         if md_file.name.startswith("_") or not _fs_inside(md_file, memory_root, _root_resolved):
             continue  # a link out of the corpus (MN86, sweep 25)
-        try:
-            raw = _corpus_pass.read_text(md_file)
-        except OSError:
-            continue
-        if not raw.startswith("---"):
-            continue
-        end = raw.find("\n---", 3)
-        if end == -1:
-            continue
-        try:
-            fm = _corpus_pass.load_frontmatter(raw[3:end]) or {}
-        except Exception:
+        rel = str(md_file.relative_to(memory_root)).replace("\\", "/")
+        fm = indexed.get(rel) if indexed is not None else None
+        if fm is None:
+            try:
+                raw = _corpus_pass.read_text(md_file)
+            except OSError:
+                continue
+            if not raw.startswith("---"):
+                continue
+            end = raw.find("\n---", 3)
+            if end == -1:
+                continue
+            try:
+                fm = _corpus_pass.load_frontmatter(raw[3:end]) or {}
+            except Exception:
+                continue
+        if not isinstance(fm, dict):
             continue
         tags = fm.get("tags") or fm.get("tag") or []
         if isinstance(tags, str):
@@ -3233,7 +3268,6 @@ def _build_topic_index(memory_root) -> dict[str, list[str]]:
             tags = [t.strip() for t in tags.replace(";", ",").split(",") if t.strip()]
         if not isinstance(tags, list):
             continue
-        rel = str(md_file.relative_to(memory_root)).replace("\\", "/")
         for tag in tags:
             tag = str(tag).strip().lower()
             if tag:
