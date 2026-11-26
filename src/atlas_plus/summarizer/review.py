@@ -24,7 +24,16 @@ def review(session_log_text: str, updates_text: str) -> tuple[bool, str, str]:
         console.print(Panel(updates_text, title="Proposed updates.txt entry", border_style="yellow"))
 
         console.print("\n[bold]Accept?[/bold]  [a] accept   [e] edit session log   [u] edit updates   [r] reject\n")
-        choice = input("Choice [a/e/u/r]: ").strip().lower()
+        from atlas_plus import _prompt
+        choice = _prompt.ask_line("Choice [a/e/u/r]: ")
+        if choice is None:  # no console, no piped answer: an EOFError traceback before (AG126, LES-082)
+            import sys as _sys
+            from atlas_plus import branding as _br
+            print("No answer to the review question: nothing was written. Next: run "
+                  f"`{_br.prog('atlas-summarize-session')}` in a terminal to review it, or add --auto-commit to write "
+                  "it without the question.", file=_sys.stderr)
+            return False, session_log_text, updates_text
+        choice = choice.strip().lower()
 
         if choice in ("a", ""):
             return True, session_log_text, updates_text

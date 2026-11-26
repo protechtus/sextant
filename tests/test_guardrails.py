@@ -2085,3 +2085,213 @@ def test_g22_printed_corpus_paths_go_through_term_safe(tmp_path, monkeypatch, ca
         assert "g22-" in out, (cmd, out)
         raw = [hex(ord(c)) for c in out if _ud.category(c) == "Cf" or (_ud.category(c) == "Cc" and c not in "\n\r\t")]
         assert not raw, (cmd, raw)
+
+
+# --- G23 (AG125, ATL-074): a dashboard panel that fails never shows the exception's own text ---
+# AST scan of every file under src/atlas_plus/web/ (no hard-coded file list: the private tree's extra
+# panels are scanned too). Inside an `except ... as <name>:` block, an HTML body (an f-string holding
+# "<", or a call to HTMLResponse / a *_html renderer) may not read <name> except for its class
+# (`type(<name>).__name__`, `<name>.__class__`) or an HTTP status (`<name>.response.status_code`).
+# JSON routes that return a `detail` / `error` key are a different surface and are not scanned.
+_G23_OK_ATTRS = {"__class__", "response", "status_code"}
+# Reviewed list, only shrinks. Key: "<file>::<enclosing function>". Reason required.
+_G23_REVIEWED = {
+    "app.py::watchtower_panel": "WatchtowerError messages are written for the user by the SIEM client and "
+                                "render_error_html adds its NEXT_STEP; they never carry a raw exception's text",
+}
+
+
+def _g23_leaks(node, name):
+    parents = {c: p for p in ast.walk(node) for c in ast.iter_child_nodes(p)}
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and n.id == name:
+            par = parents.get(n)
+            if isinstance(par, ast.Attribute) and par.attr in _G23_OK_ATTRS:
+                continue
+            if isinstance(par, ast.Call) and isinstance(par.func, ast.Name) and par.func.id == "type":
+                continue
+            return True
+    return False
+
+
+def _g23_htmlish(n):
+    if isinstance(n, ast.JoinedStr):
+        return any(isinstance(v, ast.Constant) and "<" in str(v.value) for v in n.values)
+    if isinstance(n, ast.Call):
+        f = n.func
+        nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
+        return nm == "HTMLResponse" or nm.endswith("_html")
+    return False
+
+
+def _g23_offenders(source, fname):
+    found = set()
+
+    def visit(node, fn):
+        for child in ast.iter_child_nodes(node):
+            f2 = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
+            if isinstance(child, ast.ExceptHandler) and child.name:
+                for sub in child.body:
+                    if any(_g23_htmlish(n) and _g23_leaks(n, child.name) for n in ast.walk(sub)):
+                        found.add(f"{fname}::{f2 or '<module>'}")
+            visit(child, f2)
+
+    visit(ast.parse(source), "")
+    return found
+
+
+def _g23_scan(web_dir):
+    found = set()
+    for path in sorted(web_dir.rglob("*.py")):
+        rel = path.relative_to(web_dir).as_posix()
+        found |= _g23_offenders(path.read_text(encoding="utf-8"), rel)
+    return found
+
+
+def test_g23_panel_failure_text_never_shows_the_exception_message():
+    web_dir = SRC / "web"
+    assert web_dir.is_dir(), web_dir
+    found = _g23_scan(web_dir)
+    new = sorted(found - set(_G23_REVIEWED))
+    assert not new, (
+        "A dashboard panel shows the exception's own text on the page (a host path, a module name, an SQL "
+        "message, and no next step): " + ", ".join(new) + ". Write `return _panel_failure(\"<Panel name>\", "
+        "exc)` instead (web/app.py: it names the panel, the class and the next step, and logs the detail).")
+    stale = sorted(k for k in _G23_REVIEWED if k not in found)
+    assert not stale, f"G23 reviewed entries no longer offend; remove them (the list only shrinks): {stale}"
+    assert all(str(v).strip() for v in _G23_REVIEWED.values()), "every G23 reviewed entry needs a reason"
+
+
+def test_g23_self_test_a_planted_offender_trips_the_scan():
+    planted = (
+        "def panel(request):\n"
+        "    try:\n"
+        "        read()\n"
+        "    except Exception as err:\n"
+        "        return HTMLResponse(f'<div>Error: {escape(str(err))}</div>')\n"
+        "def fine(request):\n"
+        "    try:\n"
+        "        read()\n"
+        "    except Exception as err:\n"
+        "        return HTMLResponse(f'<div>{type(err).__name__}</div>')\n"
+        "def bare(request):\n"
+        "    try:\n"
+        "        read()\n"
+        "    except Exception as e:\n"
+        "        html = f'<p>{e}</p>'\n"
+        "        return HTMLResponse(html)\n"
+    )
+    assert _g23_offenders(planted, "planted.py") == {"planted.py::panel", "planted.py::bare"}
+
+
+# --- G24 (lesson LES-082, AG126): every question goes through atlas_plus/_prompt.py ------------------------------
+# On Windows the NUL device passes isatty(): a question asked behind `isatty()` alone is printed to nobody, then
+# refused. `_prompt.is_terminal` checks the console mode; `_prompt.confirm` / `_prompt.ask_line` print no question
+# without a console, read a piped line, and end an empty or closed stdin with a next step. This block is
+# self-contained (its own helpers, prefixed _g24_).
+
+_G24_QUESTION_ATTRS = {("typer", "confirm"), ("typer", "prompt"), ("click", "confirm"), ("click", "prompt"),
+                       ("Confirm", "ask"), ("Prompt", "ask"), ("getpass", "getpass"), ("console", "input")}
+_G24_QUESTION_NAMES = {"input", "getpass"}
+
+# (file relative to src/atlas_plus, enclosing function): reason. This list only shrinks.
+_G24_REVIEWED_QUESTIONS = {
+    ("_prompt.py", "confirm"): "the helper itself (typer.confirm only behind is_terminal)",
+    ("brain/cli.py", "run"): "the Brain chat loop reads commands, not a yes/no; EOF and Ctrl-C end it with 'Bye.'",
+}
+# `.isatty()` that does NOT decide whether to ask a question: (file, enclosing function): reason. Only shrinks.
+_G24_REVIEWED_ISATTY = {
+    ("_prompt.py", "is_terminal"): "the one console check",
+    ("_console.py", "utf8_stdout_when_piped"): "chooses an output encoding, asks nothing",
+    ("_console.py", "write_text_out"): "chooses an output encoding (console, hook pipe or plain pipe), asks nothing",
+    ("doctor/cli.py", "_plain_if_piped"): "colours or plain text for the report",
+    ("hooks/scope.py", "read_payload"): "a hook reads its JSON payload; a console (or NUL) means no payload",
+    ("hooks/session_start.py", "main"): "colours or plain text for the printed context",
+    ("summarizer/hook_entry.py", "_transcript_root_from_payload"): "the Stop payload; a console (or NUL) means none",
+    ("summarizer/hook_entry.py", "main"): "chooses an output encoding, asks nothing",
+}
+
+
+def _g24_enclosing(tree):
+    """Map each node to the name of the innermost function that holds it ("<module>" outside any)."""
+    owner = {}
+
+    def walk(node, name):
+        for child in ast.iter_child_nodes(node):
+            inner = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else name
+            owner[child] = inner
+            walk(child, inner)
+    walk(tree, "<module>")
+    return owner
+
+
+def _g24_scan_source(text):
+    """(kind, function, call) for every question call and every `.isatty()` in one module's source."""
+    tree = ast.parse(text)
+    owner = _g24_enclosing(tree)
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if isinstance(f, ast.Name) and f.id in _G24_QUESTION_NAMES:
+            found.append(("question", owner.get(node, "<module>"), f.id))
+        elif isinstance(f, ast.Attribute):
+            base = f.value
+            base_name = base.id if isinstance(base, ast.Name) else (base.attr if isinstance(base, ast.Attribute) else "")
+            if (base_name, f.attr) in _G24_QUESTION_ATTRS:
+                found.append(("question", owner.get(node, "<module>"), f"{base_name}.{f.attr}"))
+            elif f.attr == "isatty":
+                found.append(("isatty", owner.get(node, "<module>"), "isatty"))
+    return found
+
+
+def _g24_scan_tree(root):
+    out = {"question": {}, "isatty": {}}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for kind, func, call in _g24_scan_source(text):
+            out[kind].setdefault((rel, func), []).append(call)
+    return out
+
+
+def test_g24_questions_go_through_the_prompt_helper():
+    found = _g24_scan_tree(SRC)
+    new_q = sorted(k for k in found["question"] if k not in _G24_REVIEWED_QUESTIONS)
+    assert not new_q, (
+        "G24 (LES-082): a question is asked outside atlas_plus/_prompt.py: " + ", ".join(
+            f"{f}:{fn} ({'/'.join(found['question'][(f, fn)])})" for f, fn in new_q)
+        + ". On Windows `< NUL` passes isatty(), so the question is printed to nobody. Write instead: "
+        "`from atlas_plus import _prompt` then `_prompt.confirm(question, rerun=<the --yes form, built with "
+        "_next_step / branding>)` for a yes/no, or `_prompt.ask_line(question)` (None = no answer: print the next "
+        "step) for free text.")
+    new_t = sorted(k for k in found["isatty"] if k not in _G24_REVIEWED_ISATTY)
+    assert not new_t, (
+        "G24 (LES-082): `.isatty()` outside the reviewed list: " + ", ".join(f"{f}:{fn}" for f, fn in new_t)
+        + ". If it decides whether to ASK, use `_prompt.is_terminal(stream)` (the console-mode check); if it only "
+        "chooses an encoding or colours, add it to _G24_REVIEWED_ISATTY with the reason.")
+    stale = sorted(k for k in list(_G24_REVIEWED_QUESTIONS) + list(_G24_REVIEWED_ISATTY)
+                   if k not in found["question"] and k not in found["isatty"])
+    assert not stale, f"G24: reviewed entries that no longer match anything (remove them; the list only shrinks): {stale}"
+
+
+def test_g24_self_test_flags_planted_offenders():
+    planted = (
+        "import typer\n"
+        "def ask_it():\n"
+        "    if sys.stdin.isatty():\n"
+        "        typer.confirm('Go?', abort=True)\n"
+        "    return input('name? ')\n"
+        "def harmless():\n"
+        "    _capture_input({}, 'x', None)\n"
+        "    console.print('input(')\n"
+    )
+    hits = _g24_scan_source(planted)
+    assert ("question", "ask_it", "typer.confirm") in hits
+    assert ("question", "ask_it", "input") in hits
+    assert ("isatty", "ask_it", "isatty") in hits
+    assert not [h for h in hits if h[1] == "harmless"], hits

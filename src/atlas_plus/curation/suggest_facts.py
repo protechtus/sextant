@@ -714,11 +714,16 @@ def _review_candidates(
 
         # Interactive prompt
         while True:
-            try:
-                choice = input("  [a]pprove  [s]kip  [e]dit  [q]uit ? ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                _print("\n[yellow]Aborted.[/yellow]" if console else "\nAborted.")
+            from atlas_plus import _prompt
+            choice = _prompt.ask_line("  [a]pprove  [s]kip  [e]dit  [q]uit ? ")
+            if choice is None:  # no console and no piped answer: say what to run (LES-082, AG126)
+                import sys as _sys
+                from atlas_plus import branding as _br
+                print(f"\nAborted: no answer for the remaining candidate(s); nothing more was written. Next: run "
+                      f"`{_br.prog('atlas-suggest-facts')}` in a terminal to review them, or add --auto to approve "
+                      "only high-confidence facts without questions.", file=_sys.stderr)
                 return {"approved": approved, "skipped": skipped, "written": written}
+            choice = choice.strip().lower()
 
             if choice == "q":
                 _print("[yellow]Quit.[/yellow]" if console else "Quit.")
@@ -738,10 +743,10 @@ def _review_candidates(
                 break
             elif choice == "e":
                 print(f"  Current: {cand['fact']}")
-                try:
-                    new_fact = input("  New text: ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    break
+                new_fact = _prompt.ask_line("  New text: ")
+                if new_fact is None:  # no answer: keep the text and ask again (AG126)
+                    continue
+                new_fact = new_fact.strip()
                 if new_fact:
                     cand["fact"] = new_fact
                 # Loop back to re-prompt with edited fact

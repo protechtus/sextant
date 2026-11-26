@@ -532,18 +532,7 @@ def state_inventory(state: Path) -> list[tuple[str, str, int]]:
     return out
 
 
-def _is_terminal(stream) -> bool:
-    """A person at a console: on Windows NUL (`< NUL`, Git Bash `< /dev/null`) passes isatty(), so the console mode decides."""
-    try:
-        if not stream or not stream.isatty():
-            return False
-        if os.name != "nt":
-            return True
-        import ctypes, msvcrt  # noqa: E401
-        handle, mode = msvcrt.get_osfhandle(stream.fileno()), ctypes.c_uint32()
-        return bool(ctypes.windll.kernel32.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)))
-    except (ValueError, OSError, AttributeError):
-        return False
+from atlas_plus._prompt import is_terminal as _is_terminal  # LES-082: one console check (AG126)
 
 
 def _ask_path(prompt: str, ask) -> str:

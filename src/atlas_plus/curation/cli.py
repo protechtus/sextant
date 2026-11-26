@@ -139,14 +139,12 @@ def cmd_archive(
     """Archive a .memory/ file (move to archive/; never delete)."""
     from atlas_plus.curation.stale import archive_file
 
-    if not yes:
-        try:
-            typer.confirm(f"Archive '{_safe(path)}'? It will be moved to archive/. Continue?", abort=True)
-        except typer.Abort:  # a closed stdin printed only "Aborted!" (AG122)
-            from atlas_plus import _next_step as _ns
-            typer.echo(f"Aborted: nothing was archived. Next: answer y at the question, or run "
-                       f"{_ns.command('review archive <path> --yes')} to archive without it.", err=True)
-            raise typer.Exit(1)
+    if not yes:  # LES-082: no question printed without a console; a closed stdin names --yes (AG122, AG126)
+        from atlas_plus import _next_step as _ns, _prompt
+        _say = dict(rerun=_ns.command('review archive <path> --yes'), nothing="nothing was archived",
+                    without="to archive without it")
+        if not _prompt.confirm(f"Archive '{_safe(path)}'? It will be moved to archive/. Continue?", **_say):
+            _prompt.refuse(_say["nothing"], _say["rerun"], _say["without"])
 
     import sys as _sys
 

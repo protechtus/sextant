@@ -106,3 +106,62 @@ def test_shipped_panels_survive_the_fuzz_corpus(render, sample, tmp_path):
         except Exception as exc:  # noqa: BLE001 -- collect every failing key, not the first
             failures.append(f"{where}: {type(exc).__name__}: {str(exc)[:120]}")
     assert not failures, "\n".join(failures)
+
+
+# --- the two panels that render inside their route (2026-11-25) --------------------------------
+# The maintenance panel and the auth-failures page build their HTML in the route itself, so the
+# fuzz values go in at the data source and the fragment is read through the in-process client.
+
+MAINTENANCE_SAMPLE = [{"job_id": "nightly_backup", "last_run_at": "2026-01-02T03:00:00+00:00",
+                       "outcome": "ok", "error": None, "run_count": 7}]
+
+
+@pytest.fixture()
+def dashboard(monkeypatch):
+    import os
+    key = "panel-fuzz-key-0123456789"
+    monkeypatch.setenv("ATLAS_WEB_API_KEY", os.environ.get("ATLAS_WEB_API_KEY") or key)
+    monkeypatch.setenv("ATLAS_BRAIN_URL", "http://127.0.0.1:9")
+    from fastapi.testclient import TestClient
+    from atlas_plus.web import app as web
+    monkeypatch.setattr(web, "BRAIN_URL", "http://127.0.0.1:9", raising=False)
+    client = TestClient(web.app, raise_server_exceptions=False)
+    return web, client, {"Authorization": "Bearer " + os.environ["ATLAS_WEB_API_KEY"]}
+
+
+def test_the_maintenance_panel_survives_the_fuzz_corpus(dashboard, monkeypatch):
+    web, client, auth = dashboard
+    from atlas_plus.brain import tasks
+    monkeypatch.setattr(tasks, "list_job_runs", lambda *a, **k: MAINTENANCE_SAMPLE)
+    good = client.get("/api/maintenance", headers=auth)   # positive control: the sample reaches the page
+    assert good.status_code == 200 and " ok / " in good.text, good.text[:300]
+    failures = []
+    for path, vid, payload in mutations(MAINTENANCE_SAMPLE):
+        where = f"{'/'.join(map(str, path)) or '<root>'}={vid}"
+        monkeypatch.setattr(tasks, "list_job_runs", lambda *a, _p=payload, **k: _p)
+        res = client.get("/api/maintenance", headers=auth)
+        if res.status_code != 200:
+            failures.append(f"{where}: status {res.status_code}")
+            continue
+        try:
+            assert_safe_fragment(res.text, where)
+        except AssertionError as exc:
+            failures.append(str(exc)[:160])
+    assert not failures, "\n".join(failures)
+
+
+def test_the_auth_failures_page_escapes_and_bounds_what_a_stranger_sent(dashboard):
+    """Its rows are what an unauthenticated caller chose: the path and the address header."""
+    web, client, auth = dashboard
+    web.AUTH_FAILURES = type(web.AUTH_FAILURES)()   # a clean log for this test
+    try:
+        client.get("/api/maintenance?x=" + HTML_PROBE)                      # no key: recorded
+        client.get("/api/" + "A" * 6000, headers={"X-Forwarded-For": HTML_PROBE})
+        client.get("/api/maintenance", headers={"Authorization": "Bearer " + HTML_PROBE})
+        res = client.get("/api/security/auth-failures.html?limit=200", headers=auth)
+        assert res.status_code == 200
+        assert "No auth failures recorded" not in res.text, "the probes were not recorded: the test proves nothing"
+        assert res.text.count("<tr>") >= 3, res.text[:300]
+        assert_safe_fragment(res.text, "auth-failures page")
+    finally:
+        web.AUTH_FAILURES = type(web.AUTH_FAILURES)()

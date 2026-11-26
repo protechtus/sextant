@@ -455,7 +455,7 @@ available and is what the deeper docs reference):
 | `sextant-init` | `atlas-init` | scaffold a fresh memory corpus |
 | `sextant-doctor` | `atlas-doctor` | self-health checks |
 | `sextant-mcp` | `atlas-memory-mcp` | the MCP memory server |
-| `sextant-web` | `atlas-web-ui` | web dashboard |
+| `sextant-web` | `atlas-web-ui` | web dashboard (`sextant web` starts it too; it needs a key first and prints how to make one and where to open the page) |
 | `sextant-brain` | `atlas-brain` | local Brain task-queue server |
 | `sextant-backup` | `atlas-backup` | backup tooling |
 | `sextant-transcripts` | `atlas-transcripts` | transcript capture/search |

@@ -98,14 +98,10 @@ def restore_cmd(
     console.print(f"  [yellow]WARNING: Stop Brain before restoring.[/yellow]")
 
     if not yes:
-        try:
-            confirm = typer.confirm("Proceed with restore?", default=False)
-        except typer.Abort:  # a closed stdin printed only "Aborted!" (AG122's sibling, SEX-048)
-            from atlas_plus import branding
-            typer.echo("Aborted: nothing was restored. Next: answer y at the question, or run "
-                       f"`{branding.prog('atlas-db-backup')} restore <snapshot> --yes` to restore without it.",
-                       err=True)
-            raise typer.Exit(1)
+        from atlas_plus import _prompt, branding  # LES-082 (AG126); a closed stdin names --yes (SEX-048)
+        confirm = _prompt.confirm("Proceed with restore?", default=False,
+                                  rerun=f"`{branding.prog('atlas-db-backup')} restore <snapshot> --yes`",
+                                  nothing="nothing was restored", without="to restore without it")
         if not confirm:
             console.print("[dim]Restore cancelled.[/dim]")
             return

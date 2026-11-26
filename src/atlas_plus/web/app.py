@@ -53,6 +53,21 @@ from atlas_plus import paths as atlas_paths
 
 log = logging.getLogger("atlas.web")
 
+
+def _panel_failure(panel: str, exc: BaseException) -> HTMLResponse:
+    """The red fragment a dashboard panel answers with when it could not load (AG125, guardrail G23).
+
+    It names the panel, the exception's class and the next step; the exception's own text (a host
+    path, a module name, an SQL message) goes to the dashboard log, never to the page."""
+    from atlas_plus import _next_step
+    log.warning("%s panel could not load", panel, exc_info=exc)
+    nxt = _next_step.command("doctor").strip("`")
+    return HTMLResponse(
+        f'<div class="text-red-400 text-xs">The {_html_mod.escape(panel)} panel hit an error and could not load '
+        f'({_html_mod.escape(type(exc).__name__)}); the details are in the dashboard log. '
+        f'Next: run <code>{_html_mod.escape(nxt)}</code>.</div>'
+    )
+
 WEB_PORT      = atlas_paths.env_int("ATLAS_WEB_PORT", 8766)
 WEB_HOST      = os.environ.get("ATLAS_WEB_HOST", "127.0.0.1")
 API_KEY       = os.environ.get("ATLAS_WEB_API_KEY", "")
@@ -949,10 +964,7 @@ async def maintenance_panel(request: Request):
         from atlas_plus.brain import maintenance as _mt
         summary = _mt.summarize_maintenance(_ts.list_job_runs())
     except Exception as exc:
-        return HTMLResponse(
-            f'<div class="text-red-400 text-xs">maintenance unavailable: '
-            f'{_html_mod.escape(str(exc))}</div>'
-        )
+        return _panel_failure("Maintenance", exc)
 
     cls = {"ok": "text-green-400", "stale": "text-yellow-400",
            "error": "text-red-400", "unknown": "text-gray-500"}
@@ -990,10 +1002,7 @@ async def security_audit_panel(request: Request):
         summary = _sec.summarize_security(_sec.read_audit_index())
         return HTMLResponse(_sec.render_panel(summary))
     except Exception as exc:
-        return HTMLResponse(
-            f'<div class="text-red-400 text-xs">security audit unavailable: '
-            f'{_html_mod.escape(str(exc))}</div>'
-        )
+        return _panel_failure("Security audit", exc)
 
 
 @app.get("/api/loop/status", response_class=HTMLResponse)
@@ -1010,10 +1019,7 @@ async def loop_status_panel(request: Request):
         summary = _loops.summarize_loops(_loops.read_loop_state())
         return HTMLResponse(_loops.render_panel(summary))
     except Exception as exc:
-        return HTMLResponse(
-            f'<div class="text-red-400 text-xs">loop status unavailable: '
-            f'{_html_mod.escape(str(exc))}</div>'
-        )
+        return _panel_failure("Build loops", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1052,9 +1058,7 @@ async def agents_html(request: Request):
             return HTMLResponse(  # on Windows a refused loopback connect reads as ConnectTimeout, so the "not running" branch never fired (AG54)
                 f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it (<code>sextant-brain</code>), or set ATLAS_BRAIN_URL.</div>'
             )
-        return HTMLResponse(
-            f'<div class="text-red-400 text-xs">Brain unreachable: {type(exc).__name__}: {_html_mod.escape(str(exc)[:160])}</div>'
-        )
+        return _panel_failure("Agents", exc)
 
     online_count = sum(1 for a in agents if a.get("online"))
 
@@ -1168,7 +1172,7 @@ async def tasks_partial(request: Request, limit: int = 20, status: Optional[str]
             limit=min(limit, 100),
         )
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Tasks", exc)
 
     if not items:
         return HTMLResponse('<div class="text-slate-500 text-xs">No tasks yet.</div>')
@@ -2034,10 +2038,10 @@ async def chat_history(request: Request, session_id: str = ""):
         r.raise_for_status()
         data = r.json()
         messages = data.get("messages", [])
-    except httpx.ConnectError:
+    except (httpx.ConnectError, httpx.ConnectTimeout):  # a refused loopback connect is a ConnectTimeout on Windows (AG54, AG125)
         return HTMLResponse(f'<div class="text-red-400 text-xs">Brain not running or not reachable at {_html_mod.escape(BRAIN_URL)}: start it (<code>sextant-brain</code>), or set ATLAS_BRAIN_URL.</div>')
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc))}</div>')
+        return _panel_failure("Chat history", exc)
     if not messages:
         return HTMLResponse('<div class="text-slate-500 text-xs">No history for this session.</div>')
     rows: list[str] = [f'<div class="text-slate-500 text-xs mb-2">{len(messages)} messages &mdash; session: {_html_mod.escape(session_id)}</div>']
@@ -2099,7 +2103,7 @@ async def improvement_stats_partial(request: Request):
         from atlas_plus.brain import improvement as _imp
         stats = await asyncio.to_thread(_imp.all_agent_stats)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Improvement stats", exc)
     if not stats:
         return HTMLResponse('<div class="text-slate-500 text-xs">No observations yet.</div>')
     # Batch fetch all sparkline data in one query instead of N.
@@ -2358,7 +2362,7 @@ async def pending_facts_panel(request: Request):
     except (httpx.ConnectError, httpx.TimeoutException):
         return HTMLResponse('<div class="text-slate-500 text-xs">Brain not reachable (optional: this panel fills when the Brain runs).</div>')  # a bare `Error:` under compose (AG37)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc) or exc.__class__.__name__)}</div>')
+        return _panel_failure("Pending facts", exc)
 
     if not facts:
         return HTMLResponse('<div class="text-slate-500 text-xs">No pending fact candidates. Candidates appear here after substantial Brain tasks complete.</div>')
@@ -2452,7 +2456,7 @@ async def proposals_panel(request: Request):
     except (httpx.ConnectError, httpx.TimeoutException):
         return HTMLResponse('<div class="text-slate-500 text-xs">Brain not reachable (optional: this panel fills when the Brain runs).</div>')
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc) or exc.__class__.__name__)}</div>')
+        return _panel_failure("Proposals", exc)
 
     if not rows_in:
         return HTMLResponse('<div class="text-slate-500 text-xs">No proposals waiting. The Monday supervisor and the Sunday reflexion loop file them here.</div>')
@@ -2698,7 +2702,7 @@ async def memory_gaps(request: Request, since_hours: float = 168.0):
     try:
         gaps = await asyncio.to_thread(_get_gaps)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Memory gaps", exc)
 
     if not gaps:
         return HTMLResponse(
@@ -2828,7 +2832,7 @@ async def memory_next_actions_panel(request: Request):
     try:
         data = await asyncio.to_thread(_fast_gather)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Next actions", exc)
 
     decayed = data["decayed"]
     orphans = data["orphans"]
@@ -2891,7 +2895,7 @@ async def memory_convergence(request: Request):
     try:
         flagged = await asyncio.to_thread(_get_convergence)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Convergence", exc)
 
     if not flagged:
         return HTMLResponse(
@@ -2935,7 +2939,7 @@ async def memory_decisions(request: Request):
     try:
         stale = await asyncio.to_thread(_get_decisions)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Decisions", exc)
 
     if not stale:
         return HTMLResponse(
@@ -2982,7 +2986,7 @@ async def memory_rederivable(request: Request):
     try:
         candidates = await asyncio.to_thread(_get_rederivable)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Rederivable", exc)
 
     if not candidates:
         return HTMLResponse(
@@ -3085,7 +3089,7 @@ async def memory_curation_report_panel(request: Request):
     try:
         counts = await asyncio.to_thread(_get_counts)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Curation report error: {_html_mod.escape(str(exc))}</div>')
+        return _panel_failure("Curation report", exc)
 
     banded = bool(counts.pop("_banded", False))
     caps = counts.pop("_caps", [])
@@ -3351,7 +3355,7 @@ async def memory_topics_html(request: Request):
     try:
         index = await asyncio.to_thread(_scan)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Topics", exc)
 
     if not index:
         return HTMLResponse('<div class="text-slate-500 text-xs">No tags found in .memory/ frontmatter.</div>')
@@ -3459,7 +3463,7 @@ async def temporal_stats(request: Request):
     try:
         stats = await asyncio.to_thread(_get_stats)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Temporal graph error: {exc}</div>')
+        return _panel_failure("Temporal graph", exc)
 
     e_count = stats.get("entities", 0)
     f_count = stats.get("facts_active", 0)
@@ -3520,7 +3524,7 @@ async def temporal_query(request: Request, q: str = "", mode: str = "current"):
     try:
         results, warnings = await asyncio.to_thread(_do_query)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Query error: {exc}</div>')
+        return _panel_failure("Temporal query", exc)
 
     if not results:
         return HTMLResponse(f'<div class="text-slate-500 text-xs">No results for &quot;{_html_mod.escape(q)}&quot;</div>')
@@ -3667,7 +3671,7 @@ async def temporal_history_panel(request: Request, entity: str = "", limit: int 
     try:
         data = await asyncio.to_thread(_get_history)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc))}</div>')
+        return _panel_failure("Temporal history", exc)
 
     if data is None:
         ent_esc = _html_mod.escape(entity[:60])
@@ -3773,7 +3777,7 @@ async def inbox_list(request: Request, status_filter: str = ""):
     try:
         items = list_items(status=status_filter or None)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Inbox", exc)
     if not items:
         return HTMLResponse('<div class="text-slate-500 text-xs">Inbox empty.</div>')
     status_colors = {
@@ -4145,7 +4149,7 @@ async def ticket_board(request: Request, project: str = "", status_filter: str =
         else:
             tickets_list = [t for t in all_tickets if t.status == status_filter]
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Ticket board", exc)
 
     if not tickets_list:
         return HTMLResponse('<div class="text-slate-500 text-xs">No tickets.</div>')
@@ -4322,9 +4326,7 @@ async def operator_queue_html(request: Request):
     try:
         human = list_tickets(assignee="human")
     except Exception as exc:
-        return HTMLResponse(
-            f'<div class="text-red-400 text-xs">Error: {_html_mod.escape(str(exc))}</div>'
-        )
+        return _panel_failure("Operator queue", exc)
     open_statuses = {"todo", "in-progress", "blocked"}
     queue = [t for t in human if t.status in open_statuses]
     today = _date.today().isoformat()
@@ -5089,7 +5091,7 @@ async def brain_sessions_list(request: Request, limit: int = 30):
     try:
         sessions = await asyncio.to_thread(_list)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Brain sessions", exc)
 
     if not sessions:
         return HTMLResponse('<div class="text-slate-500 text-xs">No Brain sessions found.</div>')
@@ -5137,7 +5139,7 @@ async def brain_session_messages(session_id: str, request: Request):
     try:
         messages = await asyncio.to_thread(_get)
     except Exception as exc:
-        return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {exc}</div>')
+        return _panel_failure("Brain session", exc)
 
     if not messages:
         return HTMLResponse(

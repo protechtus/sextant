@@ -23,6 +23,28 @@ In short, since 0.1.0: the first minutes of a new install. Every failure ends wi
 
 ### Changed
 
+- A dashboard panel that cannot load says which panel, the kind of error and the next step (AG125, sweep 38;
+  lesson LES-096). Twenty-four HTML panels answered a failure with the caught exception's own text
+  (`maintenance unavailable: ...`, `Error: ...`): a host path, a module name or an SQL message on the page,
+  no next step, and in fifteen of them the text was not escaped. Each now reads "The <name> panel hit an error
+  and could not load (<error class>); the details are in the dashboard log. Next: run `sextant doctor`.", and
+  the detail goes to the dashboard's log with its traceback. The chat history panel also names "Brain not
+  running" on Windows, where a refused local connect arrives as a timeout. A new tree-wide check (G23) fails
+  on any HTML body under `web/` that interpolates a caught exception. JSON routes are a different surface and
+  are unchanged (21 of them return the exception text in `detail`, `error` or `reason`).
+- A question is asked only when someone can answer it (AG126, sweep 38; lesson LES-082). On Windows the NUL
+  device passes the usual terminal test, so `sextant review archive <path> < NUL`, the temporal graph's
+  `reset` and the database backup's `restore` printed their yes/no question to nobody and then refused; a
+  piped answer printed the question too. One module, `atlas_plus/_prompt.py`, now holds the console check
+  (console mode on Windows) and the question helpers: without a console no question is printed, a piped line
+  still answers, and an empty or closed input ends with the sentence that names the `--yes` form. The session
+  summary review ended in a Python traceback (EOFError) on a closed input and the suggested-facts review in a
+  bare "Aborted."; both now end with a next step and write nothing. A new tree-wide check (G24) fails on any
+  question asked outside that module, and on a terminal test that decides whether to ask.
+- The shared type-fuzz list (lesson LES-071) also runs against the maintenance panel and the auth-failures
+  page, through their routes; both held (nothing to fix), and both are pinned.
+- The README's command table says how the dashboard starts (`sextant web`, and that it prints how to make its
+  key and where to open the page); a walk on Python 3.13 found the dashboard named only as a table row.
 - Dashboard cards that read a file another program wrote hold against a wrong-shaped file (KL7, sweep 37;
   lesson LES-071). One shared list of awkward values (a string where a number belongs, a list, a mapping,
   NaN, Infinity, a huge integer, a 1 MB string, HTML) is now placed at every key the Security audit card and
