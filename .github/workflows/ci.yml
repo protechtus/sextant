@@ -25,12 +25,18 @@ jobs:
         # Actions allowance, and shared code is one tree, so the public run already covers
         # the other two platforms (2026-11-20).
         os: ${{ fromJSON(github.repository == 'protechtus/sextant' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
-        python-version: ["3.11"]
-        # One 3.12 lane (ubuntu only): validates the 3.12 classifier the
-        # public pyproject claims without doubling macOS/windows minutes.
+        # 3.13 is what python.org hands a newcomer today, so the public repository runs it on
+        # all three systems beside the 3.11 floor (SEX-054, 2026-11-25). The private repository
+        # keeps one version, as it keeps one system.
+        python-version: ${{ fromJSON(github.repository == 'protechtus/sextant' && '["3.11", "3.13"]' || '["3.11"]') }}
+        # One ubuntu lane each for 3.12 and 3.14: every Python classifier the public pyproject
+        # claims is run by this job (tests/test_sex054_ci_python_matrix.py holds that), without
+        # doubling macOS/windows minutes.
         include:
           - os: ubuntu-latest
             python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.14"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0

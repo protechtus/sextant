@@ -55,9 +55,36 @@ class _NeverRaised(Exception):
     pass
 
 
+def _delegated_prog_name():
+    """The program name for an app the umbrella command handed off to, when the umbrella itself was
+    started as `python -m atlas_plus` (the form `sextant setup` prints). The hand-off rewrites
+    argv[0] to the command's own name (`sextant review`, `sextant-transcripts`), and Click, seeing a
+    `python -m` start, glued that onto the package: the usage line read `python -m
+    atlas_plus.sextant review` and `python -m atlas_plus.sextant-transcripts`, modules that do not
+    exist. None when there is nothing to correct (a console script, a direct `python -m` of a module,
+    a test runner)."""
+    import os
+    import sys
+
+    main = sys.modules.get("__main__")
+    if getattr(main, "__package__", None) != "atlas_plus" or not sys.argv or not sys.argv[0]:
+        return None
+    name = sys.argv[0]
+    if os.sep in name or "/" in name or os.path.exists(name):
+        return None   # a real path: the umbrella itself, Click names it correctly
+    first, _, rest = name.partition(" ")
+    if first in ("sextant", "atlas-plus"):
+        return "python -m atlas_plus" + (" " + rest if rest else "")
+    return name
+
+
 class Typer(_typer.Typer):
     def __call__(self, *args, **kwargs):
         kwargs.setdefault("windows_expand_args", False)
+        if "prog_name" not in kwargs:
+            _prog = _delegated_prog_name()
+            if _prog:
+                kwargs["prog_name"] = _prog
         if kwargs.get("standalone_mode", True) is False:
             return super().__call__(*args, **kwargs)
         # Click's usage errors ended at a bare "No such option" / "Missing argument" box, the

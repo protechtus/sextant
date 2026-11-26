@@ -1666,7 +1666,10 @@ def test_the_g18_static_scan_sees_each_shape():
 #   reader reads the file descriptor (os.read(sys.stdin.fileno(), ...)), as hooks/scope.py does.
 #   Reading a CHILD's stdout on a daemon thread (roundtrip.py's _pump) is fine: that stream belongs
 #   to the child and is not the interpreter's sys.stdin. The scan reads the target function's own
-#   body (nested defs included); a reader it calls in another function is out of its sight.
+#   body (nested defs included) and, since 2026-11-25 (SEX-053 item 6), every function of the
+#   same module it reaches by a plain call (`helper()`, `self.helper()`), a thread made a daemon
+#   after construction (`t.daemon = True`, `t.setDaemon(True)`), a positional target and the
+#   `run` of a Thread subclass that is a daemon. A reader in ANOTHER module is out of its sight.
 # ----------------------------------------------------------------------------------------------
 
 # (relative path, snippet on the line, reason)
@@ -1683,21 +1686,89 @@ def _g19_is_stdin(node: ast.AST) -> bool:
             and isinstance(node.value, ast.Name) and node.value.id.lstrip("_") == "sys")
 
 
+def _g19_is_thread_call(n: ast.AST) -> bool:
+    return isinstance(n, ast.Call) and _dotted(n.func).split(".")[-1] == "Thread"
+
+
+def _g19_true(node) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _g19_target_name(call: ast.Call):
+    target = {kw.arg: kw.value for kw in call.keywords if kw.arg}.get("target")
+    if target is None and len(call.args) >= 2:
+        target = call.args[1]            # Thread(group, target, ...)
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
 def _g19_daemon_targets(tree: ast.AST) -> set[str]:
-    names = set()
+    """Names of the functions a daemon thread of this module starts in."""
+    names, held = set(), {}
     for n in ast.walk(tree):
-        if not (isinstance(n, ast.Call) and _dotted(n.func).split(".")[-1] == "Thread"):
-            continue
-        kws = {kw.arg: kw.value for kw in n.keywords if kw.arg}
-        daemon = kws.get("daemon")
-        if not (isinstance(daemon, ast.Constant) and daemon.value is True):
-            continue
-        target = kws.get("target")
-        if isinstance(target, ast.Name):
-            names.add(target.id)
-        elif isinstance(target, ast.Attribute):
-            names.add(target.attr)
+        if _g19_is_thread_call(n):
+            kws = {kw.arg: kw.value for kw in n.keywords if kw.arg}
+            if _g19_true(kws.get("daemon")) and _g19_target_name(n):
+                names.add(_g19_target_name(n))
+        # t = Thread(target=f) ... made a daemon later
+        if isinstance(n, ast.Assign) and _g19_is_thread_call(n.value) and _g19_target_name(n.value):
+            for tgt in n.targets:
+                held[_dotted(tgt)] = _g19_target_name(n.value)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and _g19_true(n.value):
+            for tgt in n.targets:
+                if isinstance(tgt, ast.Attribute) and tgt.attr == "daemon" and _dotted(tgt.value) in held:
+                    names.add(held[_dotted(tgt.value)])
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "setDaemon"
+                and n.args and _g19_true(n.args[0]) and _dotted(n.func.value) in held):
+            names.add(held[_dotted(n.func.value)])
     return names
+
+
+def _g19_daemon_functions(tree: ast.AST) -> list[ast.AST]:
+    """The function nodes a daemon thread runs: the named targets, the `run` of a Thread subclass
+    that is a daemon, and every function of the module they reach by a plain call."""
+    targets = _g19_daemon_targets(tree)
+    defs: dict[str, list[ast.AST]] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(fn.name, []).append(fn)
+    todo = [fn for name in targets for fn in defs.get(name, [])]
+    for cls in ast.walk(tree):
+        if not (isinstance(cls, ast.ClassDef)
+                and any(_dotted(b).split(".")[-1] == "Thread" for b in cls.bases)):
+            continue
+        daemon = any(isinstance(s, ast.Assign) and _g19_true(s.value)
+                     and any(isinstance(t, ast.Name) and t.id == "daemon" for t in s.targets)
+                     for s in cls.body)
+        for n in ast.walk(cls):
+            if isinstance(n, ast.Assign) and _g19_true(n.value) and any(
+                    isinstance(t, ast.Attribute) and t.attr == "daemon" and _dotted(t.value) == "self"
+                    for t in n.targets):
+                daemon = True
+            if isinstance(n, ast.Call) and any(kw.arg == "daemon" and _g19_true(kw.value) for kw in n.keywords) \
+                    and _dotted(n.func).endswith("__init__"):
+                daemon = True
+        if daemon:
+            todo += [s for s in cls.body if isinstance(s, ast.FunctionDef) and s.name == "run"]
+    seen, out = set(), []
+    while todo:
+        fn = todo.pop()
+        if id(fn) in seen:
+            continue
+        seen.add(id(fn))
+        out.append(fn)
+        for n in ast.walk(fn):
+            if not isinstance(n, ast.Call):
+                continue
+            if isinstance(n.func, ast.Name):
+                todo += defs.get(n.func.id, [])
+            elif isinstance(n.func, ast.Attribute) and _dotted(n.func.value) in ("self", "cls"):
+                todo += defs.get(n.func.attr, [])
+    return out
 
 
 def _g19_hits(text: str) -> list[int]:
@@ -1705,11 +1776,8 @@ def _g19_hits(text: str) -> list[int]:
         tree = ast.parse(text)
     except SyntaxError:
         return []
-    targets = _g19_daemon_targets(tree)
     hits = set()
-    for fn in ast.walk(tree):
-        if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in targets):
-            continue
+    for fn in _g19_daemon_functions(tree):
         parents = {}
         for p in ast.walk(fn):
             for c in ast.iter_child_nodes(p):
@@ -1771,6 +1839,68 @@ def test_the_g19_scan_sees_each_shape():
             "    return proc.stdout.readline()\n"
             "threading.Thread(target=_pump, daemon=True).start()\n")
     assert _g19_hits(good) == []
+
+
+def test_the_g19_scan_sees_the_wider_shapes():
+    """SEX-053 item 6: a daemon made after construction, a subclass, a positional target, and a
+    reader the target reaches through a call in the same module."""
+    later = ("import sys, threading\n"
+             "def _read():\n"
+             "    return sys.stdin.read()\n"
+             "t = threading.Thread(target=_read)\n"
+             "t.daemon = True\n"
+             "t.start()\n")
+    assert _g19_hits(later) == [3]
+    set_daemon = later.replace("t.daemon = True", "t.setDaemon(True)")
+    assert _g19_hits(set_daemon) == [3]
+    held_on_self = ("import sys, threading\n"
+                    "class W:\n"
+                    "    def _loop(self):\n"
+                    "        return sys.stdin.buffer.read()\n"
+                    "    def go(self):\n"
+                    "        self._t = threading.Thread(target=self._loop)\n"
+                    "        self._t.daemon = True\n")
+    assert _g19_hits(held_on_self) == [4]
+    subclass = ("import sys, threading\n"
+                "class Reader(threading.Thread):\n"
+                "    daemon = True\n"
+                "    def run(self):\n"
+                "        self.raw = sys.stdin.readline()\n"
+                "class Reader2(threading.Thread):\n"
+                "    def __init__(self):\n"
+                "        super().__init__(daemon=True)\n"
+                "    def run(self):\n"
+                "        self._pull()\n"
+                "    def _pull(self):\n"
+                "        return sys.stdin.read()\n")
+    assert _g19_hits(subclass) == [5, 12]
+    positional = ("import sys, threading\n"
+                  "def _read():\n"
+                  "    return sys.stdin.read()\n"
+                  "threading.Thread(None, _read, daemon=True).start()\n")
+    assert _g19_hits(positional) == [3]
+    through_a_call = ("import sys, threading\n"
+                      "def _payload():\n"
+                      "    return sys.stdin.buffer.read()\n"
+                      "def _deeper():\n"
+                      "    return _payload()\n"
+                      "def _read():\n"
+                      "    box['raw'] = _deeper()\n"
+                      "threading.Thread(target=_read, daemon=True).start()\n")
+    assert _g19_hits(through_a_call) == [3]
+    fine = ("import sys, threading\n"
+            "def _payload():\n"
+            "    return sys.stdin.read()\n"          # read in the foreground only
+            "def _work():\n"
+            "    return 1\n"
+            "t = threading.Thread(target=_work)\n"
+            "t.daemon = True\n"
+            "class Fg(threading.Thread):\n"           # not a daemon: it is joined at exit
+            "    def run(self):\n"
+            "        return sys.stdin.read()\n"
+            "u = threading.Thread(target=_payload)\n"
+            "u.daemon = False\n")
+    assert _g19_hits(fine) == []
 
 
 # --- G20 (AG119, sweep 35): a note's frontmatter goes through atlas_plus._yaml.load_mapping ---------
@@ -1919,3 +2049,39 @@ def test_g21_self_test_a_parser_that_drops_a_word_trips_it(monkeypatch):
         return fm_json, body.replace("lighthouse", ""), confirmed
     monkeypatch.setattr(fts, "_parse_md", drops_a_word)
     assert "raise the parse revision so old indexes heal" in _g21_check(fts)
+
+
+# --- G22 (AG122, SEX-048): a corpus path printed by `review` and `versions` goes through _term.safe ---
+# Functional: the commands below run in process on a tiny corpus whose file name holds U+202E; no raw
+# format (Cf) or C0 character may reach the output. Covered: review stale, versions, versions --prune.
+def test_g22_printed_corpus_paths_go_through_term_safe(tmp_path, monkeypatch, capsys):
+    import unicodedata as _ud
+
+    import pytest
+
+    from typer.testing import CliRunner as _Runner
+    root = tmp_path / "mem"
+    (root / "reference").mkdir(parents=True)
+    (root / "versions" / "reference").mkdir(parents=True)
+    name = "g22-\u202egnp"
+    try:
+        (root / "reference" / f"{name}.md").write_text("---\nupdated: 2020-01-01\n---\nx\n", encoding="utf-8")
+        (root / "versions" / "reference" / f"{name}_2020-01-01_v1.md").write_text("x\n", encoding="utf-8")
+    except OSError:
+        pytest.skip("file system refuses U+202E in a name")
+    monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(root))
+    monkeypatch.setenv("COLUMNS", "200")
+    from atlas_plus import versions_cmd
+    from atlas_plus.curation import cli as _ccli
+    from atlas_plus.curation import stale as _cstale
+    for mod in (_ccli, _cstale):
+        if hasattr(mod, "MEMORY_ROOT"):
+            monkeypatch.setattr(mod, "MEMORY_ROOT", root)
+    outs = {"review stale": _Runner().invoke(_ccli.app, ["stale"]).output}
+    versions_cmd.main([])
+    versions_cmd.main(["--prune", "--older-than", "0", "--keep-last", "0"])
+    outs["versions"] = capsys.readouterr().out
+    for cmd, out in outs.items():
+        assert "g22-" in out, (cmd, out)
+        raw = [hex(ord(c)) for c in out if _ud.category(c) == "Cf" or (_ud.category(c) == "Cc" and c not in "\n\r\t")]
+        assert not raw, (cmd, raw)

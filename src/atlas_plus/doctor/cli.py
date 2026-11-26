@@ -1208,7 +1208,7 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
             total_files: int,
             confirmed_pct: float,     # % with last_confirmed frontmatter
             tagged_pct: float,        # % with tags: frontmatter
-            confidence_dist: {high, medium, low, none},  # file counts
+            confidence_dist: {high, medium, low, none, other, no-frontmatter},  # file counts; sums to total_files
             avg_age_days: float,      # average days since last updated
             stale_confirmed: int,     # files with last_confirmed > 90d
             anti_flagged: int,        # files with anti_flagged: true
@@ -1224,7 +1224,9 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
     tagged = 0
     stale_confirmed = 0
     anti_flagged = 0
-    confidence_dist = {"high": 0, "medium": 0, "low": 0, "none": 0}
+    # Every counted file lands in exactly one bucket: "254 files ... high:3 medium:1 none:235" summed to 239,
+    # the notes without a readable frontmatter block were counted nowhere (MN93 F5).
+    confidence_dist = {"high": 0, "medium": 0, "low": 0, "none": 0, "other": 0, "no-frontmatter": 0}
     age_sum = 0.0
     age_count = 0
 
@@ -1235,6 +1237,7 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
         total += 1
         fm = _note_fm(rec)
         if fm is None:
+            confidence_dist["no-frontmatter"] += 1
             continue
 
         # Confirmation
@@ -1253,11 +1256,14 @@ def check_memory_quality(scan: Optional[list["MemoryFile"]] = None) -> dict:
             tagged += 1
 
         # Confidence
-        conf = str(fm.get("confidence", "")).lower()
-        if conf in confidence_dist:
+        raw_conf = fm.get("confidence")
+        conf = str(raw_conf).strip().lower() if raw_conf is not None else ""
+        if conf in ("high", "medium", "low"):
             confidence_dist[conf] += 1
-        else:
+        elif conf in ("", "none", "null"):
             confidence_dist["none"] += 1
+        else:
+            confidence_dist["other"] += 1  # a value search does not rank by (0.9, "certain")
 
         # Age (from updated field)
         updated = fm.get("updated")

@@ -1901,13 +1901,14 @@ def _run_curation_report(arg: str = "") -> None:
     stale_count = 0
     convergence_count = 0
     decisions_count = 0
-    from atlas_plus.curation.weekly_report import curation_counts
+    from atlas_plus.curation.weekly_report import curation_counts, duplicates_shown
     _c = curation_counts(report_text)
     dup_count, stale_count, convergence_count, decisions_count = _c["duplicates"], _c["stale"], _c["convergence"], _c["decisions"]
+    dup_shown = duplicates_shown(report_text, dup_count)   # a capped scan reads "N or more", not the cap as a total
 
     status = "written to " + str(output_path) if write else "dry-run (add --write to save)"
     console.print(f"\n[bold]Curation Report[/bold] ({status})")
-    console.print(f"  Duplicates:     [{'red' if dup_count else 'green'}]{dup_count}[/{'red' if dup_count else 'green'}]")
+    console.print(f"  Duplicates:     [{'red' if dup_count else 'green'}]{dup_shown}[/{'red' if dup_count else 'green'}]")
     console.print(f"  Stale files:    [{'yellow' if stale_count else 'green'}]{stale_count}[/{'yellow' if stale_count else 'green'}]")
     console.print(f"  Convergence:    [{'yellow' if convergence_count else 'green'}]{convergence_count}[/{'yellow' if convergence_count else 'green'}]")
     console.print(f"  Stale decisions:[{'yellow' if decisions_count else 'green'}]{decisions_count}[/{'yellow' if decisions_count else 'green'}]")

@@ -313,7 +313,11 @@ def _progress_printer():
                   file=sys.stderr, flush=True)
             return
         if stage == "end":  # "3002/3002 files" counted a file the hub had refused (AG88)
-            if done != total:
+            if done == 0 and total:
+                # "0/300 files transferred (300 not: see below)" read as 300 failures when the sync had
+                # only stopped before its first file (the hub went away: MN92, SEX-053 item 5).
+                print(f"  stopped before any file was transferred (0 of {total}: see below)", file=sys.stderr, flush=True)
+            elif done != total:
                 print(f"  {done}/{total} files transferred ({total - done} not: see below)", file=sys.stderr, flush=True)
             elif state["last"] != done:
                 print(f"  {done}/{total} files", file=sys.stderr, flush=True)

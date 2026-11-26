@@ -89,8 +89,13 @@ def _humanize_age(minutes: Optional[float]) -> str:
 def _as_int(v) -> int:
     try:
         return int(v or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # Infinity in the snapshot (KL7)
         return 0
+
+
+def _bounded(v, limit: int = 80) -> str:
+    s = str(v)
+    return s if len(s) <= limit else s[:limit] + "..."
 
 
 def summarize_loops(state: dict, now: Optional[datetime] = None) -> dict:
@@ -197,10 +202,10 @@ def render_panel(summary: dict) -> str:
     for l in (summary["leases"] or [])[:6]:
         if not isinstance(l, dict):
             continue
-        kind = _html.escape(str(l.get("kind", "?")))
-        model = _html.escape(str(l.get("model", "?")))
-        skill = _html.escape(str(l.get("skill", "")))
-        lstate = _html.escape(str(l.get("state", "")))
+        kind = _html.escape(_bounded(l.get("kind", "?")))
+        model = _html.escape(_bounded(l.get("model", "?")))
+        skill = _html.escape(_bounded(l.get("skill", "")))
+        lstate = _html.escape(_bounded(l.get("state", "")))
         sclr = "text-yellow-400" if lstate.startswith("backoff") else "text-slate-400"
         rows.append(f'<div class="text-xs text-slate-500 truncate" title="{kind} {model} {skill} {lstate}">'
                     f'{kind}/{model} <span class="text-slate-600">{skill}</span> '

@@ -25,6 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from atlas_plus import paths as atlas_paths
+from atlas_plus._term import safe as _safe  # printed corpus paths are escaped (AG122)
 
 _SLOT_RE = re.compile(r"^(?P<stem>.+)_(?P<date>\d{4}-\d{2}-\d{2})_v(?P<n>\d+)(?P<ext>\.[^.]*)?$")
 
@@ -97,6 +98,15 @@ def plan_prune(info: dict, older_than_days: int, keep_last: int) -> list[tuple[P
     return doomed
 
 
+def _refused(exc: OSError) -> bool:
+    """A delete the permissions refuse (a read-only file or folder, another account's, a read-only file
+    system), as against a file something holds open (Windows sharing violation, error 32)."""
+    import errno
+    if getattr(exc, "winerror", None) == 32:
+        return False
+    return isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM, errno.EROFS)
+
+
 def main(argv: list[str] | None = None) -> int:
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     ap = _next_step.ArgumentParser(
@@ -120,12 +130,12 @@ def main(argv: list[str] | None = None) -> int:
         if info.get("error"):
             if args.json:  # the machine-readable answer stays on stdout; the person's text goes to stderr (AG103)
                 print(json.dumps({"error": info["error"]}))
-            return _next_step.say(f"error: {info['error']}",
+            return _next_step.say(f"error: {_safe(info['error'])}",
                                   f"see docs/GETTING-STARTED.md, or run {_next_step.command('doctor')}; "
                                   f"{_next_step.command('versions --help')} lists the options")
         msg = {"versions_dir": info["versions_dir"], "files": 0, "bytes": 0}
         print(json.dumps(msg) if args.json else
-              f"no history yet: {info['versions_dir']} does not exist (it appears the first time an "
+              f"no history yet: {_safe(info['versions_dir'])} does not exist (it appears the first time an "
               "existing note is rewritten)")
         return 0
     notes = info["notes"]
@@ -146,12 +156,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
     print(f"history: {report['files']:,} copies, {_size(report['bytes'])}, "
-          f"{report['notes_with_history']:,} note(s), oldest {report['oldest']} ({info['versions_dir']})")
+          f"{report['notes_with_history']:,} note(s), oldest {report['oldest']} ({_safe(info['versions_dir'])})")
     if info.get("unparsed"):
         print(f"  ({info['unparsed']} file(s) under versions/ do not follow the <note>_<date>_vN name and are "
               "never pruned)")
     for b, n, k in biggest:
-        print(f"  {_size(b):>10}  {k:>4} copies  {n}")
+        print(f"  {_size(b):>10}  {k:>4} copies  {_safe(n)}")
     if not args.prune:
         print("restore a copy: copy versions/<path>/<note>_<date>_vN.md over <path>/<note>.md (the note's own "
               "history stays)")
@@ -168,13 +178,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     removed = 0
     freed = 0
+    refused: list[OSError] = []   # read-only or another account's: a held-open file is a different next step
     for p, size in doomed:
         try:
             p.unlink()
             removed += 1
             freed += size
         except OSError as exc:
-            print(f"  could not delete {p}: {exc}", file=sys.stderr)
+            # The reason only: str(exc) repeats the whole path, quoted and with doubled backslashes (SEX-048).
+            why = _safe(exc.strerror or exc.__class__.__name__)
+            if _refused(exc):
+                refused.append(exc)
+            print(f"  could not delete {_safe(p)}: {why}", file=sys.stderr)
     # Empty directories left behind are removed bottom-up; the versions/ root stays.
     vdir = Path(info["versions_dir"])
     for dirpath, dirs, files in sorted(os.walk(vdir), key=lambda t: -len(t[0])):
@@ -184,6 +199,13 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
     print(f"deleted {removed:,} copies, freed {_size(freed)}")
+    if refused:  # a read-only history folder: "close whatever holds them open" sent the user the wrong way
+        where = Path(refused[0].filename).parent if refused[0].filename else vdir
+        return _next_step.say(
+            f"error: {len(doomed) - removed:,} copy(ies) could not be deleted (listed above): {_safe(where)} is "
+            "read-only or belongs to another account",
+            "check that folder's permissions (it and its files must be writable by you), then run "
+            f"{_next_step.command('versions --prune')} again to see what is left")
     if removed < len(doomed):  # a copy that could not be deleted exited 0 (AG103)
         return _next_step.say(f"error: {len(doomed) - removed:,} copy(ies) could not be deleted (listed above)",
                               "close whatever holds them open, then run "

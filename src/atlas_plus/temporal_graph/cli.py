@@ -281,7 +281,13 @@ def reset_cmd(
 ):
     """Delete all derived temporal graph state (safe -- rebuild from source any time)."""
     if not yes:
-        typer.confirm("Reset all derived temporal graph state?", abort=True)
+        try:
+            typer.confirm("Reset all derived temporal graph state?", abort=True)
+        except typer.Abort:  # a closed stdin printed only "Aborted!" (AG122's sibling, SEX-048)
+            from atlas_plus import branding
+            typer.echo("Aborted: nothing was reset. Next: answer y at the question, or run "
+                       f"`{branding.prog('atlas-temporal')} reset --yes` to reset without it.", err=True)
+            raise typer.Exit(1)
     provider = _get_provider(graph_root)
     provider.reset_derived_state()
     typer.echo("Derived state reset. Run: atlas-temporal build")

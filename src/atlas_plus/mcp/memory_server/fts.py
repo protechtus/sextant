@@ -490,8 +490,18 @@ def _query_words(q: str) -> str:
     return '"'.join(_affix_split(part, keep_prefix=bool(i % 2), alts=not i % 2) for i, part in enumerate(parts))
 
 
+_BREAK_REPL = " " + _SENTINEL + " "   # no backslash and no group reference: a plain replacement string
+
+
 def _norm_index_text(text: str) -> str:
-    broken = _BREAK_RE.sub(lambda m: " " + _SENTINEL + " ", text)
+    if text.isascii():
+        # SEX-046 (2026-11-25): the sentinel is not ASCII, so after the break step every later step lost
+        # its own `isascii()` shortcut and scanned the whole text (10 of 15 s of a 20,000-note rebuild,
+        # 19 notes in 20 being ASCII). For ASCII text those steps change nothing: NFKC is the identity,
+        # and the folds, the emoji clusters (a keycap needs U+20E3), the affix split and the CJK split
+        # each need a character outside ASCII. tests/test_sex046_norm_fast.py holds the two paths equal.
+        return _BREAK_RE.sub(_BREAK_REPL, text)
+    broken = _BREAK_RE.sub(_BREAK_REPL, text)
     return _cjk_split(_affix_split(_emoji_split(_fold_marks(_recompose(unicodedata.normalize("NFKC", broken))))))
 
 

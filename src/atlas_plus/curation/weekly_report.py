@@ -174,6 +174,30 @@ def curation_counts(report_text: str) -> dict[str, int]:
     return counts
 
 
+def curation_caps(report_text: str) -> list[tuple[str, int]]:
+    """The duplicate scans of a report that stopped at their cap, as (what, cap): a capped section
+    header reads `(500+ found (capped at 500)`, and `curation_counts` keeps only the digits, so a
+    caller that prints the count alone shows the cap as if it were the total (MN93 F4)."""
+    import re as _re
+    caps = []
+    for line in report_text.splitlines():
+        for needle, what in (("Repeated facts (", "repeated facts"), ("Potential Duplicates (", "note pairs")):
+            if needle in line:
+                m = _re.search(r"capped at (\d+)", line)
+                if m:
+                    caps.append((what, int(m.group(1))))
+    return caps
+
+
+def duplicates_shown(report_text: str, count: int) -> str:
+    """The duplicate count as a person should read it: `12`, or `1000 or more (the scan stops at 500
+    repeated facts, 500 note pairs)` when a scan stopped at its cap."""
+    caps = curation_caps(report_text)
+    if not caps:
+        return str(count)
+    return f"{count} or more (the scan stops at " + ", ".join(f"{n} {what}" for what, n in caps) + ")"
+
+
 def generate_report(
     memory_root: Optional[Path] = None,
     stale_months: int = 6,

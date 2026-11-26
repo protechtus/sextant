@@ -8,11 +8,21 @@ from typing import Optional
 import typer
 from atlas_plus._typer import Typer as _SextantTyper  # no Windows $VAR expansion
 from rich.console import Console
+from rich.markup import escape as _escape
 from rich.table import Table
+from atlas_plus._term import safe as _safe
 
 from atlas_plus.autonomous import require_autonomous_writes
 from atlas_plus.mcp.memory_server.config import MEMORY_ROOT
 from atlas_plus import paths as atlas_paths
+
+
+def _p(text: object) -> str:
+    """Corpus text (a note path, a title, a fact) for a rich cell or line: control and format
+    characters escaped first (_term.safe: U+202E cannot reorder the line, SEX-048), then rich markup
+    escaped LAST, so the string rich parses is exactly the one escape() vetted: `[bold]` in a file
+    name prints as written instead of styling the rest of the line (AG122)."""
+    return _escape(_safe(text))
 
 app = _SextantTyper(help="Atlas memory curation hygiene tools")
 console = Console()
@@ -49,7 +59,7 @@ def cmd_duplicates(
         table.add_column("File 2", style="cyan", overflow="fold")
         table.add_column("Fact", overflow="fold")
         for r in rows[:60]:
-            table.add_row(r["kind"], r["file1"], r["file2"], r["fact"])
+            table.add_row(r["kind"], _p(r["file1"]), _p(r["file2"]), _p(r["fact"]))
         console.print(table)
         exact = sum(1 for r in rows if r["kind"] == "exact")
         console.print(f"\n[yellow]{exact} exact and {len(rows) - exact} near repeat(s)"
@@ -78,7 +88,7 @@ def cmd_duplicates(
     table.add_column("File 2", style="cyan", overflow="fold")
     table.add_column("Similarity", justify="right")
     for p in pairs:
-        table.add_row(p.file1, p.file2, f"{p.similarity:.2f}")
+        table.add_row(_p(p.file1), _p(p.file2), f"{p.similarity:.2f}")
     console.print(table)
     from atlas_plus.curation import duplicates as _dupmod
     if _dupmod._LAST_PARTIAL[1]:
@@ -115,7 +125,7 @@ def cmd_stale(
     table.add_column("Last Updated")
     table.add_column("Age (days)", justify="right")
     for r in results:
-        table.add_row(r.path, r.updated, str(r.age_days))
+        table.add_row(_p(r.path), r.updated, str(r.age_days))
     console.print(table)
     console.print(f"\n[yellow]{len(results)} file(s) found.[/yellow]")
 
@@ -130,7 +140,13 @@ def cmd_archive(
     from atlas_plus.curation.stale import archive_file
 
     if not yes:
-        typer.confirm(f"Archive '{path}'? It will be moved to archive/. Continue?", abort=True)
+        try:
+            typer.confirm(f"Archive '{_safe(path)}'? It will be moved to archive/. Continue?", abort=True)
+        except typer.Abort:  # a closed stdin printed only "Aborted!" (AG122)
+            from atlas_plus import _next_step as _ns
+            typer.echo(f"Aborted: nothing was archived. Next: answer y at the question, or run "
+                       f"{_ns.command('review archive <path> --yes')} to archive without it.", err=True)
+            raise typer.Exit(1)
 
     import sys as _sys
 
@@ -138,7 +154,7 @@ def cmd_archive(
     try:
         dest = archive_file(path, label=label)
     except (FileNotFoundError, ValueError) as e:  # a missing or escaping path: one line, no traceback (AG120)
-        print(f"archive refused: {e}. Next: give a path relative to the corpus, as {_next_step.command('review stale')} "
+        print(f"archive refused: {_safe(e)}. Next: give a path relative to the corpus, as {_next_step.command('review stale')} "
               "lists them.", file=_sys.stderr)
         raise typer.Exit(1)
     except OSError as e:
@@ -146,7 +162,7 @@ def cmd_archive(
             raise
         print(f"Not archived: {_next_step.write_refused(e, atlas_paths.memory_root())}", file=_sys.stderr)
         raise typer.Exit(1)
-    console.print(f"[green]Archived:[/green] {path} -> {dest}")
+    console.print(f"[green]Archived:[/green] {_p(path)} -> {_p(dest)}")
 
 
 @app.command("contradictions")
@@ -184,7 +200,7 @@ def cmd_contradictions(
     table.add_column("Confidence")
     table.add_column("Explanation")
     for r in results:
-        table.add_row(r.file1, r.file2, r.confidence, r.explanation)
+        table.add_row(_p(r.file1), _p(r.file2), r.confidence, _p(r.explanation))
     console.print(table)
     console.print(f"\n[yellow]{len(results)} contradiction(s) found.[/yellow]")
 
@@ -396,7 +412,7 @@ def cmd_gaps(
         pct = int(r["miss_count"] / r["total"] * 100)
         words = r["query"].split()[:4]
         suggestion = f"Consider documenting: {' '.join(words)}..."
-        table.add_row(r["query"][:50], str(r["miss_count"]), str(r["total"]), f"{pct}%", suggestion)
+        table.add_row(_p(r["query"][:50]), str(r["miss_count"]), str(r["total"]), f"{pct}%", suggestion)
     console.print(table)
     console.print(f"\n[yellow]{len(misses)} recurring miss(es) found.[/yellow]")
 
@@ -427,7 +443,7 @@ def cmd_gaps(
         if created:
             console.print(f"\n[green]Created {len(created)} gap stub(s) in {gaps_dir}:[/green]")
             for p in created:
-                console.print(f"  {p.relative_to(MEMORY_ROOT)}")
+                console.print(f"  {_p(p.relative_to(MEMORY_ROOT))}")
             console.print("[dim]Edit each stub to fill in facts, then change status: unfilled -> active.[/dim]")
         else:
             console.print("\n[dim]No new stubs created (all queries already have coverage or stubs).[/dim]")
@@ -477,7 +493,7 @@ def cmd_decay(
     table.add_column("Last updated", width=12)
     table.add_column("Overdue", justify="right", width=8)
     for c in candidates:
-        table.add_row(c.path, c.memory_type, f"{c.half_life_days}d", c.updated, f"{c.days_overdue}d")
+        table.add_row(_p(c.path), c.memory_type, f"{c.half_life_days}d", c.updated, f"{c.days_overdue}d")
     console.print(table)
     console.print(f"\n[yellow]{len(candidates)} file(s) past their half-life.[/yellow]")
     console.print("[dim]Review and update, or remove the half_life: field if the fact is permanent.[/dim]")
@@ -532,7 +548,7 @@ def cmd_unconfirmed_decay(
     table.add_column("Last confirmed", width=14)
     table.add_column("Age", justify="right", width=8)
     for c in candidates:
-        table.add_row(c["path"], c["old_confidence"], c["last_confirmed"], f"{c['age_days']}d")
+        table.add_row(_p(c["path"]), c["old_confidence"], c["last_confirmed"], f"{c['age_days']}d")
     console.print(table)
     console.print(f"\n[yellow]{len(candidates)} file(s) with stale last_confirmed.[/yellow]")
     if not write:
@@ -633,7 +649,7 @@ def cmd_age_stats(
             sample = ", ".join(p.split("/")[-1].replace(".md", "") for p in paths[:3])
             table.add_row(
                 f"[{color}]{bucket}[/{color}]", str(n), pct,
-                sample + ("..." if len(paths) > 3 else ""),
+                _p(sample) + ("..." if len(paths) > 3 else ""),
             )
         else:
             table.add_row(f"[{color}]{bucket}[/{color}]", str(n), pct)
@@ -646,7 +662,7 @@ def cmd_age_stats(
             color = _colors.get(bucket, "white")
             console.print(f"\n[{color}]{bucket}[/{color}] ({len(paths)} files):")
             for p in sorted(paths):
-                console.print(f"  [dim]{p}[/dim]")
+                console.print(f"  [dim]{_p(p)}[/dim]")
 
     stale_count = len(buckets["180d+"]) + len(buckets["no-date"])
     if stale_count > 0:
@@ -690,7 +706,7 @@ def cmd_rederive(
     table.add_column("Matched doc", style="blue", max_width=40)
     table.add_column("Sim", justify="right", width=6)
     for c in candidates:
-        table.add_row(c.path, c.memory_type, c.matched_doc, f"{c.similarity:.2f}")
+        table.add_row(_p(c.path), c.memory_type, _p(c.matched_doc), f"{c.similarity:.2f}")
     console.print(table)
     console.print(f"\n[yellow]{len(candidates)} file(s) may duplicate project docs.[/yellow]")
     console.print("[dim]Review each file. If the doc is the authoritative source, archive the memory.[/dim]")
@@ -771,7 +787,7 @@ def cmd_convergence(
         contra_list = "\n".join(r["contradictions"][:3])
         if len(r["contradictions"]) > 3:
             contra_list += f"\n  (+{len(r['contradictions']) - 3} more)"
-        table.add_row(r["path"][:40], r["type"], contra_list)
+        table.add_row(_p(r["path"][:40]), r["type"], _p(contra_list))
     console.print(table)
     console.print(f"\n[yellow]{len(results)} file(s) with unresolved contradiction flags.[/yellow]")
     console.print("[dim]Resolve by editing the files and removing the contradictions: list.[/dim]")
@@ -822,7 +838,7 @@ def cmd_narrative(
         if not result.get("ok"):
             console.print(f"[yellow]{result.get('reason', 'no sessions found')}[/yellow]")
             return
-        console.print(f"[green]Narrative written:[/green] {result['path']}")
+        console.print(f"[green]Narrative written:[/green] {_p(result['path'])}")
         console.print(f"  Week: {result['week']} | Sessions: {result['sessions']} | Energy: {result['energy']}")
         console.print(f"  Open loops: {result['open_loops']} | Direction signals: {result['direction_signals']}")
     else:
@@ -957,7 +973,7 @@ def cmd_decisions(
         age_str = f"{r['age_days']}d ago" if r['age_days'] is not None else "?"
         review_str = r["last_reviewed"] if r["last_reviewed"] != "never" else f"[red]never[/red]"
         status = "[red]STALE[/red]" if r["is_stale"] else "[green]ok[/green]"
-        table.add_row(r["title"][:40], f"{r['made']} ({age_str})", review_str, status)
+        table.add_row(_p(r["title"][:40]), f"{r['made']} ({age_str})", review_str, status)
         if show_conditions and r["revisit_if"]:
             for cond in r["revisit_if"][:3]:
                 table.add_row(f"  [dim]if: {cond[:60]}[/dim]", "", "", "")
@@ -1014,9 +1030,9 @@ def cmd_ref_graph(
         count = hub["inbound_count"]
         if show_refs:
             outbound = ", ".join(graph.get(stem, [])[:5])
-            t.add_row(stem, str(count), outbound or "(none)")
+            t.add_row(_p(stem), str(count), _p(outbound) or "(none)")
         else:
-            t.add_row(stem, str(count))
+            t.add_row(_p(stem), str(count))
 
     console.print(t)
     console.print(
@@ -1071,7 +1087,7 @@ def cmd_cross_links(
         return
 
     for r in results:
-        console.print(f"  [cyan]{r['file']}[/cyan]  +{r['cross_refs_added']} cross-ref(s)")
+        console.print(f"  [cyan]{_p(r['file'])}[/cyan]  +{r['cross_refs_added']} cross-ref(s)")
     console.print(f"\n  {len(results)} report(s) updated with cross-references.")
 
 
@@ -1145,7 +1161,7 @@ def cmd_citations(
     table.add_column("Written", width=8)
     for r in results:
         written_cell = "[dim]dry-run[/dim]" if not r["written"] else "[green]yes[/green]"
-        table.add_row(r["file"][:55], str(r["urls"]), written_cell)
+        table.add_row(_p(r["file"][:55]), str(r["urls"]), written_cell)
     console.print(table)
     total_urls = sum(r["urls"] for r in results)
     if dry_run:
@@ -1236,9 +1252,9 @@ def cmd_check_links(
     for r in report_results:
         for url in r["broken"]:
             status_str = "broken"
-            table.add_row(r["file"][:45], f"[red]{status_str}[/red]", url[:60])
+            table.add_row(_p(r["file"][:45]), f"[red]{status_str}[/red]", _p(url[:60]))
         for url in r["gated"]:
-            table.add_row(r["file"][:45], "[yellow]gated[/yellow]", url[:60])
+            table.add_row(_p(r["file"][:45]), "[yellow]gated[/yellow]", _p(url[:60]))
 
     console.print(table)
     if fix and total_broken > 0:
@@ -1309,7 +1325,7 @@ def cmd_health_score(
         s = r["score"]
         color = "green" if s >= 0.75 else ("yellow" if s >= 0.5 else "red")
         issue_str = ", ".join(r["issues"][:4])
-        table.add_row(f"[{color}]{s:.2f}[/{color}]", r["path"][:45], issue_str)
+        table.add_row(f"[{color}]{s:.2f}[/{color}]", _p(r["path"][:45]), issue_str)
 
     console.print(table)
     avg = sum(r["score"] for r in results) / len(results) if results else 0
@@ -1511,7 +1527,7 @@ def cmd_suggest_tags(
 
     for r in results:
         tag_str = ", ".join(r["tags"])
-        row = [r["file"][:45], tag_str]
+        row = [_p(r["file"][:45]), tag_str]
         if write:
             row.append("[green]yes[/green]" if r["applied"] else "[dim]skip[/dim]")
         table.add_row(*row)
@@ -1676,7 +1692,7 @@ def cmd_research_index(
             fresh_str = f"[{f_color}]{fs:.2f}[/{f_color}]"
         xrc = r.get("cross_ref_count", 0)
         gate = r.get("quality_gate_passed")
-        title_display = r["title"]
+        title_display = _p(r["title"])
         if gate is False:
             title_display = f"[red]![/red] {title_display}"
         table.add_row(
@@ -1797,7 +1813,7 @@ def cmd_quality(
         f = r["factors"]
         raw_r = r["raw"]
         row = [
-            r["file"][:45],
+            _p(r["file"][:45]),
             f"[{score_color}]{s:.2f}[/{score_color}]",
             str(raw_r["citation_count"]),
             str(raw_r["section_count"]),
@@ -1868,7 +1884,7 @@ def cmd_orphans(
         ref_color = "red" if r["inbound_refs"] == 0 else "white"
         issues_str = ", ".join(r["issues"][:3])
         t.add_row(
-            r["path"],
+            _p(r["path"]),
             age_str,
             f"[{h_color}]{h:.2f}[/{h_color}]",
             f"[{ref_color}]{r['inbound_refs']}[/{ref_color}]",
@@ -1968,26 +1984,26 @@ def cmd_next_actions(
     if result["decayed"]:
         console.print(f"[red]1. Decayed facts ({len(result['decayed'])} files past half-life):[/red]")
         for c in result["decayed"]:
-            console.print(f"   [dim]{c['path']}[/dim]  [{c['half_life_days']}d half-life, {c['days_overdue']}d overdue]")
+            console.print(f"   [dim]{_p(c['path'])}[/dim]  [{c['half_life_days']}d half-life, {c['days_overdue']}d overdue]")
         console.print("   [dim]-> Review and update, or remove half_life: field if fact is permanent.[/dim]\n")
 
     if result["orphans"]:
         console.print(f"[yellow]2. Orphan candidates ({len(result['orphans'])} unreferenced low-health files):[/yellow]")
         for o in result["orphans"]:
-            console.print(f"   [dim]{o['path']}[/dim]  [health={o['score']:.2f}, age={o['age_days']}d]")
+            console.print(f"   [dim]{_p(o['path'])}[/dim]  [health={o['score']:.2f}, age={o['age_days']}d]")
         console.print("   [dim]-> Review and archive with: atlas-review-memory archive <path>[/dim]\n")
 
     if result["untagged"]:
         console.print(f"[cyan]3. Untagged files ({len(result['untagged'])} files -- quick fix):[/cyan]")
         for u in result["untagged"]:
             tags_str = ", ".join(u["suggested_tags"])
-            console.print(f"   [dim]{u['path']}[/dim]  tags: {tags_str}")
+            console.print(f"   [dim]{_p(u['path'])}[/dim]  tags: {tags_str}")
         console.print("   [dim]-> Run: atlas-review-memory suggest-tags --write[/dim]\n")
 
     if result["gaps"]:
         console.print(f"[blue]4. Research gaps ({len(result['gaps'])} recurring miss queries):[/blue]")
         for g in result["gaps"]:
-            console.print(f"   [dim]{g['query']}[/dim]  [{g['miss_count']} misses in 7d]")
+            console.print(f"   [dim]{_p(g['query'])}[/dim]  [{g['miss_count']} misses in 7d]")
         console.print("   [dim]-> Run: atlas-review-memory gaps --autoticket[/dim]\n")
 
 
@@ -2012,9 +2028,10 @@ def cmd_report(
         scope=scope,
         dry_run=dry_run,
     )
-    console.print(report)
+    # The report is Markdown, not rich markup: printed as text, each line through _term.safe (AG122)
+    console.print("\n".join(_safe(line) for line in report.split("\n")), markup=False, highlight=False)
     if not dry_run:
-        console.print(f"\n[green]Written:[/green] {out_path}")
+        console.print(f"\n[green]Written:[/green] {_p(out_path)}")
     else:
         console.print("\n[dim](dry-run — not written)[/dim]")
 

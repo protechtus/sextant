@@ -92,6 +92,22 @@ def _humanize_age(hours: Optional[float]) -> str:
     return f"{int(round(hours / 24))}d ago"
 
 
+_MAX_REPORT_CHARS = 200
+
+
+def _as_int(v) -> int:
+    """A count from the index file: a wrong type, NaN or Infinity reads as 0 (KL7, the type-fuzz corpus)."""
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _bounded(v, limit: int = _MAX_REPORT_CHARS) -> str:
+    s = str(v)
+    return s if len(s) <= limit else s[:limit] + "..."
+
+
 def summarize_security(index: list[dict], now: Optional[datetime] = None) -> dict:
     """Summarize the latest security-audit run.
 
@@ -130,8 +146,8 @@ def summarize_security(index: list[dict], now: Optional[datetime] = None) -> dic
     return {
         "status": status,
         "verdict": verdict or None,
-        "high": int(latest.get("high") or 0),
-        "medium": int(latest.get("medium") or 0),
+        "high": _as_int(latest.get("high")),
+        "medium": _as_int(latest.get("medium")),
         "report": latest.get("report"),
         "ts": latest.get("ts"),
         "age_hours": age_hours,
@@ -175,7 +191,7 @@ def render_panel(summary: dict) -> str:
                 'so it stays empty (MN29)</div>')
     verdict = _html.escape(summary.get("verdict") or "?")
     stale_note = ' <span class="text-yellow-400">(stale)</span>' if summary["stale"] else ""
-    report = _html.escape(str(summary.get("report") or ""))
+    report = _html.escape(_bounded(summary.get("report") or ""))  # cut before escaping: no entity is split
     parts = [
         f'<div class="text-xs"><span class="{cls} font-bold">{verdict}</span>'
         f' <span class="text-slate-500">{_html.escape(summary["age_label"])}{stale_note}</span></div>',

@@ -23,6 +23,53 @@ In short, since 0.1.0: the first minutes of a new install. Every failure ends wi
 
 ### Changed
 
+- Dashboard cards that read a file another program wrote hold against a wrong-shaped file (KL7, sweep 37;
+  lesson LES-071). One shared list of awkward values (a string where a number belongs, a list, a mapping,
+  NaN, Infinity, a huge integer, a 1 MB string, HTML) is now placed at every key the Security audit card and
+  the Build loops card read. Before, a count that was a string, a list or Infinity raised inside the card and
+  the route showed the raw exception text, and a 1 MB field made a 2 MB fragment on every refresh. Wrong-typed
+  counts now read as 0 and long fields are cut before they are escaped.
+- `python -m atlas_plus review --help` and `python -m atlas_plus ingest --help` (the form `sextant setup`
+  prints) showed a usage line naming `python -m atlas_plus.sextant review` and `python -m
+  atlas_plus.sextant-transcripts`, modules that do not exist. The usage line now names what was typed.
+- Printed paths, titles and facts in `sextant review` and `sextant versions` (AG122, sweep 37; SEX-048). A file
+  name can hold a right-to-left override or a zero-width space, and a name can hold `[bold]`. Eleven commands
+  printed such a path raw, so the line a user read could be reordered, and the nine that print through the
+  styled console also ate `[bold]` as styling, so the printed path was not the file's name. Every note path,
+  title, fact, query and URL these commands print now goes through the escaping helper, with the console
+  markup escaped after it: U+202E prints as `\u202e`, `[bold]` prints as written. `review report` prints its
+  Markdown as text. A new tree-wide check (G22) runs the commands on a corpus with such file names.
+- A question that cannot be answered names the next step. `sextant review archive`, the temporal graph's
+  `reset` and the database backup's `restore` printed only "Aborted!" when their yes/no question met a closed
+  input (a script, a scheduled task, `< NUL`). Each now says that nothing was changed and how to run it with
+  `--yes` (AG122 and its sibling paths).
+- `sextant versions --prune --yes` on a history folder that is read-only (walked on Windows with a deny entry
+  and read-only files): it printed the system's raw error with the path twice for every copy and then advised
+  to "close whatever holds them open". It now names the folder once, says it is read-only or belongs to
+  another account, and says to check its permissions; a file that really is held open keeps the old advice.
+  `sextant ingest` was walked on the same corpus: it writes to the state folder and the drop folder, never to
+  the corpus, so there is nothing to refuse.
+- Dashboard and summaries that add up (AG123, sweep 37; MN93 F4 and F5). The curation panel showed "Duplicates:
+  1000" on a 254-note corpus: the two duplicate scans stop at 500 each and the panel printed the caps as a
+  total. It now says "1000 or more (the scan stops at 500 repeated facts, 500 note pairs)", and so do the
+  Brain chat's and the Telegram command's summaries. The next-actions panel said "Memory in good shape" beside
+  it; it now says what it counts (decayed facts, orphan notes, search gaps). Doctor's Memory Quality line
+  `confidence: high:3 medium:1 none:235` summed to 239 of 254 files: notes whose top block could not be read
+  were in the total and in no bucket. Two buckets, `no-frontmatter` and `other`, take them, and the line adds
+  up to the number of files it names.
+- A sync that stopped before its first file says "stopped before any file was transferred (0 of 300: see
+  below)" where it said "0/300 files transferred (300 not: see below)", which read as 300 failures.
+- A forced `sextant-fts-rebuild` normalises text faster (SEX-046). The sentence-break step puts a private
+  marker into the text, the marker is not ASCII, and every later step (the folds, the emoji clusters, the
+  prefix split, the CJK split) then skipped its own "plain ASCII, nothing to do" shortcut and scanned the whole
+  note. An ASCII note now returns right after the break step: 15.5 s to 6.4 s of normalisation on a
+  20,000-note corpus where 19 notes in 20 are ASCII (the whole rebuild 57 to 60 s before, 48 to 52 s after,
+  back to back on a busy machine). The 20,000 stored rows are identical (one sha256 over every row, old code
+  against new), and a test holds the two paths equal on every ASCII character.
+- CI runs the Python versions the package claims (AG124, sweep 37; SEX-054). The package has claimed Python
+  3.13 since 0.1.0 and no job ran it. The test job now runs 3.11 and 3.13 on Linux, macOS and Windows, and
+  3.12 and 3.14 on Linux; the 3.14 classifier is added; a test fails the day a classifier is added without
+  its job.
 - After an update that changes what a note contributes to the keyword index, old indexes heal by themselves (AG121, sweep 36; lesson LES-092). MN93 upgraded a lived-in 0.1.0 install to the head and found the other side of the fix above: a note with a rule-line top block kept its 0.1.0 index row, so a word in that block gave "No hits" until a forced `sextant-fts-rebuild`, and `--if-stale` called the index fresh. The index now carries a parse revision tied to its last write. When the stamp is missing or stale, the first search checks each indexed note once against what the current parser would store and re-indexes only the notes that differ; an index this build wrote never runs the check. Proven with the released 0.1.0 from PyPI: the head's first search finds the words in an index 0.1.0 built, and again after 0.1.0 rebuilt it. Cost, measured: 0.5 s at 2,000 small notes; 35 s once at 20,000 notes (warm), with one line saying so from 2,000 notes up. `sextant-fts-rebuild --if-stale` rebuilds such an index. The index format is unchanged.
 - The semantic index embeds the same text as the keyword index: it had its own frontmatter cut and dropped a rule-line or list top block before embedding. The next `sextant-embed-index` re-embeds only those notes (AG121).
 - Guardrail G21: the rows a fixture corpus stores (a rule-line top block, a list top block, the init template, CJK, real frontmatter, CRLF) are pinned beside the parse revision; a change to what is stored without a new revision fails with the instruction to raise it.

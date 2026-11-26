@@ -2516,14 +2516,14 @@ async def cmd_curation_report(update: Update, context: ContextTypes.DEFAULT_TYPE
     """
     await update.message.reply_text("Running curation report...")
 
-    def _run_report() -> tuple[int, int, int, int]:
+    def _run_report() -> tuple[str, int, int, int]:
         from atlas_plus.curation.weekly_report import generate_report
         import re
         report_text, _ = generate_report(dry_run=True)
-        from atlas_plus.curation.weekly_report import curation_counts
+        from atlas_plus.curation.weekly_report import curation_counts, duplicates_shown
         _c = curation_counts(report_text)
         dup, stale, convergence, decisions = _c["duplicates"], _c["stale"], _c["convergence"], _c["decisions"]
-        return dup, stale, convergence, decisions
+        return duplicates_shown(report_text, dup), stale, convergence, decisions   # a capped scan: "N or more"
 
     try:
         dup_count, stale_count, convergence_count, decisions_count = await asyncio.to_thread(_run_report)

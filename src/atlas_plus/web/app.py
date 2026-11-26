@@ -757,6 +757,18 @@ async def auth_failures_panel(request: Request, limit: int = 25):
 # Watchtower -- optional SIEM panel (seam: the SIEM owns the contract, the web UI renders)
 # ---------------------------------------------------------------------------
 
+def _refuse_cross_site_read(request: Request) -> None:
+    """A read that starts a program refuses another site's page (KL7): the browser says so in Sec-Fetch-Site
+    (cross-site, or same-site for another port of the same host) or with a foreign Origin. The dashboard's own
+    fetches are same-origin; curl and the CLI send neither header."""
+    headers = getattr(request, "headers", None) or {}  # an in-process caller may pass a bare object (test_kl2)
+    site = (headers.get("sec-fetch-site") or "").lower()
+    if site in ("cross-site", "same-site") or (headers.get("origin") and not _cookie_origin_ok(request)):
+        raise HTTPException(status_code=403, detail=(
+            "cross-site request refused: open the Watchtower tab on the dashboard itself, "
+            "or call this URL with the API key from a terminal"))
+
+
 @app.get("/api/security/watchtower")
 async def watchtower_json(
     request: Request, since: str | None = None, severity: str | None = None,
@@ -767,6 +779,7 @@ async def watchtower_json(
     {"error": ...} when the SIEM is unreachable or not installed. Auth-protected.
     """
     _check_auth(request)
+    _refuse_cross_site_read(request)
     if watchtower is None:
         return {"error": "SIEM integration not installed"}
     try:
@@ -782,6 +795,7 @@ async def watchtower_panel(
 ):
     """GET /api/security/watchtower.html -- HTMX fragment of the SIEM's live state."""
     _check_auth(request)
+    _refuse_cross_site_read(request)
     if watchtower is None:
         return HTMLResponse('<div class="text-slate-500 text-xs">SIEM integration not installed.</div>')
     try:
@@ -2823,7 +2837,9 @@ async def memory_next_actions_panel(request: Request):
 
     if total == 0:
         return HTMLResponse(
-            '<div class="text-green-500 text-xs">Memory in good shape -- no urgent actions.</div>'
+            # Says what it counts: "Memory in good shape" sat beside a curation panel with 1000 duplicates (MN93 F4).
+            '<div class="text-green-500 text-xs">No urgent actions: no decayed facts, orphan notes or search gaps '
+            '(duplicates and stale files are in the curation scan).</div>'
         )
 
     rows = ['<div class="space-y-1">']
@@ -3056,6 +3072,14 @@ async def memory_curation_report_panel(request: Request):
         from atlas_plus.curation.weekly_report import curation_counts
         counts = curation_counts(report_text)
         counts["_banded"] = "came from MinHash bands" in report_text  # MN73: the CLI and report said it, the panel did not
+        # A capped section reads "(500+ found (capped at 500)": the panel showed the cap as the total (MN93 F4).
+        counts["_caps"] = [
+            (label, m.group(1))
+            for line in report_text.splitlines()
+            for needle, label in (("Repeated facts (", "repeated facts"), ("Potential Duplicates (", "note pairs"))
+            if needle in line
+            for m in [_re.search(r"capped at (\d+)", line)] if m
+        ]
         return counts
 
     try:
@@ -3064,7 +3088,9 @@ async def memory_curation_report_panel(request: Request):
         return HTMLResponse(f'<div class="text-red-400 text-xs">Curation report error: {_html_mod.escape(str(exc))}</div>')
 
     banded = bool(counts.pop("_banded", False))
+    caps = counts.pop("_caps", [])
     total = sum(counts.values())
+    more = " or more" if caps else ""
 
     if total == 0:
         return HTMLResponse(
@@ -3081,13 +3107,16 @@ async def memory_curation_report_panel(request: Request):
 
     rows = [
         '<div class="space-y-0.5">',
-        f'<div class="text-slate-500 text-xs mb-1">Curation scan: {total} item(s) need attention</div>',
+        f'<div class="text-slate-500 text-xs mb-1">Curation scan: {total}{more} item(s) need attention</div>',
     ]
-    for _, count, color, label in category_labels:
+    for key, count, color, label in category_labels:
         if count:
+            capped = key == "duplicates" and caps
             rows.append(
                 f'<div class="text-{color} text-xs">'
-                f'{label}: <span class="font-semibold">{count}</span></div>'
+                f'{label}: <span class="font-semibold">{count}{" or more" if capped else ""}</span>'
+                + (" (the scan stops at " + ", ".join(f"{n} {what}" for what, n in caps) + ")" if capped else "")
+                + '</div>'
             )
     if banded and counts.get("duplicates"):
         rows.append('<div class="text-slate-500 text-xs">Duplicate candidates came from MinHash bands '
