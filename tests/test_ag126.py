@@ -7,6 +7,7 @@ isatty(), so the console check is the console mode, in `atlas_plus._prompt.is_te
 from __future__ import annotations
 
 import io
+import os
 import json
 import sys
 
@@ -26,9 +27,19 @@ class _FakeNul(io.StringIO):
 
 # --- the helper --------------------------------------------------------------------------------
 
+# The NUL device passes isatty() on Windows only: there the console mode decides. On POSIX a stream
+# whose isatty() is True is a terminal (/dev/null does not pass it), so the NUL-shaped cases are
+# Windows cases (public CI run 45775932043 was red on Linux and macOS: the tests asked for the
+# Windows answer everywhere).
+_NUL_ONLY_ON_WINDOWS = pytest.mark.skipif(os.name != "nt", reason="the NUL device passes isatty() on Windows only")
+
+
 def test_is_terminal_refuses_a_nul_like_stream():
     from atlas_plus import _prompt
-    assert _prompt.is_terminal(_FakeNul("")) is False
+    if os.name == "nt":
+        assert _prompt.is_terminal(_FakeNul("")) is False
+    else:
+        assert _prompt.is_terminal(_FakeNul("")) is True   # isatty() is the whole test off Windows
     assert _prompt.is_terminal(io.StringIO("")) is False
     assert _prompt.is_terminal(None) is False
 
@@ -48,7 +59,7 @@ def test_confirm_reads_a_piped_line_without_printing_the_question(monkeypatch, c
     assert "QUESTION-7421" not in out.out + out.err
 
 
-@pytest.mark.parametrize("stdin", [io.StringIO(""), _FakeNul(""), None])
+@pytest.mark.parametrize("stdin", [io.StringIO(""), pytest.param(_FakeNul(""), marks=_NUL_ONLY_ON_WINDOWS), None])
 def test_confirm_on_no_answer_names_the_rerun_and_exits_1(monkeypatch, capsys, stdin):
     import typer
     from atlas_plus import _prompt
