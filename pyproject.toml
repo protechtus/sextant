@@ -1,6 +1,6 @@
 [project]
 name = "sextant-ai"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sextant: self-hosted AI memory and orchestration -- MCP memory server, temporal knowledge graph, transcript capture, local Brain task queue"
 readme = "README.md"
 license = "Apache-2.0"

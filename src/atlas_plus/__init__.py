@@ -21,7 +21,7 @@ def _installed_version() -> str:
                 continue
     except Exception:  # noqa: BLE001
         pass
-    return "0.1.0"
+    return "0.1.1"
 
 
 def __getattr__(name: str):
