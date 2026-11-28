@@ -440,10 +440,14 @@ def test_allowlist_entries_point_at_real_lines():
 ALLOW_G8: list[Allow] = [
     ("atlas-summarize-session", "*", "the transcript CLI summarises every transcript of the day under the real "
                                      "~/.claude/projects with the configured model: never run from a test"),
+    ("sextant-summarize-session", "*", "the public name of atlas-summarize-session (SEX-043, AG130): never run "
+                                       "from a test, as above"),
     ("atlas-session-start", "bad-arg", "SessionStart hook: ignores arguments so a client's hook line never breaks"),
     ("sextant-session-start", "bad-arg", "the public name of the SessionStart hook: ignores arguments, as above"),
     ("atlas-pre-compact", "bad-arg", "PreCompact hook: ignores arguments so a client's hook line never breaks"),
+    ("sextant-pre-compact", "bad-arg", "the public name of the PreCompact hook: ignores arguments, as above"),
     ("atlas-prime", "bad-arg", "every argument is a task word (`atlas-prime fix the login bug`)"),
+    ("sextant-prime", "bad-arg", "the public name of atlas-prime: every argument is a task word"),
     ("sextant context", "bad-arg", "with words it is atlas-prime: every argument is a task word"),
     ("sextant prime", "bad-arg", "alias of `context`: every argument is a task word"),
     ("sextant verify", "no-corpus", "starts the MCP server as a child process (seconds); its no-corpus "
@@ -660,6 +664,9 @@ def test_g8_every_failure_names_the_next_step(tmp_path):
     _report(offenders, "LES-G8", "a failure exits non-zero without a traceback and its last three lines name the "
                                  "next step (a `command`, `--help`, a docs/*.md page or a URL)")
     known = set(_console_scripts()) | {f"python -m {m}" for m in _g8_module_entry_points()}
+    # the source tree carries only the atlas-* names; an exemption for a public sextant-* name the build adds
+    # is not stale there (SEX-043, AG130)
+    known |= _g18_real_commands()[0]
     stale =[a[0] for a in ALLOW_G8 if a[0] not in known | set(payload["subs"])]
     assert not stale, f"stale G8 allowlist entries (the command is gone): {stale}"
 

@@ -98,7 +98,8 @@ def main() -> None:
         print(f"  --state  : clear derived caches in {s['path']} ({s['files']} file(s) now; derived caches only)")
         prot = " [PROTECTED -- reset will refuse]" if c["protected"] else ""
         print(f"  --corpus : wipe {c['path']} ({c['files']} file(s) now){prot},")
-        print("             then lay down the fresh first-run skeleton (atlas-init)")
+        from atlas_plus import _next_step
+        print(f"             then lay down the fresh first-run skeleton ({_next_step.command('init').strip('`')})")
         print("  --all    : both. Every deletion needs --yes; the corpus also asks")
         print("             you to type its full path (or --confirm-path).")
         return

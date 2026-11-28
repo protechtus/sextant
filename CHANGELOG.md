@@ -19,6 +19,36 @@ public tree.
 
 ## [Unreleased]
 
+### Added
+
+- Every setting can be spelled `SEXTANT_<NAME>` as well as `ATLAS_<NAME>` (SEX-043, AG132). The package
+  adopts the new spelling once, at import, so every command, hook, the MCP server and every child process
+  sees it. An install that sets only `ATLAS_*` behaves exactly as before: no new output, no new file. When
+  both spellings of one setting are set and differ, the `ATLAS_` value is used and one warning line on
+  stderr names both (never their values): `sextant setup` writes the `ATLAS_` spelling into client settings
+  and hook lines, and an upgrade must never re-point a registration that already works. Setup keeps writing
+  that spelling, so every released version keeps reading it. `SEXTANT_PROOF_*` (the benchmark harness) is
+  left alone. Before, a `SEXTANT_` spelling was ignored, with a warning for the two path variables only.
+  The state folder keeps its name; the reasons, the options and the open questions are in
+  `docs/NAMING-MIGRATION-DESIGN.md`. Upgrade receipt: 0.1.1 from PyPI, lived in, then this code installed
+  over it: search, setup and verify print the same bytes.
+
+### Changed
+
+- Every command has a `sextant-*` name (SEX-043, AG130; the owner: "wish it said sextant everywhere").
+  Nineteen commands existed only under their older `atlas-*` name: `sextant-review-memory`, `sextant-prime`,
+  `sextant-pre-compact`, `sextant-temporal`, `sextant-db-backup`, `sextant-tickets`, `sextant-suggest-facts`,
+  `sextant-contradiction-check`, `sextant-reflexion-loop`, `sextant-weekly-synthesis`, `sextant-rederive`,
+  `sextant-narrative`, `sextant-sprint-summary`, `sextant-brain-chat`, `sextant-brain-worker`,
+  `sextant-telegram-bot`, `sextant-job-poller`, `sextant-ntfy-listener` and `sextant-summarize-session` are
+  new. EVERY `atlas-*` name keeps working (a test pins the list: removing one fails), so nothing typed,
+  scheduled or written into a client's settings by an earlier version changes. Usage lines print the name
+  that was typed (`sextant-session-start --help` said `Usage: atlas-session-start`; `sextant context --help`
+  said `atlas-prime`); `sextant doctor`'s three hints, the curation report's fourteen command lines and
+  `sextant reset`'s plan name the `sextant` form on a `sextant` install; `sextant commands` lists the
+  `sextant-*` names first and the others as "older atlas-* names, still working". A hint follows how the
+  command was typed, never which files sit beside the interpreter.
+
 ### Fixed
 
 - A search that arrives while another search of the same process is rebuilding the index no longer rebuilds

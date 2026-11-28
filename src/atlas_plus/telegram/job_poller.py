@@ -290,7 +290,7 @@ def main() -> None:
 
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     parser = _next_step.ArgumentParser(
-        prog="atlas-job-poller",
+        prog=__import__("atlas_plus.branding", fromlist=["prog"]).prog("atlas-job-poller"),
         description="Poll the Brain task queue once (default) or continuously (--loop).",
     )
     parser.add_argument("--loop", action="store_true", help="poll continuously")

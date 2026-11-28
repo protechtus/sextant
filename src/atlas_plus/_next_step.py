@@ -60,9 +60,17 @@ def command(sub: str = "") -> str:
 def script(name: str) -> str:
     """A standalone console script (`sextant-<name>`, or `atlas-<name>` in an atlas-* install) as this
     install must type it, backticked. `sextant fts-rebuild` is not a subcommand: hints named it, or the
-    atlas-* alias a public install never shows (SEX-052 item 4)."""
+    atlas-* alias a public install never shows (SEX-052 item 4). Every public command has a sextant-*
+    name since SEX-043 (AG130): the name and the hint ship in one build, so no look at the Scripts folder."""
     prefix = "sextant" if umbrella() == "sextant" else "atlas"
     return f"`{how_to_run(prefix + '-' + name)}`"
+
+
+def review(sub: str = "") -> str:
+    """The curation command (`sextant review <sub>`, or `atlas-review-memory <sub>` in an atlas-* install),
+    not backticked, plain: report files and doctor lines show it as is (SEX-043, AG130)."""
+    base = "sextant review" if umbrella() == "sextant" else "atlas-review-memory"
+    return f"{base} {sub}".rstrip()
 
 
 def corpus_elsewhere() -> str:

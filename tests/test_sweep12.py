@@ -431,7 +431,7 @@ def test_weekly_report_lands_in_the_state_dir_and_names_real_commands(corpus, tm
                                                 encoding="utf-8")
     report, out_path = generate_report(memory_root=corpus, dry_run=False)
     assert "## Repeated facts" in report and "## Never confirmed" in report
-    assert "atlas-review-memory archive <path> --yes" in report and "--interactive" not in report
+    assert ("sextant review archive <path> --yes" in report or "atlas-review-memory archive <path> --yes" in report) and "--interactive" not in report
     assert out_path.exists() and out_path.parent.name == "reports" and corpus not in out_path.parents
     assert not list((corpus / "_atlas").glob("cleanup-*.md"))
 

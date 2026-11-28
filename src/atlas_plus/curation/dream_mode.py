@@ -274,7 +274,7 @@ def run_dream(
     }
 
     if dry_run:
-        print(f"[atlas-dream] Corpus: {stats['files']} files, {stats['total_chars']} chars"
+        print(f"[{_prog_name()}] Corpus: {stats['files']} files, {stats['total_chars']} chars"
               f"{' (truncated)' if stats['truncated'] else ''}.")
         return result
 
@@ -346,6 +346,11 @@ def run_dream(
 # CLI
 # ---------------------------------------------------------------------------
 
+def _prog_name() -> str:
+    from atlas_plus.branding import prog
+    return prog("atlas-dream")
+
+
 def main() -> None:
     """Entry point for the `atlas-dream` CLI command.
 
@@ -355,8 +360,9 @@ def main() -> None:
     """
     import argparse
 
-    from atlas_plus.branding import product
+    from atlas_plus.branding import product, prog as _prog
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
+    _me = _prog("atlas-dream")
     parser = _next_step.ArgumentParser(
         description=f"{product()} Dream Mode: on-demand meta-cognitive reflection over the corpus.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -364,9 +370,9 @@ def main() -> None:
             "Output: .memory/sessions/_dream-YYYY-MM-DD.md\n"
             "       (or .atlas/_dream-YYYY-MM-DD.md when ATLAS_AUTONOMOUS=off)\n\n"
             "Examples:\n"
-            "  atlas-dream                         # full reflection\n"
-            "  atlas-dream --scope feedback        # focus on feedback rules\n"
-            "  atlas-dream --dry-run               # show corpus stats only\n"
+            f"  {_me:<36}# full reflection\n"
+            f"  {_me + ' --scope feedback':<36}# focus on feedback rules\n"
+            f"  {_me + ' --dry-run':<36}# show corpus stats only\n"
         ),
     )
     parser.add_argument(
@@ -385,12 +391,12 @@ def main() -> None:
 
     autonomous = _is_autonomous()
     scopes = args.scopes or _DEFAULT_SCOPES
-    print(f"[atlas-dream] Scopes: {scopes} | autonomous: {autonomous} | dry-run: {args.dry_run}")
+    print(f"[{_prog_name()}] Scopes: {scopes} | autonomous: {autonomous} | dry-run: {args.dry_run}")
 
     result = run_dream(scopes=scopes, dry_run=args.dry_run)
 
     if result.get("error"):
-        print(f"[atlas-dream] Error: {result['error']}", file=sys.stderr)
+        print(f"[{_prog_name()}] Error: {result['error']}", file=sys.stderr)
         sys.exit(1)
 
     if args.dry_run:

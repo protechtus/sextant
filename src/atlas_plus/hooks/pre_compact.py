@@ -64,7 +64,8 @@ def _git_oneliner(project_dir: Path) -> str:
 def main() -> None:
     """Claude Code pre-compact hook: snapshot session state before the context window is compressed."""
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):  # `--help` ran the hook and printed nothing (AG103)
-        print("Usage: atlas-pre-compact\n\nPreCompact hook: snapshots the session state (project, open tickets) into "
+        from atlas_plus.branding import prog as _prog
+        print(f"Usage: {_prog('atlas-pre-compact')}\n\nPreCompact hook: snapshots the session state (project, open tickets) into "
               "the state dir\nbefore the client compresses its context. Other arguments are ignored.")
         return
     make_private_dir(STATE_DIR)

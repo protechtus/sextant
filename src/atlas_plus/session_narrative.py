@@ -268,7 +268,7 @@ def main() -> int:
 
     from atlas_plus import _next_step
 
-    ap = _next_step.ArgumentParser(prog="atlas-narrative", description="Write the session narrative report "
+    ap = _next_step.ArgumentParser(prog=__import__("atlas_plus.branding", fromlist=["prog"]).prog("atlas-narrative"), description="Write the session narrative report "
                                    "(energy, open loops, direction) from recent session summaries.")
     ap.add_argument("--days", type=int, default=14, help="How many days back to read (default 14).")
     args = ap.parse_args()

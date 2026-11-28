@@ -64,7 +64,7 @@ def main() -> None:
 
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     _next_step.ArgumentParser(
-        prog="atlas-telegram-bot",
+        prog=__import__("atlas_plus.branding", fromlist=["prog"]).prog("atlas-telegram-bot"),
         description="Telegram control bot (long-poll; needs ATLAS_TELEGRAM_BOT_TOKEN "
                     "and ATLAS_TELEGRAM_ALLOWED_USERS).",
     ).parse_args()

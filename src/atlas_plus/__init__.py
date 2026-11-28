@@ -8,6 +8,12 @@ versioned per the workspace version-before-edit rule.
 See `README.md`, `docs/ARCHITECTURE.md` and `docs/RELEASING.md` (versions, builds, releases).
 """
 
+# Every SEXTANT_<NAME> is honoured as ATLAS_<NAME> (SEX-043, AG132): adopted once here, before any submodule
+# reads a setting, so children and hooks inherit it. Only-ATLAS environments are left untouched.
+from atlas_plus import _envnames as _envnames
+
+_envnames.adopt()
+
 
 def _installed_version() -> str:
     """The version pip installed (sextant-ai publicly, atlas-plus privately), so an upgrade reports

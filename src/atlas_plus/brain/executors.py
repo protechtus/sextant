@@ -436,7 +436,8 @@ def _clean_pytest_env() -> dict[str, str]:
     return {
         k: v
         for k, v in os.environ.items()
-        if not k.upper().startswith("ATLAS_") and k.upper() not in _LIVE_ENV_KEYS
+        # SEXTANT_* as well: the child would adopt it as ATLAS_* at import (SEX-043, AG132).
+        if not k.upper().startswith(("ATLAS_", "SEXTANT_")) and k.upper() not in _LIVE_ENV_KEYS
     }
 
 

@@ -13,10 +13,25 @@ the `ATLAS_DISABLE_*` stop-hook opt-outs take effect for `on`, `1`, `true` or `y
 (`ATLAS_*_PORT`, `ATLAS_MCP_LOCKOUT_*`, `ATLAS_BRAIN_RATE_LIMIT_RPM`, the job-poller numbers) that is not a whole number is
 refused with a sentence naming it; the tuning numbers (timeouts, budgets, thresholds such as `ATLAS_EMBED_TIMEOUT`,
 `ATLAS_FTS_FRESHNESS_WINDOW`, `ATLAS_DUPLICATES_BUDGET_SECONDS`) fall back to their default instead.
-Paths accept absolute paths on any OS. Every variable uses the `ATLAS_`
-prefix -- the engine's namespace -- even though the commands are
-`sextant-*`. A `SEXTANT_`-prefixed twin (the natural guess) is never
-read; the path variables warn on stderr if you set one.
+Paths accept absolute paths on any OS.
+
+**Two spellings, one setting.** Every variable on this page can be set as
+`SEXTANT_<NAME>`, the spelling to use from now on, or as the older
+`ATLAS_<NAME>` listed below, which is still read and always will be: for
+example `SEXTANT_MEMORY_ROOT` or `ATLAS_MEMORY_ROOT`. The rule:
+
+- only one spelling set: that value is used;
+- both set to different values: the `ATLAS_` value is used (it is the
+  spelling `sextant setup` writes into your client settings and hook lines,
+  so an upgrade never re-points an existing registration) and every command
+  prints one warning line on stderr naming both variables;
+- `sextant setup` keeps writing the `ATLAS_` spelling into client settings,
+  so a client configuration made by any version keeps working with every
+  version;
+- `SEXTANT_PROOF_*` belongs to the benchmark harness and is not a twin.
+
+The design and its limits (the state folder keeps its name):
+docs/NAMING-MIGRATION-DESIGN.md.
 
 **Setting a variable so it sticks** (a `$env:X=...` line dies with the
 terminal window):

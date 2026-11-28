@@ -29,7 +29,9 @@ _SUITE_ISOLATION_ROOT = _Path(_tempfile.mkdtemp(prefix="sextant-tests-"))
 # new user to set (and setx) the ATLAS_* roots, then run pytest in the same shell, and `setdefault` let those win,
 # so a run wrote ticket events, reports and version copies into the contributor's own Sextant; a set
 # ATLAS_WEB_API_KEY failed 182 dashboard tests. Every ATLAS_* variable is dropped, the roots are forced.
-for _var in [_k for _k in _os.environ if _k.upper().startswith("ATLAS_")]:
+# SEXTANT_* too: the package adopts SEXTANT_<NAME> as ATLAS_<NAME> at import (SEX-043, AG132), so a leaked new
+# spelling would refill what this loop just cleared, in this process and in every child a test starts.
+for _var in [_k for _k in _os.environ if _k.upper().startswith(("ATLAS_", "SEXTANT_"))]:
     del _os.environ[_var]
 for _var, _sub in (("ATLAS_WORKSPACE_ROOT", ""), ("ATLAS_MEMORY_ROOT", ".memory"),
                    ("ATLAS_STATE_DIR", ".atlas"), ("ATLAS_PROJECTS_ROOT", "projects")):

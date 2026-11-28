@@ -445,9 +445,9 @@ defaults. Same engine throughout. The practical rule: anything that says
 atlas-SOMETHING is this same program wearing its engine name -- never a second
 thing to install or debug.
 
-The user-facing commands ship under both names -- use whichever you prefer
-(`sextant-*` recommended for new installs; the full `atlas-*` family remains
-available and is what the deeper docs reference):
+Every command has a `sextant-*` name. The `atlas-*` names are the older names of the
+same commands and keep working, so nothing you typed, scheduled or pasted into a
+client's settings with an earlier version changes:
 
 | `sextant-*` command | alias of | what it does |
 |---|---|---|
@@ -466,13 +466,32 @@ available and is what the deeper docs reference):
 | `sextant-uninstall` | `atlas-uninstall` | report or cleanly remove Sextant's data (safety-gated) |
 | `sextant-reset` | `atlas-reset` | wipe an area and re-scaffold it fresh (same safety gates) |
 | `sextant-intake` | `atlas-intake` | import files dropped into a watched folder (frontmatter routing) |
+| `sextant-review-memory` | `atlas-review-memory` | the curation commands (the same program as `sextant review`) |
+| `sextant-rederive` | `atlas-rederive` | the curation program under its second name |
+| `sextant-prime` | `atlas-prime` | task context for a prompt (the same program as `sextant context`) |
+| `sextant-pre-compact` | `atlas-pre-compact` | the PreCompact hook's entry point |
+| `sextant-temporal` | `atlas-temporal` | the temporal knowledge graph (build, query) |
+| `sextant-db-backup` | `atlas-db-backup` | snapshots of the state databases |
+| `sextant-tickets` | `atlas-tickets` | the file-based ticket commands |
+| `sextant-suggest-facts` | `atlas-suggest-facts` | propose facts from session logs for your review |
+| `sextant-contradiction-check` | `atlas-contradiction-check` | the nightly contradiction check |
+| `sextant-reflexion-loop` | `atlas-reflexion-loop` | the reflexion job (review proposals from past sessions) |
+| `sextant-weekly-synthesis` | `atlas-weekly-synthesis` | the weekly synthesis job |
+| `sextant-narrative` | `atlas-narrative` | the session narrative report |
+| `sextant-sprint-summary` | `atlas-sprint-summary` | the sprint summary report |
+| `sextant-brain-chat` | `atlas-brain-chat` | chat with the local Brain from a terminal |
+| `sextant-brain-worker` | `atlas-brain-worker` | the Brain's task worker |
+| `sextant-telegram-bot` | `atlas-telegram-bot` | the optional Telegram bot |
+| `sextant-job-poller` | `atlas-job-poller` | the Telegram job-result poller |
+| `sextant-ntfy-listener` | `atlas-ntfy-listener` | the optional ntfy listener |
+| `sextant-summarize-session` | `atlas-summarize-session` | summarize session transcripts into the session log |
 
 One more `sextant-*` script has no `atlas-*` twin: `sextant-versions` (report or prune the whole-file
 history copies every write makes). `sextant-session-start` (alias `atlas-session-start`) is the SessionStart hook's
 entry point, and `sextant-fts-rebuild` (alias `atlas-fts-rebuild`) rebuilds the keyword index.
 
-(The full `atlas-*` family includes further internal/service commands without
-`sextant-*` twins; `sextant commands` lists everything installed.)
+(`sextant commands` lists everything installed: the `sextant-*` names first, then the
+older `atlas-*` names.)
 
 ## Security model, honestly
 

@@ -19,38 +19,19 @@ constants in callers still freeze values at import time, as they always did.
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 # Impatient-persona finding (2026-09-30): every command the user types is
-# sextant-*, so SEXTANT_MEMORY_ROOT is the natural wrong guess for the env
-# namespace -- and it was silently ignored, landing data at the default path
-# with no error to notice. Warn once per process, on stderr (stdout may be
-# an MCP stdio channel).
-_warned_twins: set[str] = set()
+# sextant-*, so SEXTANT_MEMORY_ROOT is the natural guess for the env
+# namespace. It used to be ignored with a warning; since SEX-043 it is read.
+_warned_twins: set[str] = set()  # kept for callers that clear it; unused since SEX-043
 
 
 def _warn_sextant_twin(var: str) -> None:
-    twin = var.replace("ATLAS_", "SEXTANT_", 1)
-    if twin in _warned_twins:
-        return
-    if os.environ.get(twin, "").strip() and not os.environ.get(var, "").strip():
-        _warned_twins.add(twin)
-        # Guarded print (expert pass 2026-10-05, finding 9): with stderr
-        # None (pythonw) print falls back to STDOUT -- prose into an MCP
-        # stdio JSON-RPC stream -- and a broken pipe would raise out of
-        # every path function. A lost warning is fine; a broken path
-        # resolution is not.
-        if sys.stderr is not None:
-            try:
-                print(
-                    f"warning: {twin} is set but never read -- Sextant's "
-                    f"engine uses the ATLAS_* namespace. Set {var} instead "
-                    f"(see docs/CONFIGURATION.md).",
-                    file=sys.stderr,
-                )
-            except Exception:
-                pass
+    # Since SEX-043 (AG132) the twin is READ: the package adopts SEXTANT_<NAME> at import, and a twin set later
+    # (a test, an embedding caller) is adopted here by the same rule (atlas_plus/_envnames.py).
+    from atlas_plus import _envnames
+    _envnames.adopt_one(var)
 
 def workspace_root() -> Path:
     """Resolve the workspace root: ATLAS_WORKSPACE_ROOT, else the home directory.

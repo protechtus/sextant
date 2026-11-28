@@ -50,39 +50,36 @@ class TestDerivedPaths:
 
 
 class TestSextantTwinWarning:
-    """SEXTANT_MEMORY_ROOT (the natural wrong namespace guess -- every command
-    is sextant-*) was silently ignored; it must warn on stderr, once, and
-    still resolve the default (impatient persona, quality loop run 20)."""
+    """SEXTANT_MEMORY_ROOT (the natural namespace guess -- every command is
+    sextant-*) used to be ignored with a warning (impatient persona, quality
+    loop run 20). Since SEX-043 (AG132) it is READ: a twin set after import is
+    adopted by the path functions; when both spellings are set and differ the
+    ATLAS_* value wins and stderr says so once."""
 
     def _clear(self, monkeypatch):
+        import atlas_plus._envnames as envnames
         for var in ("ATLAS_MEMORY_ROOT", "SEXTANT_MEMORY_ROOT",
                     "ATLAS_WORKSPACE_ROOT", "SEXTANT_WORKSPACE_ROOT"):
-            monkeypatch.delenv(var, raising=False)
-        paths._warned_twins.clear()
+            monkeypatch.setenv(var, "x")   # recorded, so the adoption's own write is undone after the test
+            monkeypatch.delenv(var)
+        monkeypatch.setattr(envnames, "_warned", set())
 
-    def test_twin_set_warns_and_falls_back(self, tmp_path, monkeypatch, capsys):
+    def test_twin_set_is_read(self, tmp_path, monkeypatch, capsys):
         self._clear(monkeypatch)
         monkeypatch.setenv("ATLAS_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("SEXTANT_MEMORY_ROOT", str(tmp_path / "guessed"))
-        assert paths.memory_root() == tmp_path / ".memory"
-        err = capsys.readouterr().err
-        assert "SEXTANT_MEMORY_ROOT is set but never read" in err
-        assert "ATLAS_MEMORY_ROOT" in err
+        assert paths.memory_root() == tmp_path / "guessed"
+        assert "SEXTANT" not in capsys.readouterr().err
 
-    def test_warns_only_once_per_process(self, tmp_path, monkeypatch, capsys):
-        self._clear(monkeypatch)
-        monkeypatch.setenv("ATLAS_WORKSPACE_ROOT", str(tmp_path))
-        monkeypatch.setenv("SEXTANT_MEMORY_ROOT", str(tmp_path / "guessed"))
-        paths.memory_root()
-        paths.memory_root()
-        assert capsys.readouterr().err.count("SEXTANT_MEMORY_ROOT") == 1
-
-    def test_no_warning_when_real_var_also_set(self, tmp_path, monkeypatch, capsys):
+    def test_both_differ_old_spelling_wins_and_warns_once(self, tmp_path, monkeypatch, capsys):
         self._clear(monkeypatch)
         monkeypatch.setenv("SEXTANT_MEMORY_ROOT", str(tmp_path / "guessed"))
         monkeypatch.setenv("ATLAS_MEMORY_ROOT", str(tmp_path / "real"))
         assert paths.memory_root() == tmp_path / "real"
-        assert "SEXTANT_MEMORY_ROOT" not in capsys.readouterr().err
+        paths.memory_root()
+        err = capsys.readouterr().err
+        assert err.count("SEXTANT_MEMORY_ROOT and ATLAS_MEMORY_ROOT are both set and differ") == 1
+        assert str(tmp_path) not in err            # names only, never values
 
     def test_no_warning_without_twin(self, tmp_path, monkeypatch, capsys):
         self._clear(monkeypatch)

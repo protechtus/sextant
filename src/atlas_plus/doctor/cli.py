@@ -26,6 +26,17 @@ from atlas_plus import _proc
 from atlas_plus import paths as atlas_paths
 
 
+
+def _ns_script(name: str) -> str:
+    """A console script as this install names it (SEX-043, AG130)."""
+    from atlas_plus import _next_step
+    return _next_step.script(name)
+
+
+def _ns_review(sub: str) -> str:
+    from atlas_plus import _next_step
+    return _next_step.review(sub)
+
 def _yaml_load(text: str):
     """safe_load through libyaml when it is installed (AG23, sweep 12); a mapping always (AG119)."""
     from atlas_plus._yaml import load_mapping
@@ -1950,7 +1961,7 @@ def render_text(data: dict) -> str:
         stale_note = ""
         never_built = not tg.get("last_built") and not tg.get("entities") and not tg.get("facts_active")
         if never_built:
-            stale_note = "  \033[36mnot built yet (optional: atlas-temporal build)\033[0m"
+            stale_note = f"  \033[36mnot built yet (optional: {_ns_script('temporal').strip('`')} build)\033[0m"
         elif tg.get("stale"):
             age = tg.get("age_days")
             stale_note = f"  \033[33mSTALE ({age}d old)\033[0m" if age else "  \033[33mSTALE (no manifest)\033[0m"
@@ -2009,7 +2020,7 @@ def render_text(data: dict) -> str:
     dbbk = data.get("db_backup", {})
     if dbbk:
         if dbbk.get("last_ts") == "never":
-            lines.append("  \033[33mDB snapshot: none yet (atlas-db-backup snapshot; schedule it yourself -- no job ships with the public build)\033[0m")
+            lines.append(f"  \033[33mDB snapshot: none yet ({_ns_script('db-backup').strip('`')} snapshot; schedule it yourself -- no job ships with the public build)\033[0m")
         elif dbbk.get("stale"):
             lines.append(
                 f"  \033[31mDB snapshot STALE: {dbbk.get('last_ts')} "
@@ -2082,7 +2093,7 @@ def render_text(data: dict) -> str:
         untagged = mq.get("untagged_files", 0)
         if untagged > 0:
             lines.append(
-                f"  \033[33mUntagged: {untagged} file(s) -- run: atlas-review-memory suggest-tags --write\033[0m"
+                f"  \033[33mUntagged: {untagged} file(s) -- run: {_ns_review('suggest-tags --write')}\033[0m"
             )
             # Top-3 untagged scopes for quick remediation targeting
             try:

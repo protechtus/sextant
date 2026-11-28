@@ -186,7 +186,7 @@ def _main(
 def cmd_commands(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
 ) -> None:
-    """List every installed command (sextant-* and the atlas-* family) and its target."""
+    """List every installed command and its target: the sextant-* names, then the older atlas-* names (they keep working)."""
     import json as _json
     from importlib import metadata
 
@@ -205,8 +205,9 @@ def cmd_commands(
     _, prefix = _brand()
     first = {n: t for n, t in eps.items() if n.startswith(prefix)}
     rest = {n: t for n, t in eps.items() if not n.startswith(prefix)}
+    older = ("older atlas-* names, still working" if prefix == "sextant" else "also installed")
     for group, title in ((first, f"{prefix}-* commands ({len(first)})"),
-                         (rest, f"also installed ({len(rest)})")):
+                         (rest, f"{older} ({len(rest)})")):
         if not group:
             continue
         from rich.table import Table
@@ -293,7 +294,7 @@ def cmd_ingest(ctx: typer.Context) -> None:
 
 @app.command("review", **_PASSTHROUGH)
 def cmd_review(ctx: typer.Context) -> None:
-    """Curate the corpus (same as atlas-review-memory): `sextant review report` is the weekly check."""
+    """Curate the corpus (its older name atlas-review-memory keeps working): `sextant review report` is the weekly check."""
     from atlas_plus.curation.cli import main as review_main
 
     _delegate(review_main, "sextant review", ctx.args)
@@ -392,7 +393,7 @@ def cmd_web(ctx: typer.Context) -> None:
 @app.command("context", **_PASSTHROUGH)
 def cmd_context(ctx: typer.Context) -> None:
     """Print the session priming text (same as sextant-session-start); with words, the task-matched
-    facts (same as atlas-prime "<task words>")."""
+    facts for those words."""
     from atlas_plus import paths as _paths
     if not _paths.memory_root().exists():
         # Before init the block came back empty, rc 0, with no direction (SEX-047, AG107). stderr only:

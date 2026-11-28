@@ -251,7 +251,7 @@ def main() -> None:
 
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     _next_step.ArgumentParser(
-        prog="atlas-ntfy-listener",
+        prog=__import__("atlas_plus.branding", fromlist=["prog"]).prog("atlas-ntfy-listener"),
         description="ntfy inbound command listener (needs ATLAS_NTFY_CMD_TOPIC "
                     "and ATLAS_NTFY_CMD_SECRET).",
     ).parse_args()

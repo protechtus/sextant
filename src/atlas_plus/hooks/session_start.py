@@ -427,7 +427,8 @@ def main() -> None:
     utf8_stdout_when_piped()
     """Claude Code session-start hook: emit Atlas identity, project state, and last-session summary to the context window."""
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
-        print("Usage: atlas-session-start\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
+        from atlas_plus.branding import prog as _prog
+        print(f"Usage: {_prog('atlas-session-start')}\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
         return
     from atlas_plus.hooks.scope import in_scope as _in_scope, payload_cwd as _payload_cwd, quoted_hint as _quoted_hint, read_payload as _read_payload, posix_path_for as _posix_path_for, session_in_scope as _session_in_scope
     _payload = _read_payload()
