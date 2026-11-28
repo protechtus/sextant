@@ -506,7 +506,10 @@ async def lifespan(app: FastAPI):
 
 # No unauthenticated API map: /docs, /redoc and /openapi.json listed every route to anyone
 # who could reach the port (MN4, pipeline sweep 2026-11-11).
-app = FastAPI(title="Atlas Web UI", version="0.5.0", lifespan=lifespan,
+# The dashboard's task export file name (0.1.0/0.1.1 named it atlas-tasks.csv; AG131).
+TASKS_CSV_NAME = "sextant-tasks.csv"
+
+app = FastAPI(title="Sextant Web UI", version="0.5.0", lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 
 # Browser hardening (MN4, pipeline sweep 2026-11-11): htmx is pinned by subresource integrity; Tailwind is
@@ -6881,7 +6884,7 @@ function exportTasks(){{
   }}).then(r=>r.blob()).then(blob=>{{
     const link=document.createElement('a');
     link.href=URL.createObjectURL(blob);
-    link.download='atlas-tasks.csv';
+    link.download='{TASKS_CSV_NAME}';
     link.click();
     URL.revokeObjectURL(link.href);
   }}).catch(e=>showToast('Export failed: '+e.message,'failed'));

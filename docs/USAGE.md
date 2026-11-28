@@ -48,7 +48,7 @@ Three specialized flavors matter more than they look:
   `libraries` or `project:<name>`, a `reject_pattern`, and `applies_to`
   `workspace` or `project`; listed via `memory_anti_list_tool`). A later
   `memory_remember` that repeats a rejected idea is stored with an
-  `anti_warning` naming the rejection, and `atlas-prime` lists the rejected
+  `anti_warning` naming the rejection, and `sextant context` lists the rejected
   ideas that match the task words under "Do NOT suggest".
 - **Autocommit**: set `ATLAS_MEMORY_AUTOCOMMIT=on` with a git-repo
   corpus and every interactive write becomes a commit.
@@ -77,12 +77,12 @@ a star for the prefix (`sommerhus*`, `hus*`). The second part of a compound (`ud
 Facts go stale; a memory system that cannot say "this might be outdated"
 becomes confidently wrong. When your assistant re-verifies something,
 have it "confirm that fact" (`memory_confirm_tool`) -- that refreshes
-`last_confirmed`. `atlas-review-memory unconfirmed-decay` lists notes not
+`last_confirmed`. `sextant review unconfirmed-decay` lists notes not
 confirmed within the threshold (a note never confirmed counts from its last
 edit and shows `never`); `--write` downgrades their confidence, by you at
 the terminal or by the nightly job when `ATLAS_AUTONOMOUS=on`.
 `memory_list_confirmed_tool` shows what has been checked recently.
-`atlas-review-memory contradictions` needs a model (Ollama, or a provider
+`sextant review contradictions` needs a model (Ollama, or a provider
 key with `ATLAS_LOCAL_ONLY=off`); without one it says so and exits 2 rather
 than reporting "none". It reports pairs; it does not edit the files.
 

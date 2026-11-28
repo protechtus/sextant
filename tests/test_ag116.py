@@ -167,7 +167,7 @@ def test_context_survives_a_stdin_that_never_closes(tmp_path):
     err_text = err.decode("utf-8", "replace")
     assert "Fatal Python error" not in err_text, err_text[-1500:]
     assert proc.returncode == 0, (proc.returncode, err_text[-1500:])
-    assert "=== END ATLAS CONTEXT ===" in out.decode("utf-8", "replace")
+    assert "=== END SEXTANT CONTEXT ===" in out.decode("utf-8", "replace")
 
 
 def test_read_payload_still_reads_a_piped_payload(tmp_path, monkeypatch):

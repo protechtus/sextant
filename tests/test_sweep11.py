@@ -631,7 +631,7 @@ def test_sextant_context_prints_the_priming_text(corpus, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["sextant"])   # _delegate rewrites sys.argv; restore it after
     res = CliRunner().invoke(cli.app, ["context"])
     assert res.exit_code == 0, res.output
-    assert "ATLAS" in res.output and "> I am Jo, a gardener." in res.output
+    assert "SEXTANT" in res.output and "> I am Jo, a gardener." in res.output
 
 
 # ---- manual wave 11: MN13, MN14, MN15, MN16, MN17 -------------------------------------------

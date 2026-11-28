@@ -24,7 +24,7 @@ def _p(text: object) -> str:
     name prints as written instead of styling the rest of the line (AG122)."""
     return _escape(_safe(text))
 
-app = _SextantTyper(help="Atlas memory curation hygiene tools")
+app = _SextantTyper(help="Sextant memory curation hygiene tools")
 console = Console()
 
 

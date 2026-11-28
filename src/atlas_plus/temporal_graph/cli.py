@@ -30,7 +30,7 @@ from atlas_plus.temporal_graph.build import build_temporal_graph
 
 app = _SextantTyper(
     name="atlas-temporal",
-    help="Query the Atlas temporal knowledge graph.",
+    help="Query the Sextant temporal knowledge graph.",
     add_completion=False,
 )
 

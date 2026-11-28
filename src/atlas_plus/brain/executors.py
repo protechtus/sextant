@@ -1272,7 +1272,7 @@ def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
         pass
 
     lines = [
-        "You are the weekly supervisor of Atlas Brain, the local automation layer of a personal memory system.",
+        "You are the weekly supervisor of Sextant Brain, the local automation layer of a personal memory system.",
         "Brain runs scheduled lanes on a local model and measures what happens; Claude Code sessions do the real",
         "work. Your job is to read the week and turn it into what the system should keep: a short diagnosis and",
         "a handful of proposals the operator approves with one click. You are the senior reviewer.",
@@ -1311,7 +1311,7 @@ def _claude_supervisor(ctx: ExecutorContext) -> ExecutionResult:
         "Then end with ONE fenced json block and nothing after it:",
         '```json',
         '{"proposals": [{"kind": "lesson", "title": "...", "body": "...", "scope": "..."},',
-        '               {"kind": "ticket", "title": "...", "body": "...", "project": "atlas-memory+", "priority": "normal"},',
+        '               {"kind": "ticket", "title": "...", "body": "...", "project": "my-project", "priority": "normal"},',
         '               {"kind": "fact", "title": "...", "body": "...", "scope": "reference:<topic>"}]}',
         '```',
         "Rules for proposals: at most 6. A lesson is a rule a check could enforce or a habit worth keeping, with",

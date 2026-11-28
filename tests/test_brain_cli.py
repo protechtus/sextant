@@ -1120,7 +1120,7 @@ class TestHealthCommand:
              patch("atlas_plus.doctor.cli.check_memory_quality", return_value={
                 "total_files": 100, "confirmed_pct": 70, "tagged_pct": 80, "untagged_files": 5}):
             out = _run_cmd("/health")
-        assert "Atlas Health" in out
+        assert "Sextant Health" in out
 
     def test_shows_service_count(self):
         from unittest.mock import patch
@@ -1139,7 +1139,7 @@ class TestHealthCommand:
                    side_effect=RuntimeError("service check failed")):
             out = _run_cmd("/health")
         # Should not crash; Atlas Health header still shows
-        assert "Atlas Health" in out or "failed" in out.lower()
+        assert "Sextant Health" in out or "failed" in out.lower()
 
     def test_health_wired_in_help(self):
         out = _run_cmd("/help")

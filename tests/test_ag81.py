@@ -185,7 +185,7 @@ def test_session_start_primes_nothing_outside_its_scope(tmp_path, monkeypatch, c
     from atlas_plus.hooks import session_start
     monkeypatch.setattr(session_start.sys, "argv", ["session-start"])
     session_start.main()
-    assert "ATLAS SESSION CONTEXT" not in capsys.readouterr().out
+    assert "SEXTANT SESSION CONTEXT" not in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- (3) state dir

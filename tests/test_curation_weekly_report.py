@@ -31,7 +31,7 @@ class TestGenerateReport:
              patch("atlas_plus.curation.stale.MEMORY_ROOT", tmp_path):
             report, _ = generate_report(memory_root=tmp_path, dry_run=True)
         today = date.today().isoformat()
-        assert "Atlas Memory Curation Report" in report
+        assert "Sextant Memory Curation Report" in report
         assert today in report
 
     def test_dry_run_does_not_write_file(self, tmp_path):

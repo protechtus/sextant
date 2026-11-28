@@ -1,7 +1,7 @@
 """Quote corpus text before it is printed into a priming block.
 
 A note is the user's own data. Printed raw, a note could close the hook's block with its own
-`=== END ATLAS CONTEXT ===` line, open a fake one, or carry `<system>`-shaped tags that read
+`=== END SEXTANT CONTEXT ===` line (or the `=== END ATLAS CONTEXT ===` of 0.1.0/0.1.1), open a fake one, or carry `<system>`-shaped tags that read
 like the tool speaking (AG16, sweep 11). Every line of corpus-derived text is therefore
 prefixed as a quotation, block markers inside it are defused, and tag-shaped text gets a space
 after the angle bracket so it cannot parse as a tag. The words stay readable.

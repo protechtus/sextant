@@ -66,7 +66,7 @@ from atlas_plus import paths as atlas_paths
 console = Console()
 
 _DEFAULT_SESSION_PREFIX = "cli"
-_BANNER = "[bold cyan]Atlas Brain[/bold cyan] -- local Qwen3 chat"
+_BANNER = "[bold cyan]Sextant Brain[/bold cyan] -- local Qwen3 chat"
 _HINT = "[dim]Type [bold]/help[/bold] for commands. [bold]/quit[/bold] to exit.[/dim]"
 
 _CLI_HISTORY_DIR = atlas_paths.state_dir() / "cli-history"
@@ -526,7 +526,7 @@ def _save_fact(arg: str) -> None:
             "[red]Usage: /save <scope> <fact>[/red]\n"
             "[dim]Examples:\n"
             "  /save feedback Always use 4-space indentation in Python.\n"
-            "  /save project:atlas-memory+ Brain uses APScheduler for nightly jobs.\n"
+            "  /save project:my-project Brain uses APScheduler for nightly jobs.\n"
             "  /save reference:decision Chose SQLite over Postgres for portability.[/dim]"
         )
         return
@@ -1121,7 +1121,7 @@ def _dispatch_tickets_now() -> None:
 
 def _show_health() -> None:
     """Compact system health summary -- services, worker, memory quality, pending facts."""
-    console.print("[bold cyan]Atlas Health[/bold cyan]")
+    console.print("[bold cyan]Sextant Health[/bold cyan]")
 
     # Services (parallel, 3s timeout)
     try:
@@ -2912,7 +2912,7 @@ def main() -> None:
     import argparse
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     parser = _next_step.ArgumentParser(
-        description="Atlas Brain CLI -- local Qwen3 terminal chat",
+        description="Sextant Brain CLI -- local Qwen3 terminal chat",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"

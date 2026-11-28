@@ -585,7 +585,7 @@ async def _research_quality_daily() -> None:
                     )
                     try:
                         _httpx.post(ntfy_url, content=msg.encode(),
-                                   headers={"Title": "Atlas research quality", "Priority": "low"},
+                                   headers={"Title": "Sextant research quality", "Priority": "low"},
                                    timeout=5.0)
                     except Exception:
                         pass
@@ -614,7 +614,7 @@ def _build_weekly_digest() -> str:
     open tickets. Returns a plain-text summary suitable for ntfy or Telegram.
     Runs synchronously (called in asyncio.to_thread).
     """
-    lines = ["Atlas Weekly Digest"]
+    lines = ["Sextant Weekly Digest"]
     lines.append("=" * 20)
 
     # Task stats
@@ -772,7 +772,7 @@ async def _weekly_digest_push() -> None:
         try:
             from .server import _ntfy
             asyncio.create_task(_ntfy(
-                "Atlas Weekly Digest",
+                "Sextant Weekly Digest",
                 digest,
                 priority="default",
             ))
@@ -807,7 +807,7 @@ async def _ticket_dispatch() -> None:
             try:
                 from .server import _ntfy
                 asyncio.create_task(_ntfy(
-                    f"Atlas: {len(dispatched)} ticket(s) dispatched",
+                    f"Sextant: {len(dispatched)} ticket(s) dispatched",
                     ids,
                     priority="low",
                 ))

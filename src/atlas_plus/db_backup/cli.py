@@ -34,7 +34,7 @@ from .core import (
 
 app = _SextantTyper(
     name="atlas-db-backup",
-    help="Atlas SQLite state DB backup / restore CLI",
+    help="Sextant SQLite state DB backup / restore CLI",
     add_completion=False,
 )
 console = Console()

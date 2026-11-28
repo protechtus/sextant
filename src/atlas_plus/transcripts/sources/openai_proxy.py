@@ -46,7 +46,7 @@ DEFAULT_TARGET = os.environ.get("OPENAI_PROXY_TARGET", "https://api.openai.com/v
 
 log = logging.getLogger("atlas.openai-proxy")
 
-app = FastAPI(title="Atlas OpenAI capture proxy", version="0.1.0")
+app = FastAPI(title="Sextant OpenAI capture proxy", version="0.1.0")
 _store = TranscriptStore()
 _index = TranscriptIndex()
 _client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0))

@@ -155,7 +155,7 @@ The MCP server exposes these tools to all connected clients:
 (30 tools total -- `tests/test_docs_claims.py` holds this table to the
 `@mcp.tool` registrations in `server.py`, so it cannot silently drift again.)
 
-Temporal graph source options (atlas-temporal build --source X):
+Temporal graph source options (sextant-temporal build --source X):
 - `fixtures` -- built-in Atlas Phase 4 lifecycle data
 - `memory` -- .memory/ Markdown files via MemoryMarkdownSource
 - `sessions` -- .memory/sessions/YYYY-MM-DD.md via SessionLogSource
@@ -179,7 +179,7 @@ The full hands-free automation cycle triggered by the ticket dispatcher:
    dispatch_all_eligible() scans todo tickets
      -> dispatch_ticket(t):  create_task(session_id="ticket-{ID}", agent=..., priority=...)
      -> update_ticket_status(id, "in-progress")
-     -> ntfy push: "Atlas: N ticket(s) dispatched"
+     -> ntfy push: "Sextant: N ticket(s) dispatched"
 
 3. Brain worker picks up task via claim_next_task()
    run_executor(task) -> _agent executor (or routed to claude-code/codex)
@@ -222,7 +222,7 @@ Brain FastAPI (port 8767)
   |     asyncio.create_task(_execute_task(...))  # inline
   |-- Otherwise: leaves pending for worker
   |
-  v  atlas-brain-worker (polls every 2-5s)
+  v  sextant-brain-worker (polls every 2-5s)
 claim_next_task()    -- atomic UPDATE WHERE status='pending', sets lease
 run_executor(task)   -- dispatches to the right executor by task.kind
 _finish_task(...)    -- mark_done/blocked/failed
@@ -410,7 +410,7 @@ Key command categories:
 | `/think <instr>` | Force qwen3:8b brain agent |
 | `/agents` | Agent registry status |
 | `/status` | System snapshot (services, queue, memory) |
-| `/doctor` | Full atlas-doctor health check |
+| `/doctor` | Full sextant-doctor health check |
 | `/search <query>` | FTS5 memory search |
 | `/remember <text>` | Write fact to memory |
 | `/memory <query>` | Alias for /search |
@@ -526,9 +526,9 @@ Web UI Config tab -> Scheduler Trigger, or: `POST /scheduler/trigger/{job-id}`
 
 **Check system health:**
 ```powershell
-atlas-doctor          # color dashboard
-atlas-doctor --json   # machine-readable
-atlas-doctor --watch  # refresh every 30s
+sextant-doctor        # color dashboard
+sextant-doctor --json # machine-readable
+sextant-doctor --watch # refresh every 30s
 ```
 
 **Approve a pending memory fact:**
@@ -551,7 +551,7 @@ Or toggle ATLAS_TICKET_DISPATCH from Web UI Config panel without restarting Brai
 
 **Monitor dispatch health:**
 ```powershell
-atlas-doctor            # Ticket dispatcher panel: state / last run / in-flight
+sextant-doctor          # Ticket dispatcher panel: state / last run / in-flight
 /ticket-status ATL-001  # Brain CLI: ticket state + linked task
 /dispatch-tickets       # Brain CLI: trigger dispatch now
 ```

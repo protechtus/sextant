@@ -346,7 +346,7 @@ def test_updating_docs_name_ours_and_the_temporal_build():
     gs = (_REPO / "docs" / "GETTING-STARTED.md").read_text(encoding="utf-8")
     assert "`git checkout --ours <file>` keeps the new" in gs
     assert "`git checkout --theirs <file>` keeps the new" not in gs
-    assert gs.count("atlas-temporal build\n") >= 2 and "detached HEAD" in gs
+    assert gs.count("sextant-temporal build\n") >= 2 and "detached HEAD" in gs
     assert "sextant setup --client codex" in gs and "sextant-session-start" in gs
     assert "FTS5" in gs
     src = _REPO / "docs" / "README-PUBLIC.md"

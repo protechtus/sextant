@@ -281,7 +281,7 @@ def main() -> None:
 
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     parser = _next_step.ArgumentParser(
-        description="Nightly contradiction check for Atlas .memory/ files.",
+        description="Nightly contradiction check for Sextant .memory/ files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

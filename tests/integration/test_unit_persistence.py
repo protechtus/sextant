@@ -230,7 +230,7 @@ class TestSessionStartInjection:
 
         # Capture session_start output
         output = capture_session_start_output(memory_root)
-        assert "ATLAS" in output, "Expected Atlas context header in session start output"
+        assert "SEXTANT" in output, "Expected Sextant context header in session start output"
 
     def test_session_start_house_rules_come_from_corpus_only(self, memory_root):
         """House rules are the USER'S, from identity/house-rules.md -- a

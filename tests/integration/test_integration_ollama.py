@@ -142,5 +142,5 @@ class TestOllamaCrossSessionContext:
         )
 
         output = capture_session_start_output(memory_root)
-        assert "ATLAS" in output
+        assert "SEXTANT" in output
         # At minimum, session start should not crash

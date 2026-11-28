@@ -473,7 +473,7 @@ class TestBuildWeeklyDigest:
     def test_digest_includes_atlas_weekly_header(self):
         with self._all_patches():
             result = scheduler._build_weekly_digest()
-        assert "Atlas Weekly Digest" in result
+        assert "Sextant Weekly Digest" in result
 
     def test_digest_includes_task_stats_when_available(self):
         with self._all_patches(task_stats={"done": 10, "failed": 2, "total": 12}):
@@ -531,7 +531,7 @@ class TestBuildWeeklyDigest:
         """_build_weekly_digest must not raise even if a subsystem throws."""
         with patch("atlas_plus.brain.tasks.task_stats", side_effect=RuntimeError("db gone")):
             result = scheduler._build_weekly_digest()
-        assert "Atlas Weekly Digest" in result
+        assert "Sextant Weekly Digest" in result
         assert "Generated:" in result
 
 

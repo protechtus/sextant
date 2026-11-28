@@ -15,7 +15,7 @@ step past "vector store of frozen embeddings" - but it is still **reactive**: a 
 loses standing when something explicitly contradicts it. Nothing happens to a fact that is
 simply *getting old without being re-confirmed*.
 
-Atlas takes the rarer position: **confidence is epistemic and it decays, and that decay
+Sextant takes the rarer position: **confidence is epistemic and it decays, and that decay
 drives action.** A fact the system has not re-verified in a long time is not just ranked
 lower - it is re-checked, and depending on the result its clock is reset, it is quarantined,
 or the human is asked. The memory maintains its own freshness.
@@ -88,7 +88,7 @@ temporal-graph ranker, the file-level memory scan, and the autonomous loop.
 - vs **bi-temporal graphs** (Graphiti, Zep): they invalidate on *contradiction* and keep
   history - excellent, but reactive. They do not treat un-reconfirmed age as a first-class
   signal, and they do not autonomously re-verify.
-- Atlas adds the **active** layer on top: time-eroded confidence -> epistemic state ->
+- Sextant adds the **active** layer on top: time-eroded confidence -> epistemic state ->
   prescribed action -> a scheduled Brain loop that re-verifies and files every verdict
   in a report (resetting decay clocks itself only behind its own opt-in gate).
 

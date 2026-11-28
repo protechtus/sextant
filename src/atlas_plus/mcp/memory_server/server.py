@@ -472,7 +472,7 @@ def memory_remember_tool(scope: str, fact: str) -> dict:
                Supported values:
                'identity'              -> identity/user.md
                'preference:<topic>'   -> feedback/<topic>.md  (e.g. preference:testing)
-               'project:<name>'       -> projects/<name>.md   (e.g. project:atlas-memory+)
+               'project:<name>'       -> projects/<name>.md   (e.g. project:my-project)
                'reference:<topic>'    -> reference/<topic>.md (e.g. reference:acme)
                'observations'         -> observations/ directory
         fact: The fact to record. Plain text, 1-3 sentences, no markdown headers or
@@ -595,7 +595,7 @@ def memory_anti_remember_tool(
     A user-requested call passes by default (ATLAS_INTERACTIVE_WRITES); background
     callers need ATLAS_AUTONOMOUS=on.
 
-    Example: scope='libraries', reject_pattern='Do not suggest lodash.', applies_to='project', project='atlas-memory+'
+    Example: scope='libraries', reject_pattern='Do not suggest lodash.', applies_to='project', project='my-project'
     """
     return anti_remember(scope=scope, reject_pattern=reject_pattern,
                          applies_to=applies_to, project=project, interactive=True)
@@ -956,17 +956,17 @@ def _temporal_provider():
 
 @mcp.tool()
 def temporal_search_tool(query: str, mode: str = "current", at: str = "", limit: int = 5) -> dict:
-    """Search the Atlas temporal graph for time-bounded facts.
+    """Search the Sextant temporal graph for time-bounded facts.
 
     Args:
-        query: Free-text search query (e.g. 'Atlas tunnel status', 'testing rule').
+        query: Free-text search query (e.g. 'backup schedule', 'testing rule').
         mode:  'current' (default) -- facts valid right now.
                'as-of' -- facts valid at a specific point in time.
         at:    ISO 8601 date required when mode='as-of'. E.g. '2026-05-08'.
         limit: Max results (default 5).
 
     Returns ranked facts with valid_from, provenance, and freshness warnings.
-    The index is built by temporal_build_tool or 'atlas-temporal build --source atlas'.
+    The index is built by temporal_build_tool or 'sextant-temporal build --source atlas'.
     """
     try:
         provider = _temporal_provider()
@@ -1008,11 +1008,11 @@ def temporal_search_tool(query: str, mode: str = "current", at: str = "", limit:
 
 @mcp.tool()
 def temporal_history_tool(entity: str, limit: int = 20) -> dict:
-    """Return the full temporal history of an entity in the Atlas knowledge graph.
+    """Return the full temporal history of an entity in the Sextant knowledge graph.
 
     Args:
         entity: Name or alias to look up.
-                E.g. 'Atlas MCP Tunnel', 'atlas-memory+', 'Session 2026-05-16'.
+                E.g. 'Backup Job', 'my-project', 'Session 2026-05-16'.
         limit:  Max facts to return (default 20).
 
     Returns entity metadata, chronological fact list, current fact, and warnings.
@@ -1052,7 +1052,7 @@ def temporal_history_tool(entity: str, limit: int = 20) -> dict:
 
 @mcp.tool()
 def temporal_build_tool(source: str = "atlas") -> dict:
-    """Rebuild or incrementally update the Atlas temporal graph index.
+    """Rebuild or incrementally update the Sextant temporal graph index.
 
     Args:
         source: 'atlas'    -- memory files + session logs (recommended).
@@ -1074,7 +1074,7 @@ def temporal_build_tool(source: str = "atlas") -> dict:
 
 @mcp.tool()
 def temporal_entities_tool(limit: int = 50) -> dict:
-    """List all named entities in the Atlas temporal knowledge graph, sorted alphabetically.
+    """List all named entities in the Sextant temporal knowledge graph, sorted alphabetically.
 
     Args:
         limit: Maximum number of entities to return (default 50).
@@ -1281,7 +1281,7 @@ def _alert_auth_spike(ip: str, count: int, path: str) -> None:
         httpx.post(
             _ALERT_NTFY_URL,
             content=f"{count} failed MCP auth attempts from {ip} (last path {path})".encode(),
-            headers={"Title": "Atlas MCP: auth-failure spike", "Priority": "high", "Tags": "rotating_light"},
+            headers={"Title": "Sextant MCP: auth-failure spike", "Priority": "high", "Tags": "rotating_light"},
             timeout=4.0,
         )
     except Exception:

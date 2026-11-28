@@ -2302,3 +2302,208 @@ def test_g24_self_test_flags_planted_offenders():
     assert ("question", "ask_it", "input") in hits
     assert ("isatty", "ask_it", "isatty") in hits
     assert not [h for h in hits if h[1] == "harmless"], hits
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G25  no NEW user-visible "Atlas" (AG131, SEX-043 group a)
+#   2026-11-27: the owner, "atlas is still a problem.. wish it said sextant everywhere". The product
+#   is Sextant; its history left "Atlas" in banners, help texts, MCP tool descriptions, report
+#   headings, user agents and docs. AG131 renamed the prose; this guardrail keeps new prose from
+#   bringing the old product word back. It scans, by AST (never a regex over source):
+#     (i) string literals that reach a user in the shipped package: the arguments of print / echo /
+#         secho / console.print / reply_text, of help= / description= / epilog= / title= / summary=,
+#         of logging at warning and above, of a raised exception, and the docstring of every MCP tool
+#         (FastMCP sends it as the tool description);
+#    (ii) the shipped docs (top-level *.md and docs/**/*.md; CHANGELOG.md is history and is not
+#         rewritten) and the files under web/static and the package's templates.
+#   A hit is the product WORD (`Atlas`, the `ATLAS` context banners, an `Atlas-<Name>` user agent)
+#   or the owner's private example project (`atlas-memory+`). Real names that keep their spelling
+#   (`ATLAS_*` variables, `.atlas`, `_atlas`, `atlas_plus`, the `atlas-*` aliases) are lowercase or
+#   underscored and are not hits. Every hit must match a reasoned allowlist entry, and an entry that
+#   matches nothing fails too (the list cannot rot). The file set is the one the public build ships:
+#   when `scripts/public_exclude.txt` exists (the private tree) its patterns are left out; when it is
+#   absent (the public tree) every file is shipped. An entry whose files are all absent or excluded
+#   is not checked for staleness (the public tree lacks the private-only modules and vice versa).
+# ----------------------------------------------------------------------------------------------
+import ast as _g25_ast
+import fnmatch as _g25_fnmatch
+import re as _g25_re
+from pathlib import Path as _G25Path
+
+_G25_REPO = _G25Path(__file__).resolve().parents[1]
+_G25_WORD = _g25_re.compile(r"\bAtlas\b|=== (?:END )?ATLAS (?:SESSION )?CONTEXT|\bAtlas-[A-Z][A-Za-z]|atlas-memory\+")
+_G25_CALLS = {"print", "echo", "secho", "reply_text", "warning", "error", "critical", "exception", "fail", "exit"}
+_G25_KWARGS = {"help", "description", "epilog", "title", "summary", "short_help", "usage"}
+
+# (repo-relative path glob, regex the hit's text must match, ONE sentence: why it stays)
+ALLOW_G25: list[tuple[str, str, str]] = [
+    ("*", r"X-Atlas-[A-Z]",
+     "the HTTP header names X-Atlas-* stay because clients already send them"),
+    ("src/atlas_plus/temporal_graph/sources.py", r"Atlas MCP",
+     "the built-in Phase 4 fixture graph (`--source fixtures`) is sample data whose entity names tests pin"),
+    ("src/atlas_plus/telegram/commands.py", r"/temporal(_search|_history)? Atlas MCP [Tt]unnel",
+     "the usage examples name an entity of the built-in fixture graph, so the example answers"),
+    ("README.md", r"internal project label \"atlas-memory\+\"",
+     "the sentence is ABOUT the old internal label a reader may still meet"),
+    ("docs/adr/016-data-classification.md", r"the Atlas backup|gdrive:Atlas",
+     "a dated decision record (history) and the real default rclone folder name `Atlas` (ATLAS_RCLONE_ROOT)"),
+    ("docs/ARCHITECTURE.md", r"grew up as \"Atlas\"|Atlas Phase 4",
+     "the naming history sentence and the name of the built-in Phase 4 fixture source"),
+    ("docs/AGENT-INSTALL.md", r"=== Atlas Doctor ===",
+     "a troubleshooting row about what an OLD build prints"),
+]
+
+
+def _g25_excluded() -> list[str]:
+    f = _G25_REPO / "scripts" / "public_exclude.txt"
+    if not f.exists():
+        return []
+    out = []
+    for ln in f.read_text(encoding="utf-8").splitlines():
+        ln = ln.split("#", 1)[0].strip()
+        if ln:
+            out.append(ln.replace("\\", "/"))
+    return out
+
+
+def _g25_shipped(rel: str, excl: list[str]) -> bool:
+    # The list reads like a gitignore file: a `!` line re-includes, and the LAST matching line decides
+    # (`docs/*` then `!docs/GETTING-STARTED.md`: the curated docs ship and are scanned).
+    shipped = True
+    for line in excl:
+        keep = line.startswith("!")
+        pat = line[1:] if keep else line
+        if (pat.endswith("/") and (rel + "/").startswith(pat)) or _g25_fnmatch.fnmatch(rel, pat) \
+                or _g25_fnmatch.fnmatch(rel, pat.rstrip("/") + "/*"):
+            shipped = keep
+    return shipped
+
+
+def _g25_call_name(fn) -> str:
+    return getattr(fn, "attr", None) or getattr(fn, "id", "") or ""
+
+
+def _g25_py_hits(text: str) -> list[tuple[int, str]]:
+    """(line, literal) for every user-reaching literal of one module that names the old product."""
+    try:
+        tree = _g25_ast.parse(text)
+    except SyntaxError:
+        return []
+    roots = []
+    for n in _g25_ast.walk(tree):
+        if isinstance(n, _g25_ast.Call):
+            name = _g25_call_name(n.func)
+            if name in _G25_CALLS:
+                roots.extend(n.args)
+            roots.extend(k.value for k in n.keywords if k.arg in _G25_KWARGS)
+        elif isinstance(n, _g25_ast.Raise) and n.exc is not None:
+            roots.append(n.exc)
+        elif isinstance(n, (_g25_ast.FunctionDef, _g25_ast.AsyncFunctionDef)):
+            if any(_g25_call_name(d.func if isinstance(d, _g25_ast.Call) else d) == "tool" for d in n.decorator_list) \
+                    and n.body and isinstance(n.body[0], _g25_ast.Expr) and isinstance(n.body[0].value, _g25_ast.Constant):
+                roots.append(n.body[0].value)
+    out = set()
+    for r in roots:
+        for c in _g25_ast.walk(r):
+            if isinstance(c, _g25_ast.Constant) and isinstance(c.value, str) and _G25_WORD.search(c.value):
+                for ln_off, line in enumerate(c.value.splitlines() or [c.value]):
+                    if _G25_WORD.search(line):
+                        out.add((c.lineno + (ln_off if c.lineno != getattr(c, "end_lineno", c.lineno) else 0), line.strip()))
+    return sorted(out)
+
+
+def _g25_text_hits(text: str) -> list[tuple[int, str]]:
+    return [(i, ln.strip()) for i, ln in enumerate(text.splitlines(), 1) if _G25_WORD.search(ln)]
+
+
+def _g25_files() -> list[tuple[str, str]]:
+    """(rel, kind) of every shipped file the guardrail scans in THIS tree."""
+    excl = _g25_excluded()
+    files = []
+    src = _G25_REPO / "src" / "atlas_plus"
+    for p in sorted(src.rglob("*.py")):
+        files.append((p.relative_to(_G25_REPO).as_posix(), "py"))
+    for sub in ("web/static", "summarizer/templates"):
+        d = src / sub
+        if d.is_dir():
+            for p in sorted(d.rglob("*")):
+                if p.is_file() and not _g25_fnmatch.fnmatch(p.name, "tailwind-*.js"):   # vendored third-party
+                    files.append((p.relative_to(_G25_REPO).as_posix(), "text"))
+    readme = "docs/README-PUBLIC.md" if (_G25_REPO / "docs" / "README-PUBLIC.md").exists() else "README.md"
+    for p in sorted(_G25_REPO.glob("*.md")) + sorted((_G25_REPO / "docs").rglob("*.md")):
+        rel = p.relative_to(_G25_REPO).as_posix()
+        if rel == "CHANGELOG.md" or (rel == "README.md" and readme != "README.md"):
+            continue   # history is not rewritten; the private README is not the public one
+        files.append((rel, "text"))
+    return [(rel, kind) for rel, kind in dict.fromkeys(files) if _g25_shipped(rel, excl)]
+
+
+def _g25_scan(files=None) -> list[tuple[str, int, str]]:
+    hits = []
+    for rel, kind in files if files is not None else _g25_files():
+        text = (_G25_REPO / rel).read_text(encoding="utf-8", errors="replace")
+        if kind != "py" and rel.endswith(".md") and (_G25_REPO / "scripts" / "build_public_repo.py").exists():
+            # The source tree: the public build rewrites the private project label in every doc it ships
+            # (its genericization table), so a user never reads it there. Same line count, so line numbers hold.
+            text = text.replace("atlas-memory" + "+", "sextant")
+        for lineno, s in (_g25_py_hits(text) if kind == "py" else _g25_text_hits(text)):
+            hits.append((rel, lineno, s))
+    return hits
+
+
+def _g25_allowed(rel: str, s: str, allow=ALLOW_G25) -> int:
+    for i, (glob, pat, _why) in enumerate(allow):
+        if _g25_fnmatch.fnmatch(rel, glob) and _g25_re.search(pat, s):
+            return i
+    return -1
+
+
+def test_g25_no_new_user_visible_atlas():
+    for glob, pat, why in ALLOW_G25:
+        assert why.strip() and why.strip().count(". ") == 0, f"ALLOW_G25 {glob} needs ONE sentence of reason"
+        _g25_re.compile(pat)
+    files = _g25_files()
+    scanned = {rel for rel, _k in files}
+    used, offenders = set(), []
+    for rel, lineno, s in _g25_scan(files):
+        i = _g25_allowed(rel, s)
+        if i < 0:
+            offenders.append(f"{rel}:{lineno}: {s[:120]}")
+        else:
+            used.add(i)
+    for i, (glob, pat, _why) in enumerate(ALLOW_G25):
+        present = any(_g25_fnmatch.fnmatch(rel, glob) for rel in scanned)
+        assert i in used or not present, f"ALLOW_G25 entry ({glob}, {pat}) matches nothing: remove it"
+    assert not offenders, ("LES-G25: user-visible text says Atlas; the product is Sextant (say Sextant, or add a "
+                           "reasoned ALLOW_G25 entry):\n  " + "\n  ".join(offenders))
+
+
+def test_the_g25_scan_sees_each_shape(tmp_path):
+    bad = ('raise RuntimeError(f"Atlas could not open {p}")\n'
+           'print("=== ATLAS SESSION CONTEXT ===")\n'
+           'p.add_argument("--x", help="Atlas memory root")\n'
+           'log.warning("Atlas %s", x)\n'
+           'headers = {"User-Agent": "x"}; typer.echo("Atlas-Inbox/1.0")\n'
+           '@mcp.tool()\ndef t():\n    """Search the Atlas graph (e.g. project:atlas-memory+)."""\n')
+    good = ('"""Atlas module docstring is not a message."""\n'
+            'print("set ATLAS_MEMORY_ROOT, see ~/.atlas and _atlas; run atlas-doctor or python -m atlas_plus")\n'
+            'print("=== SEXTANT SESSION CONTEXT ===")\n'
+            'log.debug("Atlas internals")\n'
+            'x = "Atlas"  # not an argument of a message call\n')
+    hits = _g25_py_hits(bad)
+    assert sorted({ln for ln, _ in hits}) == [1, 2, 3, 4, 5, 8], hits
+    assert any(s.startswith("Atlas could not open") for _, s in hits)   # the planted message
+    assert not _g25_py_hits(good)
+    doc = "# Title\n\nAtlas stores your notes.\nSet `ATLAS_STATE_DIR`; run `atlas-doctor`.\n"
+    assert _g25_text_hits(doc) == [(3, "Atlas stores your notes.")]
+    # an unexplained hit fails, an allowlist entry that matches nothing is detected
+    assert _g25_allowed("docs/NEW.md", "Atlas stores your notes.") == -1
+    assert _g25_allowed("docs/NEW.md", "x", allow=[("docs/NEW.md", r"Atlas", "why")]) == -1
+
+
+def test_g25_reads_the_public_exclude_list(tmp_path, monkeypatch):
+    """The private tree's scripts/public_exclude.txt leaves private-only modules out of the scan."""
+    assert _g25_shipped("src/atlas_plus/private_x.py", ["src/atlas_plus/private_x.py"]) is False
+    assert _g25_shipped("src/atlas_plus/priv/a.py", ["src/atlas_plus/priv/"]) is False
+    assert _g25_shipped("src/atlas_plus/priv/a.py", ["src/atlas_plus/priv"]) is False
+    assert _g25_shipped("src/atlas_plus/cli.py", ["src/atlas_plus/priv/"]) is True

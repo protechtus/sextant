@@ -52,7 +52,7 @@ def check_url(url: str) -> dict:
     try:
         import httpx
         headers = {
-            "User-Agent": "Atlas-LinkChecker/1.0 (research corpus health check)",
+            "User-Agent": "Sextant-LinkChecker/1.0 (research corpus health check)",
             "Accept": "*/*",
         }
         from atlas_plus.inbox.summarize import _refuse_private_target

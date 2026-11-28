@@ -182,7 +182,7 @@ while the summarizer uses a cloud one:
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ATLAS_INTAKE_DIR` | -- | The drop folder `atlas-intake run` scans (for example a cloud-synced `Intake` folder). Required unless `--source` is passed. |
+| `ATLAS_INTAKE_DIR` | -- | The drop folder `sextant-intake run` scans (for example a cloud-synced `Intake` folder). Required unless `--source` is passed. |
 | `ATLAS_INTAKE_LANDING` | `<workspace>/intake` | Where files without a frontmatter `project` or `destination` land, grouped by type and date. |
 | `ATLAS_INTAKE_RULES` | `<state>/intake/rules.json` | Optional JSON file of routing rules; prepended to the built-in rules (or replaces them with `"replace_defaults": true`). |
 

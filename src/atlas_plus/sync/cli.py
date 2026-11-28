@@ -315,8 +315,9 @@ def _progress_printer():
         if stage == "end":  # "3002/3002 files" counted a file the hub had refused (AG88)
             if done == 0 and total:
                 # "0/300 files transferred (300 not: see below)" read as 300 failures when the sync had
-                # only stopped before its first file (the hub went away: MN92, SEX-053 item 5).
-                print(f"  stopped before any file was transferred (0 of {total}: see below)", file=sys.stderr, flush=True)
+                # only stopped before its first file (the hub went away: MN92, SEX-053 item 5). Not "before
+                # any file was transferred": a hub killed mid-request had stored 113 of the 300 (MN95).
+                print(f"  stopped: the hub confirmed no file (0 of {total}: see below)", file=sys.stderr, flush=True)
             elif done != total:
                 print(f"  {done}/{total} files transferred ({total - done} not: see below)", file=sys.stderr, flush=True)
             elif state["last"] != done:
@@ -421,14 +422,26 @@ def _on_older(args: argparse.Namespace) -> str:
 def cmd_accept_restore(args: argparse.Namespace) -> int:
     """On the hub: the corpus as it is now is the newest (a deliberate rollback), so devices pull it again."""
     root = atlas_paths.memory_root()
-    accepted = store.accept_current(manifest.build_manifest(root)["files"])
+    files = manifest.build_manifest(root)["files"]
+    accepted = store.accept_current(files)
     if not accepted:
         print("nothing to accept: the hub holds no copy older than one it held before")
         return 0
-    print(f"accepted {len(accepted)} file(s) as the hub's newest copies; devices pull them at their next sync "
-          "(their own copies stay under versions/):")
-    for rel in accepted:
-        print(f"  {_safe(rel)}")
+    # A file the restore removed is not pulled away from the devices (deletes never sync): it was
+    # listed under "devices pull them" and then stayed on every device (MN95).
+    present = [rel for rel in accepted if rel in files]
+    gone = [rel for rel in accepted if rel not in files]
+    if present:
+        print(f"accepted {len(present)} file(s) as the hub's newest copies; devices pull them at their next sync "
+              "(their own copies stay under versions/):")
+        for rel in present:
+            print(f"  {_safe(rel)}")
+    if gone:
+        print(f"accepted {len(gone)} file(s) the hub no longer holds; devices KEEP their copies and report them "
+              "as deleted remotely (deletes never sync; remove or archive them on each device: docs/HOWTO-sync.md, "
+              "Deletes):")
+        for rel in gone:
+            print(f"  {_safe(rel)}")
     return 0
 
 

@@ -10,7 +10,7 @@ updated: 2026-05-03
 
 ## Context
 
-Atlas needs a way to give any LLM a specific identity, memory access scope, provider preference, and cost guard before it begins working. Without this, every agent starts generic and has to be primed by hand.
+Sextant needs a way to give any LLM a specific identity, memory access scope, provider preference, and cost guard before it begins working. Without this, every agent starts generic and has to be primed by hand.
 
 We also have `.memory/runbooks/` — repeatable procedures any agent can follow. These overlap with the emerging SKILL.md standard (adopted by Cursor, Cline, Windsurf, and others). They need a standard shape so clients can discover and invoke them.
 

@@ -63,7 +63,7 @@ def _default_fetch_url(url: str, timeout: float = 30.0) -> str:
     with httpx.Client(timeout=timeout, follow_redirects=False) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             _refuse_private_target(url)
-            resp = client.get(url, headers={"User-Agent": "Atlas-Inbox/1.0"})
+            resp = client.get(url, headers={"User-Agent": "Sextant-Inbox/1.0"})
             if resp.is_redirect and resp.headers.get("location"):
                 url = str(resp.url.join(resp.headers["location"]))
                 continue

@@ -26,7 +26,7 @@ from .providers import ProviderError, complete
 from .renderer import write_outputs
 from .review import review
 
-app = _SextantTyper(help="Summarize a Claude Code session into the Atlas session log")
+app = _SextantTyper(help="Summarize a Claude Code session into the Sextant session log")
 console = Console()
 log = logging.getLogger("atlas.summarizer")
 

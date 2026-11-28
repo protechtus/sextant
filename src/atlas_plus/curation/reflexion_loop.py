@@ -376,7 +376,7 @@ def main() -> None:
 
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
     parser = _next_step.ArgumentParser(
-        description="Reflexion loop: LLM self-critique on recently written Atlas facts.",
+        description="Reflexion loop: LLM self-critique on recently written Sextant facts.",
     )
     parser.add_argument(
         "--days", "-d", type=int, default=_DEFAULT_LOOKBACK_DAYS,

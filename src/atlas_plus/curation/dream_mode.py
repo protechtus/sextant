@@ -307,7 +307,7 @@ def run_dream(
         f"status: active\npriority: normal\nupdated: {date}\n"
         f"corpus_hash: {corpus_hash}\n---\n\n"
     )
-    header = f"# Atlas Dream -- {date}\n\n*Generated from {stats['files']} memory files.*\n\n"
+    header = f"# Sextant Dream -- {date}\n\n*Generated from {stats['files']} memory files.*\n\n"
     content = frontmatter + header + _ascii_safe(reflection) + "\n"
 
     # Write output
@@ -403,13 +403,13 @@ def main() -> None:
         return
 
     if result.get("written"):
-        print(f"[atlas-dream] Dream written: {result['output_path']}")
+        print(f"[sextant-dream] Dream written: {result['output_path']}")
         if not autonomous:
-            print(f"[atlas-dream] {result.get('note', '')}")
+            print(f"[sextant-dream] {result.get('note', '')}")
         if args.verbose:
             print("\n" + Path(result["output_path"]).read_text(encoding="utf-8"))
     else:
-        print(f"[atlas-dream] Not written: {result}", file=sys.stderr)
+        print(f"[sextant-dream] Not written: {result}", file=sys.stderr)
 
 
 if __name__ == "__main__":

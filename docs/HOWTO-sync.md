@@ -87,7 +87,8 @@ after a write on the hub can say "in sync" until the next check.
 ## Conflict handling
 
 If both sides changed the same file, NOTHING is overwritten: the other
-side's copy is parked under `_atlas/sync-conflicts/<date>/...` with a
+side's copy is parked under `_atlas/sync-conflicts/<date>/...` (the date is
+the UTC date) with a
 `.meta.json` explaining why, your copy stays live, and `sextant-sync status`
 plus `sextant-doctor` show the pending count. The hub parks a copy too when a
 push arrives against a file it changed meanwhile (its `status` counts it the
@@ -125,6 +126,8 @@ stay live. Then choose, explicitly:
 - `sextant-sync accept-restore`, ON THE HUB, when the rollback was deliberate: the hub's copies become its newest and
   every device pulls them at its next sync. A note reverted by hand on the hub (an old version copied back) reads as
   older content too; `accept-restore` is the answer there. A revert pushed from a device is a new edit and needs nothing.
+  A note the restore REMOVED is not removed from the devices (deletes never sync): they keep it and report it as
+  deleted remotely, and `checkin` exits 1, until you remove or archive it on each side.
 
 A device that synced after the backup was taken notices the older hub at its next `sync`: it pulls nothing over your
 copies, parks every difference as a conflict, and says "the hub reports an older state than this device last synced (it
@@ -164,6 +167,8 @@ sextant-sync sync --hub https://hub.example --token <token> --share reference/si
 A peer's pushes are proposals, so a peer is "in sync" when its plan is
 clean apart from unchanged proposals; `checkin` and `plan` say how many are
 awaiting the hub's review, and an unchanged proposal is never sent twice.
+A proposal the peer edited and sent again lands beside the first one as
+`<name>_v1.md`; neither replaces the other.
 
 When a hub reports that it pairs you as a peer, or does not say how it
 pairs you (a hub older than 2026-11-10), and you have not declared a share,

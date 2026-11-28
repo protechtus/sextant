@@ -64,7 +64,7 @@ async def _reply_long(
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show available commands."""
     text = (
-        "*Atlas Bot*\n\n"
+        "*Sextant Bot*\n\n"
         "*Agents*\n"
         "/agents -- who is online and what they are doing\n"
         "/claude <instr> -- direct to Claude Code (priority 1)\n"
@@ -882,7 +882,7 @@ async def cmd_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         from atlas_plus.doctor.cli import collect
         data = await asyncio.to_thread(collect)
 
-        lines = ["*Atlas Health*\n"]
+        lines = ["*Sextant Health*\n"]
 
         # Services
         for svc in data.get("services", []):
@@ -967,7 +967,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         running, pending, stale, done_t, failed_t, open_tk = await asyncio.to_thread(_gather)
         stale_line = f"Worker: {stale} STALE RUNNING (heartbeat >30m old)" if stale else ""
         lines = [
-            f"*Atlas Status* ({today})\n",
+            f"*Sextant Status* ({today})\n",
             f"Tasks: {running} running | {pending} pending",
             f"Today: {done_t} done | {failed_t} failed",
             f"Tickets: {open_tk} open",
@@ -1827,10 +1827,10 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     from datetime import date
     from io import BytesIO
     today = date.today().isoformat()
-    filename = f"atlas-tasks-{today}.{fmt}"
+    filename = f"sextant-tasks-{today}.{fmt}"
     payload = BytesIO(r.content)
     payload.name = filename
-    caption = f"Atlas tasks export -- {today} ({fmt})"
+    caption = f"Sextant tasks export -- {today} ({fmt})"
     await update.message.reply_document(document=payload, filename=filename, caption=caption)
 
 
@@ -1905,7 +1905,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         sla = os.environ.get("ATLAS_SLA_MINUTES", "15")
 
         lines = [
-            "*Atlas Stats*",
+            "*Sextant Stats*",
             "",
             f"*Tasks (7d)*: {stats.get('total',0)} total"
             f"  done:{stats.get('done',0)}"
@@ -2452,7 +2452,7 @@ async def cmd_recent_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def cmd_system_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/sys_health -- compact Atlas system health snapshot (mirrors Brain CLI /health)."""
-    lines = ["*Atlas System Health*\n"]
+    lines = ["*Sextant System Health*\n"]
 
     # Services
     try:

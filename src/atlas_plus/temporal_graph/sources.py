@@ -303,7 +303,7 @@ class MemoryMarkdownSource:
         Manifest-incremental: unchanged files skipped. Returns {files_indexed, files_skipped, total_facts, warnings}.
         """
         if not self._check_allowed(self._root):
-            raise PermissionError(f"Memory root {self._root} is not in Atlas allowed roots.")
+            raise PermissionError(f"Memory root {self._root} is not in Sextant's allowed roots.")
 
         files_indexed = 0
         files_skipped = 0
@@ -601,7 +601,7 @@ class SessionLogSource:
         Returns {files_indexed, files_skipped, facts, warnings}.
         """
         if not self._check_allowed(self._root):
-            raise PermissionError(f"Memory root {self._root} is not in Atlas allowed roots.")
+            raise PermissionError(f"Memory root {self._root} is not in Sextant's allowed roots.")
 
         if not self._sessions_dir.exists():
             return {"files_indexed": 0, "files_skipped": 0, "facts": 0, "warnings": []}

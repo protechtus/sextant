@@ -22,7 +22,7 @@ class TestBuildSystemPrompt:
     def test_includes_atlas_persona(self, tmp_path):
         from atlas_plus.brain.system_prompt import build_system_prompt
         result = build_system_prompt(memory_root=tmp_path)
-        assert "Atlas" in result
+        assert "Sextant" in result and "Atlas" not in result   # the assistant introduces itself by the product name (SEX-043, AG131)
 
     def test_includes_today_date(self, tmp_path):
         from datetime import datetime, timezone
@@ -52,7 +52,7 @@ class TestBuildSystemPrompt:
         from atlas_plus.brain.system_prompt import build_system_prompt
         # No identity file -- should not raise
         result = build_system_prompt(memory_root=tmp_path)
-        assert "Atlas" in result
+        assert "Sextant" in result and "Atlas" not in result   # the assistant introduces itself by the product name (SEX-043, AG131)
 
     def test_strips_frontmatter_from_identity(self, tmp_path):
         from atlas_plus.brain.system_prompt import build_system_prompt

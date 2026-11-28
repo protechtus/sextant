@@ -24,7 +24,7 @@ def _clean(text: str) -> str:
     return escape(_CTRL.sub("", str(text)))
 
 
-app = _SextantTyper(help="Atlas lightweight ticket system")
+app = _SextantTyper(help="Sextant lightweight ticket system")
 console = Console()
 
 STATUS_COLORS = {

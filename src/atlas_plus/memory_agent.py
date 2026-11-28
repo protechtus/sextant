@@ -300,7 +300,7 @@ def _try_push(report: MemoryAgentReport) -> None:
         import httpx
         msg = format_push_summary(report)
         headers = {
-            "Title": "Atlas Memory Agent",
+            "Title": "Sextant Memory Agent",
             "Priority": "default" if report.total_issues() == 0 else "high",
             "Tags": "memory,brain",
         }

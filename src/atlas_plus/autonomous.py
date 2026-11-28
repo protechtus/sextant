@@ -66,7 +66,7 @@ def require_write(source: str, interactive: bool = False) -> None:
         return
     if interactive:
         raise RuntimeError(
-            f"Atlas {source} blocked: ATLAS_INTERACTIVE_WRITES is off. "
+            f"Sextant {source} blocked: ATLAS_INTERACTIVE_WRITES is off. "
             "Set ATLAS_INTERACTIVE_WRITES=on (the default) to allow writes you ask for."
         )
     require_autonomous_writes(source)

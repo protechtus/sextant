@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
     brain_scheduler.stop_scheduler()
 
 
-app = FastAPI(title="Atlas Brain", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Sextant Brain", version="0.1.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -958,7 +958,7 @@ async def tasks_export(fmt: str = "csv", limit: int = 200, status: Optional[str]
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=atlas-tasks.csv"},
+        headers={"Content-Disposition": "attachment; filename=sextant-tasks.csv"},
     )
 
 
@@ -1426,7 +1426,7 @@ def main() -> None:
         log.warning("--no-auth: running without bearer token. Loopback only.")
 
     log.info(
-        "Starting Atlas Brain on %s:%d (model: %s, auth: %s)",
+        "Starting Sextant Brain on %s:%d (model: %s, auth: %s)",
         host, _PORT, DEFAULT_MODEL,
         "bearer" if _API_KEY else "NONE (loopback only)",
     )

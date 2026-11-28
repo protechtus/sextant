@@ -35,5 +35,5 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         # Never block a prompt -- fail silently.
-        print(f"# [atlas-prompt-clock] error: {e}", file=sys.stderr)
+        print(f"# [sextant prompt-clock] error: {e}", file=sys.stderr)
         sys.exit(0)

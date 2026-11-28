@@ -166,7 +166,7 @@ def _git_autocommit(file_path: Path, scope: str, memory_root: Path = MEMORY_ROOT
                 return (f"not auto-committed: {git_meta / 'index.lock'} exists (another git command is running, or one was killed); "
                         "if no git is running, remove that file and commit by hand")
             gitsafe.run(["-C", git_dir, "add", "--", rel], None, timeout=30, text=False)
-            msg = f"Atlas auto-commit: {scope} [{file_path.name}]"
+            msg = f"Sextant auto-commit: {scope} [{file_path.name}]"
             # `-- rel` commits THIS file only: a bare commit took the whole index, so a file the user had staged by hand was
             # committed under Sextant's message (AG70). The 30 s timeout: a 5 s kill left index.lock and HEAD.lock behind.
             result = gitsafe.run(["-C", git_dir, "commit", "-m", msg, "--no-verify", "--", rel], None, timeout=30)

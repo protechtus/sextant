@@ -57,7 +57,7 @@ def build_system_prompt(memory_root: Optional[Path] = None) -> str:
     user = user_display_name(root)
 
     parts: list[str] = [
-        f"You are Atlas, {user}'s personal AI assistant. Today is {today}.",
+        f"You are Sextant, {user}'s personal AI assistant. Today is {today}.",
         "",
         f"You have access to {user}'s knowledge base (.memory/) and a suite of tools "
         "for reading memory, searching facts, managing tickets, and querying the "

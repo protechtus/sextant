@@ -135,7 +135,7 @@ class TestBuildPrimeContext:
         root = tmp_path / ".memory"
         root.mkdir()
         ctx = build_prime_context("any task", memory_root=root)
-        assert "ATLAS CONTEXT" in ctx
+        assert "SEXTANT CONTEXT" in ctx
 
     def test_session_start_uses_prime_when_hint_set(self, tmp_path, monkeypatch):
         """session_start main() delegates to prime when ATLAS_TASK_HINT is set."""
@@ -162,7 +162,7 @@ class TestBuildPrimeContext:
 
         output = captured.getvalue().decode("utf-8")
         # Should contain prime output marker, not full dump
-        assert "ATLAS CONTEXT" in output or "House rules" in output
+        assert "SEXTANT CONTEXT" in output or "House rules" in output
 
 
     def test_dream_questions_included_when_present(self, tmp_path):

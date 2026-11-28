@@ -955,14 +955,18 @@ class SyncClient:
         # Proposals whose local copy changed are dropped (they will be proposed again); a live
         # proposal stays OUT of the base: the hub never adopted it, so a later edit is a push,
         # not a conflict with nothing.
-        refreshed["proposed"] = {
-            rel: sha for rel, sha in proposed.items()
-            if (local_after.get(rel) or {}).get("sha256") == sha
-        }
+        # A run that cannot see a path (a narrower --share) keeps what it knew about it, like the
+        # anchors above (F2): forgetting re-sent every reviewed proposal at the next full run (MN95).
+        def _still(rel: str, sha: str) -> bool:
+            if rel not in local_after and not _visible(rel, local_policy, hub_policy):
+                return True
+            return (local_after.get(rel) or {}).get("sha256") == sha
+
+        refreshed["proposed"] = {rel: sha for rel, sha in proposed.items() if _still(rel, sha)}
         for rel in refreshed["proposed"]:
             files.pop(rel, None)
         refreshed["refused"] = {rel: sha for rel, sha in refused.items()
-                                if (local_after.get(rel) or {}).get("sha256") == sha}  # an edit is tried again
+                                if _still(rel, sha)}  # an edit is tried again
         # The restored hub's copy each conflict was parked against (MN82): kept while the conflict is open.
         _prev = _seen_base.get("restored") if isinstance(_seen_base.get("restored"), dict) else {}
         _was_restored = getattr(self, "_rolled_back", False)

@@ -48,6 +48,20 @@ public tree.
   `sextant reset`'s plan name the `sextant` form on a `sextant` install; `sextant commands` lists the
   `sextant-*` names first and the others as "older atlas-* names, still working". A hint follows how the
   command was typed, never which files sit beside the interpreter.
+- What a user reads says Sextant (SEX-043, AG131; lesson LES-099, guardrail G25). The context blocks are
+  `=== SEXTANT SESSION CONTEXT ===`, `=== SEXTANT CONTEXT: <task> ===` and `=== END SEXTANT CONTEXT ===` (a
+  note or transcript that holds the old ATLAS banner of 0.1.0 and 0.1.1, or the new one, is still defused
+  when it is primed). The curation report's heading, the dream and weekly-synthesis headings, the hook error
+  prefixes, nine help descriptions, seven MCP tool descriptions (their examples say `my-project`), the
+  refused-write and auto-commit messages, the ntfy titles, the Brain and Telegram texts and the docs' prose
+  say Sextant; the docs teach the `sextant-*` or `sextant <sub>` form of every command. The task export is
+  `sextant-tasks.csv` (dashboard, Brain API) and `sextant-tasks-<date>.<fmt>` (Telegram); the outbound
+  User-Agents are `Sextant-Research-Agent/1.0`, `Sextant-LinkChecker/1.0` and `Sextant-Inbox/1.0`. A filter of
+  your own that matched the old banner, file name, ntfy title or user agent needs the new text.
+  Unchanged on purpose, because your own setup may hold them: `ATLAS_*` variables (now with a `SEXTANT_*`
+  spelling beside them), `~/.atlas`, `_atlas`, the import name `atlas_plus`, every `atlas-*` command, the
+  logger names `atlas.*`, the `X-Atlas-*` headers, `"service": "atlas-mcp"`, `atlas://memory/`,
+  `source="atlas"`, the `atlas-theme` storage key and the `Atlas-*` scheduled task names.
 
 ### Fixed
 
@@ -60,6 +74,16 @@ public tree.
   that showed it by luck now has a companion that forces the order with events
   (`tests/test_sex056.py`). Searches from two separate processes were not affected: the second one resumes
   the first one's build.
+- Sync: a federation peer no longer sends its unchanged proposals again, nor puts ones the hub's owner
+  already reviewed back into the hub's inbox, after a sync run with a different or narrower `--share` (MN95,
+  two devices and a real hub; lesson LES-098). The proposals and refusals the peer remembers keep the paths a
+  run could not see, as the anchors already did. No note was lost; a rejected proposal came back for review.
+- Sync: when the hub stops answering before it confirmed any file, the progress line says "the hub confirmed
+  no file" instead of "stopped before any file was transferred" (MN95: a hub killed mid-request had stored
+  113 of 300 notes; the summary line already said "unknown 300"). The resume sends only what is missing.
+- Sync: `sextant-sync accept-restore` lists the notes the restore removed on their own: devices KEEP those
+  copies (deletes never sync) and report them as deleted remotely, where the message said every device
+  would pull them (MN95).
 
 ## [0.1.1] - 2026-11-27
 

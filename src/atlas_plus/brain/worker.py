@@ -382,7 +382,7 @@ def main() -> None:
     for the always-on Windows Scheduled Task; --once / --limit used in tests.
     """
     from atlas_plus import _next_step  # usage errors name --help (LES-054)
-    parser = _next_step.ArgumentParser(description="Atlas Brain local task worker")
+    parser = _next_step.ArgumentParser(description="Sextant Brain local task worker")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit")
     parser.add_argument("--limit", type=int, default=None, help="Process at most N tasks and exit")
     parser.add_argument("--sleep", type=float, default=5.0, help="Idle sleep seconds for loop mode")

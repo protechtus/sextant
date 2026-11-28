@@ -166,7 +166,7 @@ the same priming text the Claude Code hook injects (identity, clock, house
 rules from `identity/house-rules.md` when that file exists, the current
 project) for pasting into `AGENTS.md`, opencode's `instructions`, a Claude
 Desktop project's instructions, a Cursor rule, or any system prompt;
-`atlas-prime "<task words>"` prints task-matched facts the same way. Both
+`sextant context "<task words>"` prints task-matched facts the same way. Both
 are snapshots: the clock line is the moment you ran them, so re-run and
 re-paste when the identity or rules change rather than treating the text
 as live. End-of-session summaries exist only through
@@ -190,7 +190,7 @@ From the shell, the same corpus is yours directly:
 sextant remember "I take my coffee black" --scope preference:coffee   # store a fact
 sextant search "coffee"                                               # find it (shows the confidence band)
 sextant --help                 # the CLI family
-atlas-review-memory summary    # corpus health at a glance (counts)
+sextant review summary         # corpus health at a glance (counts)
 sextant review report          # the weekly check: repeated facts, never-confirmed notes, stale notes, decisions to revisit (tens of seconds on thousands of notes; the dashboard's panel caches it)
 ```
 
@@ -272,7 +272,7 @@ imported vault: `--scope reference:obsidian/README`.
     snapshots `git status` + a bounded `git diff HEAD` from repos under your
     projects directory (see the README's security section before enabling).
 - **Brain** (local task queue + tool-calling agent): `sextant-brain` +
-  `atlas-brain-worker`. Needs its own key first (`ATLAS_BRAIN_API_KEY`, generated
+  `sextant-brain-worker`. Needs its own key first (`ATLAS_BRAIN_API_KEY`, generated
   the same way as the dashboard key below; it refuses to start without one).
   Runs on Ollama by default -- that is a separate,
   free program that runs models on your own machine; install it from
@@ -300,7 +300,7 @@ imported vault: `--scope reference:obsidian/README`.
   (in a uv-made venv there is no pip -- use `uv pip install -e ".[telegram]"`), set
   `ATLAS_TELEGRAM_BOT_TOKEN` (from @BotFather) and `ATLAS_TELEGRAM_ALLOWED_USERS`
   (your numeric Telegram user id, from @userinfobot; the bot refuses to run
-  without an allowlist), then run `atlas-telegram-bot`.
+  without an allowlist), then run `sextant-telegram-bot`.
 
 Everything binds loopback and fails closed by default. Two write switches,
 deliberately separate: asking your assistant to remember something is an
@@ -499,7 +499,7 @@ First, the answer to the question that matters: **your memory data is safe
 across updates.** The corpus is never migrated (it is plain markdown and
 updates never touch it), and derived state either upgrades itself or can
 simply be rebuilt (`sextant-reset --state --yes` is always a clean way
-out). After an update, run `atlas-temporal build` once: it notices when the
+out). After an update, run `sextant-temporal build` once: it notices when the
 fact rules changed and re-reads every file, retiring facts the new rules no
 longer derive (`--force` wipes and rebuilds instead). Dates inside the
 corpus are what the writing build stamped; the `made` date on decisions is
@@ -546,7 +546,7 @@ git pull
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,telegram,summarizer]"
 .\.venv\Scripts\python.exe -m pytest tests -q   # optional but recommended
 .\.venv\Scripts\sextant-init
-.\.venv\Scripts\atlas-temporal build
+.\.venv\Scripts\sextant-temporal build
 .\.venv\Scripts\sextant setup
 .\.venv\Scripts\sextant verify --project upgrade-check
 ```
@@ -561,7 +561,7 @@ cd sextant && git pull
 .venv/bin/python -m pip install -e ".[dev,telegram,summarizer]"
 .venv/bin/python -m pytest tests -q   # optional but recommended
 .venv/bin/sextant-init
-.venv/bin/atlas-temporal build
+.venv/bin/sextant-temporal build
 .venv/bin/sextant setup
 .venv/bin/sextant verify --project upgrade-check
 ```
@@ -603,7 +603,7 @@ older build rebuilt the index; no command is needed.
   there is one, otherwise the first folder below the projects root that has a note. Save
   `identity/*.md` as UTF-8 without a BOM (PowerShell 5.1's `Set-Content -Encoding utf8` adds
   one; it is tolerated now, but `-Encoding ascii` or an editor is safer). Reference facts are not injected automatically; ask for them
-  with the search tool or run `atlas-prime <task>`, which adds the facts that match the
+  with the search tool or run `sextant context <task>`, which adds the facts that match the
   task words (any scope) and the project note when a word is a project name. A fact saved with the default
   scope (`reference:notes`) is therefore found by `sextant search` but is not pasted into every session; save
   what should always be in context with `--scope identity` or `--scope preference:<topic>`.

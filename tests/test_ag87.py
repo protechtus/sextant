@@ -222,22 +222,22 @@ def test_session_start_primes_a_session_whose_payload_cwd_is_in_scope(tmp_path, 
     inside, outside = _scoped(tmp_path, monkeypatch)
     monkeypatch.chdir(outside)  # the hook process runs elsewhere; the payload names the session's directory
     out = _session_start(monkeypatch, {"session_id": "s", "hook_event_name": "SessionStart", "cwd": str(inside)}, capsys)
-    assert "ATLAS SESSION CONTEXT" in out.out
+    assert "SEXTANT SESSION CONTEXT" in out.out
 
 
 def test_session_start_leaves_alone_a_session_whose_payload_cwd_is_outside(tmp_path, monkeypatch, capsys):
     inside, outside = _scoped(tmp_path, monkeypatch)
     monkeypatch.chdir(inside)
     out = _session_start(monkeypatch, {"session_id": "s", "hook_event_name": "SessionStart", "cwd": str(outside)}, capsys)
-    assert "ATLAS SESSION CONTEXT" not in out.out
+    assert "SEXTANT SESSION CONTEXT" not in out.out
 
 
 def test_session_start_without_a_payload_still_uses_the_process_cwd(tmp_path, monkeypatch, capsys):
     inside, outside = _scoped(tmp_path, monkeypatch)
     monkeypatch.chdir(inside)
-    assert "ATLAS SESSION CONTEXT" in _session_start(monkeypatch, None, capsys).out
+    assert "SEXTANT SESSION CONTEXT" in _session_start(monkeypatch, None, capsys).out
     monkeypatch.chdir(outside)
-    assert "ATLAS SESSION CONTEXT" not in _session_start(monkeypatch, None, capsys).out
+    assert "SEXTANT SESSION CONTEXT" not in _session_start(monkeypatch, None, capsys).out
 
 
 def test_a_quoted_scope_value_is_named_by_both_hooks(tmp_path, monkeypatch, capsys):
@@ -245,7 +245,7 @@ def test_a_quoted_scope_value_is_named_by_both_hooks(tmp_path, monkeypatch, caps
     monkeypatch.setenv("ATLAS_HOOK_SCOPE", f'"{inside}"')
     monkeypatch.chdir(inside)
     out = _session_start(monkeypatch, {"session_id": "s", "cwd": str(inside)}, capsys)
-    assert "ATLAS SESSION CONTEXT" not in out.out
+    assert "SEXTANT SESSION CONTEXT" not in out.out
     assert "quote" in out.err and "ATLAS_HOOK_SCOPE" in out.err
     from atlas_plus.summarizer import hook_entry as he
     monkeypatch.setenv("ATLAS_SESSION_AUTONOMOUS", "on")

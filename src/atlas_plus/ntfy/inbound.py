@@ -187,7 +187,7 @@ class NtfyInboundListener:
         if not self.resp_topic:
             log.debug("No ATLAS_NTFY_TOPIC set; reply not published: %s", text[:80])
             return
-        headers = {"Title": "Atlas reply", "Tags": "robot"}
+        headers = {"Title": "Sextant reply", "Tags": "robot"}
         _ntfy_token = os.environ.get("ATLAS_NTFY_TOKEN", "")  # ATL-007: auth for reserved topics
         if _ntfy_token:
             headers["Authorization"] = f"Bearer {_ntfy_token}"

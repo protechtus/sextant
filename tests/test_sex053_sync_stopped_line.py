@@ -19,7 +19,8 @@ def _end_line(capsys, done, total):
 
 def test_nothing_transferred_reads_as_stopped(capsys):
     line = _end_line(capsys, 0, 300)
-    assert line == "stopped before any file was transferred (0 of 300: see below)"
+    assert line == "stopped: the hub confirmed no file (0 of 300: see below)"
+    assert "before any file" not in line  # the hub may have stored part of an unconfirmed batch (MN95)
     assert "300 not" not in line
 
 

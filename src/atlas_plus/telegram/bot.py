@@ -328,7 +328,7 @@ def main() -> None:
     else:
         log.info("ATLAS_BRAIN_URL not set -- plain messages will be ignored.")
 
-    log.info("Atlas Telegram bot started (long-poll). Press Ctrl-C to stop.")
+    log.info("Sextant Telegram bot started (long-poll). Press Ctrl-C to stop.")
     log.info("Allowed users: %s", ALLOWED_USERS or "UNRESTRICTED")
     try:
         app.run_polling(drop_pending_updates=True)

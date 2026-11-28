@@ -148,7 +148,7 @@ REGISTRY: list[Agent] = [
         model="codex-cli",
         agent_type="codex-cli",
         capabilities=["coding", "memory-aware-coding"],
-        description="Codex CLI with Atlas memory context. Coding tasks that benefit from project history.",
+        description="Codex CLI with Sextant memory context. Coding tasks that benefit from project history.",
     ),
     Agent(
         name="opencode",

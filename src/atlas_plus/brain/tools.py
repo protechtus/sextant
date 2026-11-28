@@ -148,7 +148,7 @@ TOOL_SCHEMAS: list[dict] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Project name (e.g. 'atlas-memory+')"},
+                    "name": {"type": "string", "description": "Project name (e.g. 'my-project')"},
                 },
                 "required": [],
             },
@@ -163,7 +163,7 @@ TOOL_SCHEMAS: list[dict] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {"type": "string", "description": "Scope e.g. 'preference:testing', 'project:atlas-memory+'"},
+                    "scope": {"type": "string", "description": "Scope e.g. 'preference:testing', 'project:my-project'"},
                     "fact": {"type": "string", "description": "The fact to write (1-3 sentences)"},
                 },
                 "required": ["scope", "fact"],

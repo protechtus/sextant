@@ -34,7 +34,7 @@ DEFAULT_UPSTREAM = os.environ.get("OLLAMA_UPSTREAM", "http://localhost:11434")
 
 log = logging.getLogger("atlas.ollama-proxy")
 
-app = FastAPI(title="Atlas Ollama capture proxy", version="0.1.0")
+app = FastAPI(title="Sextant Ollama capture proxy", version="0.1.0")
 _store = TranscriptStore()
 _index = TranscriptIndex()
 _client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0))

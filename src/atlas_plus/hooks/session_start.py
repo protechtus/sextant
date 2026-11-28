@@ -425,7 +425,7 @@ def _brain_notes() -> str:
 def main() -> None:
     from atlas_plus._console import utf8_stdout_when_piped
     utf8_stdout_when_piped()
-    """Claude Code session-start hook: emit Atlas identity, project state, and last-session summary to the context window."""
+    """Claude Code session-start hook: emit Sextant identity, project state, and last-session summary to the context window."""
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         from atlas_plus.branding import prog as _prog
         print(f"Usage: {_prog('atlas-session-start')}\n\nSession-start hook: prints identity, clock, the user's house rules and the\ncurrent project note (when the working directory is a known project).")
@@ -450,9 +450,9 @@ def main() -> None:
             write_text_out(context, hook=True)  # the editor reads UTF-8 (MN36, AG46)
             return
         except Exception as e:
-            print(f"# [atlas-prime] fallback to full context: {e}", file=sys.stderr)
+            print(f"# [sextant-prime] fallback to full context: {e}", file=sys.stderr)
 
-    lines: list[str] = ["=== ATLAS SESSION CONTEXT ===", ""]
+    lines: list[str] = ["=== SEXTANT SESSION CONTEXT ===", ""]
     # Always say which corpus this is: hooks run without the client's env, so a relocated
     # corpus is easy to miss (a package-user persona primed ~/.memory silently, 2026-11-11).
     shown_root = "".join(c if c >= " " else " " for c in str(MEMORY_ROOT))
@@ -612,7 +612,7 @@ def main() -> None:
             entry = "\n".join(ln for ln in entry.splitlines() if not ln.startswith("<!-- session:"))
             lines += ["## Last session", _q(entry), ""]
 
-    lines.append("=== END ATLAS CONTEXT ===")
+    lines.append("=== END SEXTANT CONTEXT ===")
     sys.stdout.buffer.write("\n".join(lines).encode("utf-8"))
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
@@ -623,5 +623,5 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         # Never block a session — fail silently
-        print(f"# [atlas-session-start] error: {e}", file=sys.stderr)
+        print(f"# [sextant-session-start] error: {e}", file=sys.stderr)
         sys.exit(0)

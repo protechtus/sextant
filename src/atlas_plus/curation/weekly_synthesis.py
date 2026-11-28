@@ -232,7 +232,7 @@ def run_weekly_synthesis(
     header = (
         f"---\nid: week-{week}\ntitle: Weekly Synthesis {week}\n"
         f"type: session\nstatus: active\npriority: normal\nupdated: {_date_str()}\n---\n\n"
-        f"# Week {week} -- Atlas Synthesis\n\n"
+        f"# Week {week} -- Sextant Synthesis\n\n"
         f"*Generated: {_date_str()}*\n\n"
     )
     content = header + synthesis + "\n"

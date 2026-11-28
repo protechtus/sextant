@@ -116,5 +116,5 @@ def test_both_hooks_make_one_decision_without_a_payload_cwd(tmp_path, monkeypatc
     payload = {"session_id": "s", "transcript_path": str(t)}  # an older client: no cwd
     stop_acts = _stop(monkeypatch, payload)
     capsys.readouterr()
-    primed = "ATLAS SESSION CONTEXT" in _session_start(monkeypatch, payload, capsys).out
+    primed = "SEXTANT SESSION CONTEXT" in _session_start(monkeypatch, payload, capsys).out
     assert stop_acts == primed, f"Stop acted={stop_acts}, SessionStart primed={primed}"
