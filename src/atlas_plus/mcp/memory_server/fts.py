@@ -680,7 +680,8 @@ def _original_text(rel: str, indexed: str) -> str:
         path = MEMORY_ROOT / rel
         if is_link(path):   # a note swapped for a link after indexing: never show another file's text (AG16)
             return ""
-        raw = path.read_text(encoding="utf-8-sig", errors="replace")
+        from atlas_plus._readahead import read_note_text
+        raw = read_note_text(path, "utf-8-sig")   # a UTF-16 note as the indexer read it (MN96)
     except (OSError, ValueError):
         return ""
     frontmatter_json, body, _ = _parse_md(raw)
@@ -1231,8 +1232,9 @@ INDEX_FORMAT = "11"  # bump when _norm_index_text changes: every note is re-inde
 # What _parse_md and _index_body make of a note, without a format bump (AG121, lesson LES-092): raise it when a
 # change alters the row any note stores (tests/test_guardrails.py G21 holds the snapshot). An index whose stamp
 # is older heals on the next incremental update: only the notes whose row would differ are re-indexed, once.
-# 1 = a top block that is not key/value pairs is text (AG119).
-PARSE_REVISION = "1"
+# 1 = a top block that is not key/value pairs is text (AG119). 2 = a note saved as UTF-16 with a byte-order
+# mark is decoded, where it was indexed as replacement characters (MN96).
+PARSE_REVISION = "2"
 
 
 def _parse_stamp(last_indexed) -> str:

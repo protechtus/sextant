@@ -1998,7 +1998,7 @@ def test_g20_self_test_flags_planted_offenders():
 # with none of the three left 0.1.0's rows in place after an upgrade (MN93 F1: words in a rule-line top block
 # gave "No hits" until a forced rebuild). The snapshot below is the digest of the rows a fixture corpus stores;
 # it sits next to the revision it was taken with.
-_G21_PARSE_REVISION = "1"
+_G21_PARSE_REVISION = "2"   # 2: UTF-16 notes decoded (MN96); the fixture corpus holds none, so the digest stayed
 _G21_INDEX_FORMAT = "11"
 _G21_SNAPSHOT = "e17704a087d65293f627326b8555ac13f199a149fdb26d05e9937a77ff9f44aa"
 

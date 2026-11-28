@@ -114,6 +114,14 @@ public tree.
   the guard as well. Guardrail G22 has an AST layer over both files: every printed argument is a literal, a
   number, wrapped, or on a reviewed list with its reason. `sextant setup` tells a Windows client that has
   only the `py` launcher how to type the HTTP verify line (it named a bare `python`).
+- A note a Windows editor saved as UTF-16 (Notepad's "Unicode") is found by search (MN96, the impatient CJK
+  walk). The index read every note as UTF-8 and stored such a note as replacement characters, so a search
+  silently missed every fact in it, although `sextant import` already decoded UTF-16 by its byte-order mark
+  and `sextant doctor` named the note. The corpus reader decodes it the same way now. An index an earlier
+  version built heals on the first search (`fts.PARSE_REVISION` 2: every note is checked once, only the
+  differing ones are re-indexed; about half a minute once at 20,000 notes, announced from 2,000 up).
+  Simplified against traditional forms of one word stay a documented limit. Not yet changed: the
+  dashboard's note viewer still shows such a note garbled.
 
 ## [0.1.1] - 2026-11-27
 

@@ -144,6 +144,12 @@ def test_create_cost_stays_flat_with_many_projects_and_archive_folders(troot, mo
             self._it.close()
 
     monkeypatch.setattr(os, "scandir", _Counting)
+    # A folder whose time stamp is younger than one second is read again on purpose (a second change in the
+    # same tick would hide behind it). That window is wall-clock too: on a fast Linux runner half of the late
+    # batch fell inside it and each of those creates re-read the grown folder (CI run 46115591798: 798 and
+    # 502 entries per create where Windows counted 46). The window is closed here: with it closed the count is
+    # the same on every machine (46.0 early and late, 1,646 for the one re-read, measured 2026-11-27).
+    monkeypatch.setattr(store, "_RACY_NS", 0)
     for p in range(20):
         d = troot / f"other{p:02d}"
         d.mkdir()
@@ -167,11 +173,9 @@ def test_create_cost_stays_flat_with_many_projects_and_archive_folders(troot, mo
         (troot / "proj" / f"PRO-{i + 1000:04d}.md").write_text("---\nid: x\n---\n", encoding="utf-8")
     regrown = batch(1)                      # the grown folder is read again, once
     late = max(batch(40), batch(40))
-    # Measured 2026-11-27 (four runs): early 115 to 233 (the folders the setup wrote within the last second
-    # are read again while their time stamp is too young to trust), the one re-read 4,846, late 46.0 every time.
     assert regrown >= 1500, regrown    # the counter sees a real folder read, so this test can fail
-    assert early < 1500, early         # no create lists everything the root holds (about 2,000 entries here)
-    assert late < 500, late            # 1,580 tickets in the project and none of them is listed per create
+    assert early < 100, early          # no create lists the other projects or the archive folders
+    assert late < 100, late            # 1,580 tickets in the project and none of them is listed per create
 
 
 # ---------------------------------------------------------------- the show / ambiguity path

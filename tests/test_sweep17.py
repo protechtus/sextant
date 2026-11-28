@@ -273,10 +273,22 @@ def test_shared_tls_context_cache_kept_and_dash_lookbehind():
     assert ollama._shared_ssl_context() is ollama._shared_ssl_context()
     assert 'kwargs.setdefault("verify", _shared_ssl_context())' in inspect.getsource(web._PeerClient.__init__)
     assert "_save_chunk_cache(safe_id, used_cache)  # the chunks already summarised are kept" in inspect.getsource(scli.main)
-    big = "pass-" * 200_000
-    t0 = time.perf_counter()
-    redact(big)
-    assert time.perf_counter() - t0 < 2.0                                            # dash-dense text (AG54: 3.75 s per MB)
+    # Dash-dense text (AG54: 3.75 s per MB, a pattern that went back over every dash). The cost must grow with
+    # the text, not with its square. Measured as a ratio on the same machine: four times the text may cost
+    # at most eight times the time (linear is 4, the old behaviour 16). A fixed "under 2.0 s" failed on a slow
+    # macOS runner at 2.52 s with the product unchanged (CI run 46115591798).
+    def cost(n):
+        text = "pass-" * n
+        best = None
+        for _ in range(3):
+            t0 = time.perf_counter()
+            redact(text)
+            dt = time.perf_counter() - t0
+            best = dt if best is None else min(best, dt)
+        return best
+
+    small, large = cost(25_000), cost(100_000)
+    assert large < 8 * max(small, 0.005), (small, large)
     v = "Zq9wX7vB3nK1"
     assert v not in redact("X-Api-" + "Key: " + v) and v not in redact("a-b-c-" + "password=" + v)  # assembled: the pre-commit scan reads literal key lines as leaks
 

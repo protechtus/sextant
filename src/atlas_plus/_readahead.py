@@ -17,10 +17,23 @@ READ_AHEAD_MIN = 64
 READ_WINDOW = 512  # files handed to the pool at a time: bounds the texts held at once
 
 
+def read_note_text(path: Path, encoding: str = "utf-8") -> str:
+    """``path.read_text(encoding=encoding, errors="replace")``, but a file that starts with a UTF-16
+    byte-order mark (Notepad's "Unicode") is decoded as UTF-16, as `sextant import` decodes it: such a note
+    was indexed as replacement characters, so a search silently missed every fact in it (MN96). Raises
+    OSError like ``read_text``; only a text that begins with two replacement characters is read again."""
+    text = path.read_text(encoding=encoding, errors="replace")
+    if text.startswith("\ufffd\ufffd"):
+        raw = path.read_bytes()
+        if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = raw.decode("utf-16", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    return text
+
+
 def read_or_error(path: Path, encoding: str = "utf-8") -> Union[str, OSError]:
-    """``path.read_text(encoding=encoding, errors="replace")``, or the OSError it raised."""
+    """``read_note_text(path, encoding)``, or the OSError it raised."""
     try:
-        return path.read_text(encoding=encoding, errors="replace")
+        return read_note_text(path, encoding)
     except OSError as exc:
         return exc
 
