@@ -1398,6 +1398,25 @@ def last_index_work() -> dict:
     return dict(_LAST_INDEX_WORK)
 
 
+def _index_state():
+    """(empty, format tag) of the index on one connection: `empty` when it holds no note; the tag is '' when
+    the row is missing and None when it cannot be read or the index is empty (the search path then fails open
+    to the incremental update instead of forcing a rebuild: AG60)."""
+    conn = _connect()
+    try:
+        empty = conn.execute("SELECT COUNT(*) FROM memory_files").fetchone()[0] == 0
+        fmt = None
+        if not empty:
+            try:
+                row = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
+                fmt = row[0] if row else ""
+            except Exception:  # noqa: BLE001 - unreadable: fail open to the incremental update (AG60)
+                fmt = None
+    finally:
+        conn.close()
+    return empty, fmt
+
+
 def update_incremental() -> int:
     """Bring the index up to date by touching ONLY changed files.
 
@@ -1410,23 +1429,15 @@ def update_incremental() -> int:
     documented cliff at tens-of-thousands-of-files corpus size. The full
     rebuild() remains for the CLI / recovery path.
     """
-    # Empty/missing index falls back to the full rebuild -- checked OUTSIDE
-    # the lock (rebuild() takes the same non-reentrant lock).
-    conn = _connect()
-    try:
-        empty = conn.execute("SELECT COUNT(*) FROM memory_files").fetchone()[0] == 0
-        _fmt = None
-        if not empty:
-            # the format tag on the same connection (_index_format_tag opened another one per search)
-            try:
-                _row = conn.execute("SELECT value FROM atlas_meta WHERE key='index_format'").fetchone()
-                _fmt = _row[0] if _row else ""
-            except Exception:  # noqa: BLE001 - unreadable: fail open to the incremental update (AG60)
-                _fmt = None
-    finally:
-        conn.close()
+    empty, _fmt = _index_state()
     if empty:
-        return _noticed_rebuild("the index is new")
+        # Re-read under the lock (SEX-056): a rebuild clears the tables in one commit and fills them in the
+        # next, so a search arriving in between saw an empty index, waited for the lock and then built
+        # everything a second time. The format tag below was already re-read this way (AG60).
+        with _rebuild_lock:
+            empty, _fmt = _index_state()
+            if empty:
+                return _noticed_rebuild("the index is new")
     resuming = _fmt == _BUILDING + INDEX_FORMAT
     if _fmt is not None and _fmt != INDEX_FORMAT and not resuming:
         with _rebuild_lock:  # re-entrant: a concurrent search may have rebuilt while we waited (AG60: four searches made four full rebuilds)

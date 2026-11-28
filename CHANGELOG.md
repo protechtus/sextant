@@ -19,6 +19,18 @@ public tree.
 
 ## [Unreleased]
 
+### Fixed
+
+- A search that arrives while another search of the same process is rebuilding the index no longer rebuilds
+  it a second time (SEX-056; lesson LES-097). A rebuild clears the index in one step and fills it in the
+  next; a search that looked in between saw "no notes", waited for the rebuild to finish and then built
+  everything again: the same result, twice the wait (about a minute at 20,000 notes). The "is it empty"
+  answer is now read again once the rebuild lock is held, as the format tag beside it already was. Seen as
+  one failed macOS job on the 0.1.1 release commit (two forced rebuilds where one was expected); the test
+  that showed it by luck now has a companion that forces the order with events
+  (`tests/test_sex056.py`). Searches from two separate processes were not affected: the second one resumes
+  the first one's build.
+
 ## [0.1.1] - 2026-11-27
 
 In short, since 0.1.0: the first minutes of a new install. Every failure ends with what to type next; the README no longer dead-ends on a default Windows PowerShell; `pip install sextant` (another project's name) is detected and has a remedy that works; Linux key hints run as printed; a read-only corpus, a Windows drive under WSL and a new terminal without the location variables each get a true next step; child processes no longer inherit standard input; and the curation report on a large corpus (20,000 notes) answers in about a minute where it did not answer in six. No change to the note format or the index format; upgrade with `pip install -U sextant-ai`. The first search after the upgrade checks an index that 0.1.0 built against the new parser once and re-indexes the few notes it affects (a note that opens with a rule line over text; about half a minute at 20,000 notes, said on screen).
