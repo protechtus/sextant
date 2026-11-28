@@ -32,6 +32,13 @@ public tree.
   The state folder (`~/.atlas`) and the corpus folder `_atlas` keep their names: a new default would
   hide the state from an older version sharing the same home. Upgrade receipt: 0.1.1 from PyPI, lived in, then this code installed
   over it: search, setup and verify print the same bytes.
+- A new CI job, `reader`, walks the README's Quickstart as a literal reader on macOS, Linux and Windows
+  (SEX-054, AG129): `scripts/readme_walk.py` runs the fenced commands in order in a temporary home with a
+  fresh venv, the package installed from the checkout (the clone line copies it: the one substitution, said
+  in the output). It skips what the README marks optional, the other system's blocks and client programs,
+  each with its reason, and fails, naming the README line, on a non-zero exit, a traceback or a missing
+  program. No lane could run macOS by hand; this job does on every push. Walked green on Windows (8 of the
+  30 extracted lines run there); the macOS and Linux walks are proven by CI only.
 
 ### Changed
 
@@ -84,6 +91,17 @@ public tree.
 - Sync: `sextant-sync accept-restore` lists the notes the restore removed on their own: devices KEEP those
   copies (deletes never sync) and report them as deleted remotely, where the message said every device
   would pull them (MN95).
+- With numpy installed, the memory server no longer holds one 32 MB buffer per processor core (Q25). numpy is
+  an optional accelerator for semantic search, and the OpenBLAS inside its wheel reserves a buffer per logical
+  core when it loads. Every MCP client session starts its own server process, so on a 24-core Windows machine
+  each session's server held about 840 MB (measured: 845 MB at start, 961 MB after one call of every tool);
+  it now holds 103 MB at start and 135 MB after the same calls. numpy is loaded with one BLAS thread, which
+  is also faster for the one matrix-vector product a search makes (0.13 ms against 0.29 ms at 3,000 vectors
+  of 768). A thread count you set yourself (`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`) is left alone, and child
+  processes do not inherit the setting. Search answers are unchanged. Running servers keep what they hold
+  until they are restarted (close and reopen the client session).
+- After the first semantic search the server kept every vector twice, once as a numpy matrix and once as
+  Python lists (54.6 MB beside 6.8 MB at 2,323 notes). It keeps the matrix.
 
 ## [0.1.1] - 2026-11-27
 

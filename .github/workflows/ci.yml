@@ -57,6 +57,47 @@ jobs:
       - name: Test
         run: python -m pytest tests -q
 
+  # A literal reader of the README (SEX-054 item 3, sweep 39 AG129): scripts/readme_walk.py runs the
+  # Quickstart's fenced commands in order, in a temporary HOME with a fresh venv, the package
+  # installed from this checkout (the clone line copies it; the one substitution). It skips what the
+  # README marks optional, the other platform's blocks and client programs (claude, codex,
+  # opencode), and fails on a non-zero exit or a traceback. macOS is the reason it exists: no lane can
+  # run macOS by hand. The private repository walks the public tree it builds, on ubuntu only.
+  reader:
+    name: reader (${{ matrix.os }})
+    if: ${{ !github.event.repository.private || github.actor != 'dependabot[bot]' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(!github.event.repository.private && '["macos-latest", "ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Private term list (private repository only; the gate fails closed without it)
+        if: github.event.repository.private
+        shell: bash
+        env:
+          RELEASE_TERMS: ${{ secrets.RELEASE_TERMS_LOCAL_JSON }}
+        run: |
+          if [ -n "$RELEASE_TERMS" ]; then printf '%s' "$RELEASE_TERMS" > scripts/release_terms.local.json; fi
+      - name: Choose the tree to walk
+        id: tree
+        shell: bash
+        run: |
+          if [ -f scripts/build_public_repo.py ]; then
+            python scripts/build_public_repo.py --target "$RUNNER_TEMP/sextant-public" --force
+            echo "dir=$RUNNER_TEMP/sextant-public" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Walk the README as a reader
+        shell: bash
+        run: python "${{ steps.tree.outputs.dir }}/scripts/readme_walk.py" "${{ steps.tree.outputs.dir }}" --workdir "$RUNNER_TEMP/readme-walk"
+
   # The MCP SDK 1.x (ATL-072, sweep 33 AG114): the server runs on 1.x and 2.x from one code base
   # (mcp/memory_server/_sdk.py). The test job installs without constraints, so it resolves the
   # newest SDK the pin allows (2.x); the pin still allows 1.x (mcp>=1.28.1), so this job forces 1.x

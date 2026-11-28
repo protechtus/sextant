@@ -25,6 +25,7 @@ import math
 import os
 import struct
 import sqlite3
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -234,10 +235,40 @@ def rebuild_index(embedder=None, force: bool = False) -> dict:
 # 0.2ms matmul; it is an optional fast path, never a dependency.
 _vec_cache: tuple | None = None  # (stat_key, paths, dims, vecs, np_matrix)
 
-try:  # optional accelerator only -- the engine never requires numpy
-    import numpy as _np
-except ImportError:  # pragma: no cover -- exercised on minimal installs
-    _np = None
+# The variables OpenBLAS reads for its thread count. One of them set by the user is the user's
+# decision and is left alone.
+_BLAS_THREAD_VARS = ("OPENBLAS_NUM_THREADS", "GOTO_NUM_THREADS", "OMP_NUM_THREADS")
+
+
+def _import_numpy():
+    """numpy, or None when it is not installed; loaded with ONE BLAS thread unless the environment
+    already names a thread count.
+
+    Measured 2026-11-27 (Windows, 24 logical cores, numpy 2.4.4): the OpenBLAS inside the numpy
+    wheel commits one 32 MB buffer per logical core when it loads, so `import numpy` alone took a
+    fresh process from 9 MB to 790 MB of private bytes, and every MCP client session starts its own
+    server process. The only BLAS call here is one matrix-vector product over a few thousand rows;
+    one thread does it in 0.13 ms (0.29 ms with 24 threads) and the same process holds 95 MB.
+    OpenBLAS reads the variable once, when it loads: it is set for the import only and removed
+    again, so child processes do not inherit it.
+    """
+    if "numpy" in sys.modules or any(os.environ.get(v, "").strip() for v in _BLAS_THREAD_VARS):
+        try:
+            import numpy
+        except ImportError:
+            return None
+        return numpy
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    try:
+        import numpy
+    except ImportError:  # exercised on minimal installs
+        return None
+    finally:
+        os.environ.pop("OPENBLAS_NUM_THREADS", None)
+    return numpy
+
+
+_np = _import_numpy()  # optional accelerator only: the engine never requires numpy
 
 
 def _index_generation() -> int:
@@ -253,7 +284,8 @@ def _index_generation() -> int:
 
 
 def _load_vectors():
-    """Return (paths, dims, vecs, np_matrix|None) for all rows, cached."""
+    """Return (paths, dims, vecs|None, np_matrix|None) for all rows, cached: the vectors are in
+    the matrix when there is one, else in `vecs`."""
     global _vec_cache
     try:
         # The vectors share fts.py's state.sqlite; read the path through
@@ -284,6 +316,10 @@ def _load_vectors():
         main_dim = max(set(dims), key=dims.count)
         if all(d == main_dim for d in dims):
             matrix = _np.array(vecs, dtype=_np.float32)
+            # The matrix now holds every vector. The unpacked lists are the same numbers again as
+            # Python floats, 24 bytes a number and more (measured 2026-11-27: 54.6 MB beside a
+            # 6.8 MB matrix at 2,323 vectors of 768), and every session's server kept both.
+            vecs = None
     if key is not None:
         _vec_cache = (key, paths, dims, vecs, matrix)
     return paths, dims, vecs, matrix
@@ -310,7 +346,7 @@ def vector_search(query: str, scope: str = "", limit: int = 10,
                 if prefix and not path.startswith(prefix):
                     continue
                 scored.append((float(sims[i]), path))
-        else:
+        elif vecs is not None:  # None: the matrix holds them, and the query has another length
             for path, dim, vec in zip(paths, dims, vecs):
                 if prefix and not path.startswith(prefix):
                     continue

@@ -145,6 +145,7 @@ the README before exposing anything.
 | `ATLAS_EMBED_MODEL` | `nomic-embed-text` | Embedding model (Ollama). |
 | `ATLAS_EMBED_URL` | Ollama default | Embedding endpoint override. Proxy variables apply to a remote host only; loopback goes direct. |
 | `ATLAS_EMBED_TIMEOUT` | `15` | Seconds to wait for one embedding call (a hung endpoint costs this per search). |
+| `OPENBLAS_NUM_THREADS` | `1` while numpy loads | Not a setting of this product: the thread count of the OpenBLAS inside numpy, which semantic search uses when numpy is installed. OpenBLAS reserves a 32 MB buffer per thread when it loads (one per processor core by default: 768 MB in every server process on 24 cores), so numpy is loaded with one thread, which is also the fastest for a search. Set this (or `OMP_NUM_THREADS`) yourself and your number is used; nothing is passed on to child processes. |
 
 ## Models and providers
 
