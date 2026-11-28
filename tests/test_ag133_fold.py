@@ -34,8 +34,13 @@ def test_usage_names_the_installed_command_or_the_words_typed(monkeypatch, capsy
 @pytest.mark.parametrize("arg0", ["/x/site-packages/atlas_plus/__main__.py", "tool.py", "-c", ""])
 def test_a_module_or_file_start_keeps_argparses_own_name(monkeypatch, arg0):
     monkeypatch.setattr(sys, "argv", [arg0])
+    import argparse
+
     assert _next_step._typed_prog() is None
-    assert _next_step.ArgumentParser(description="d").prog  # argparse answered; nothing was forced
+    # nothing was forced: the name is plain argparse's own answer, whatever this Python and this way of starting
+    # pytest make it (for an empty argv[0] that answer is empty before 3.14 and under the `pytest` command:
+    # CI run 46126301442)
+    assert _next_step.ArgumentParser(description="d").prog == argparse.ArgumentParser(description="d").prog
 
 
 def test_a_caller_that_names_the_program_is_obeyed(monkeypatch):
