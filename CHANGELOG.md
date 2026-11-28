@@ -29,8 +29,8 @@ public tree.
   and hook lines, and an upgrade must never re-point a registration that already works. Setup keeps writing
   that spelling, so every released version keeps reading it. `SEXTANT_PROOF_*` (the benchmark harness) is
   left alone. Before, a `SEXTANT_` spelling was ignored, with a warning for the two path variables only.
-  The state folder keeps its name; the reasons, the options and the open questions are in
-  `docs/NAMING-MIGRATION-DESIGN.md`. Upgrade receipt: 0.1.1 from PyPI, lived in, then this code installed
+  The state folder (`~/.atlas`) and the corpus folder `_atlas` keep their names: a new default would
+  hide the state from an older version sharing the same home. Upgrade receipt: 0.1.1 from PyPI, lived in, then this code installed
   over it: search, setup and verify print the same bytes.
 
 ### Changed

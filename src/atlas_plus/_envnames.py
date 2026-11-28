@@ -4,7 +4,7 @@ The code reads `ATLAS_*` at a few hundred places, many at import time; there is 
 imports this package first, so ONE adoption step at package import makes the new spelling work everywhere, and
 because it writes into `os.environ`, every child process the product starts inherits the value.
 
-Rule (docs/NAMING-MIGRATION-DESIGN.md):
+Rule (docs/CONFIGURATION.md states it for users):
 - `SEXTANT_<NAME>` set and `ATLAS_<NAME>` not set: `ATLAS_<NAME>` takes the value (empty values copied as they are).
 - both set to the same value: nothing happens.
 - both set and different: `ATLAS_<NAME>` wins (it is the spelling `sextant setup` writes into client settings and

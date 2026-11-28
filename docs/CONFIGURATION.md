@@ -30,8 +30,9 @@ example `SEXTANT_MEMORY_ROOT` or `ATLAS_MEMORY_ROOT`. The rule:
   version;
 - `SEXTANT_PROOF_*` belongs to the benchmark harness and is not a twin.
 
-The design and its limits (the state folder keeps its name):
-docs/NAMING-MIGRATION-DESIGN.md.
+The state folder keeps its name (`~/.atlas`), and so does the corpus folder
+`_atlas`: a new default would hide the state from an older version that shares
+the same home. `SEXTANT_STATE_DIR` puts it wherever you like.
 
 **Setting a variable so it sticks** (a `$env:X=...` line dies with the
 terminal window):
