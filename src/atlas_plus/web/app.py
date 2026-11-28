@@ -4041,7 +4041,7 @@ def _run_powershell(cmd: str, timeout: float = 25.0) -> tuple[int, str]:
     try:
         # the bounded helper: PowerShell's whole tree ends at the timeout and the output is capped (LES-072)
         res = _proc.run_bounded(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-                                timeout=timeout, max_bytes=2_000_000)
+                                timeout=timeout, max_bytes=2_000_000, env=_proc.other_party_env())  # AG127
     except Exception as exc:
         return 1, str(exc)
     if res.timed_out:

@@ -2713,3 +2713,178 @@ def test_g22_ast_self_test_catches_a_planted_offender():
     assert len(found) == 3, joined                            # the wrapped, numeric and local-safe ones pass
     planted_v = ast.parse("def main(n, p):\n    print(f'  {n}')\n    print(f'  {_safe(p)} {len(n):,}')\n")
     assert [f for f in _g22a_offenders("versions_cmd.py", planted_v)] == ["versions_cmd.py:2: print(... f'  {n}' ...)"]
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G15 (environment layer, AG127, lessons LES-079 and LES-053)  another party's program gets an allowlisted environment
+#   Sweep 39: a fake `claude` started by the Brain agent router, the opencode router and the Telegram job poller saw
+#   ATLAS_MCP_TOKEN, ATLAS_TELEGRAM_BOT_TOKEN, SEXTANT_WEB_API_KEY and SEXTANT_SYNC_DEVICE_TOKEN: every child inherited
+#   the whole parent environment. A child that runs a program this project does not ship gets
+#   `env=atlas_plus._proc.other_party_env(...)` (git: `gitsafe._env()`, which starts from it). A child that IS this
+#   package (`sys.executable -m atlas_plus...`) keeps the full environment: it needs its settings.
+#   A model CLI gets `_proc.model_cli_env(<cli>)`: the same allowlist plus the CLI's own variables (SEX-060).
+#   Scope: every file under src/atlas_plus of the tree it runs in; an allowlist entry for a file absent from
+#   the tree is simply unused.
+# ----------------------------------------------------------------------------------------------
+
+_G15ENV_CALLS = ("run_bounded", "run_bounded_async", "_bounded_text_run")
+_G15ENV_SUBPROCESS = ("run", "Popen", "check_output", "call", "check_call")
+_G15ENV_HELPERS = ("other_party_env(", "model_cli_env(", "gitsafe._env()", "_clean_pytest_env()")
+
+# the private-only modules were reviewed at the fold (SEX-060): no file is skipped; their reasoned entries
+# are loaded from a private file below
+_G15ENV_UNSEEN: tuple[str, ...] = ()
+
+ALLOW_G15ENV: list[Allow] = [
+    ("src/atlas_plus/_proc.py", "*", "the helper itself: run_bounded passes the caller's env through"),
+    ("src/atlas_plus/gitsafe.py", "env=_env()", "the git helper's own environment, built by other_party_env"),
+    ("src/atlas_plus/gitsafe.py", 'kwargs["env"] = _env()', "gitsafe.run sets env to the git helper's environment just above the call"),
+    ("src/atlas_plus/brain/executors.py", "env=env, cwd=cwd", "_bounded_text_run passes its caller's env through; every caller is scanned here"),
+    ("src/atlas_plus/brain/executors.py", "_utf8_env()", "this package's own children: python -m atlas_plus.curation.cli / dream_mode / suggest-facts, settings needed"),
+    ("src/atlas_plus/brain/executors.py", "artifact_name: str", "_run_reporting_subprocess: its callers build `sys.executable -m atlas_plus...` commands"),
+    ("src/atlas_plus/roundtrip.py", "env=env", "this package's own MCP server under test (server_command): it needs the settings"),
+    ("src/atlas_plus/summarizer/hook_entry.py", "env=_child_env", "this package's own console scripts (atlas-suggest-facts, atlas-temporal) and summarizer.cli"),
+]
+
+
+def _keel_allow(name: str) -> list[Allow]:
+    """Reasoned entries for the private-only modules live in a file that never ships
+    (tests/guardrails_keel_allow.py): the public tree has neither those modules nor the file."""
+    path = TESTS / "guardrails_keel_allow.py"
+    if not path.exists():
+        return []
+    scope: dict = {}
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), scope)  # noqa: S102 - a file of this repository
+    return list(scope.get(name, []))
+
+
+ALLOW_G15ENV += _keel_allow("ALLOW_G15ENV")
+
+
+def _g15env_is_ours(call: ast.Call) -> bool:
+    """`[sys.executable, "-m", "atlas_plus...", ...]`: a child that is this package."""
+    if not call.args or not isinstance(call.args[0], (ast.List, ast.Tuple)):
+        return False
+    elts = call.args[0].elts
+    if not elts or "sys.executable" not in _dotted(elts[0]):
+        return False
+    for i, e in enumerate(elts[1:-1], start=1):
+        if isinstance(e, ast.Constant) and e.value == "-m":
+            nxt = elts[i + 1]
+            return isinstance(nxt, ast.Constant) and str(nxt.value).startswith("atlas_plus")
+    return False
+
+
+def _g15env_hits(text: str) -> list[int]:
+    """Lines of child starts whose program is not this package and whose env= is not built by the helper."""
+    out = set()
+    for n in ast.walk(ast.parse(text)):
+        if not isinstance(n, ast.Call):
+            continue
+        name = _dotted(n.func)
+        short = name.split(".")[-1]
+        is_sub = name.startswith(("subprocess.", "_subprocess.", "sp.", "_sp.")) and short in _G15ENV_SUBPROCESS
+        if not (short in _G15ENV_CALLS or is_sub):
+            continue
+        if _g15env_is_ours(n):
+            continue
+        env = next((k.value for k in n.keywords if k.arg == "env"), None)
+        if env is not None and any(h in _dotted(env) for h in _G15ENV_HELPERS):
+            continue
+        out.add(n.lineno)
+    return sorted(out)
+
+
+def test_g15env_other_party_children_get_the_allowlisted_environment():
+    offenders = []
+    for p in _py_files(SRC):
+        rel = _rel(p)
+        if rel.startswith(_G15ENV_UNSEEN):
+            continue
+        for lineno in _g15env_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(rel, _g15_call_text(p, lineno), ALLOW_G15ENV):
+                offenders.append(f"{rel}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G15 (env)", "a child that runs another party's program passes "
+                                        "env=atlas_plus._proc.other_party_env(...) (the tool's own variables through "
+                                        "keep= / keep_prefixes=); only `sys.executable -m atlas_plus...` keeps the "
+                                        "whole environment")
+
+
+def test_g15env_scan_sees_each_shape():
+    planted = (
+        "import subprocess, sys\n"
+        "from atlas_plus import _proc\n"
+        "_proc.run_bounded(['git', 'status'], timeout=5, max_bytes=10)\n"                       # 3 offender
+        "_proc.run_bounded(['git'], timeout=5, max_bytes=10, env=_proc.other_party_env())\n"    # 4 fine
+        "_proc.run_bounded([sys.executable, '-m', 'atlas_plus.doctor'], timeout=5, max_bytes=10)\n"  # 5 ours
+        "_proc.run_bounded([sys.executable, '-I', 'script.py'], timeout=5, max_bytes=10)\n"     # 6 offender
+        "subprocess.Popen(['rclone'], env=dict(os.environ))\n"                                   # 7 offender
+        "subprocess.run(['git'], env=gitsafe._env(), timeout=5)\n"                               # 8 fine
+        "await _proc.run_bounded_async([cli], timeout=5, max_bytes=10)\n".replace("await ", "")  # 9 offender
+    )
+    assert _g15env_hits(planted) == [3, 6, 7, 9]
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G1 (redirect layer, AG127, lesson LES-044)  a fetch never follows a redirect unguarded
+#   Sweep 39: the research web search used httpx follow_redirects=True; a 302 to 127.0.0.1 was followed and the
+#   loopback answer went into the research prompt. Redirects are followed by hand, each hop through
+#   atlas_plus.inbox.summarize._refuse_private_target (loopback, link-local and private refused; its resolver hook is
+#   `_getaddrinfo`), and a credential header never goes to another host. Offenders: httpx with
+#   follow_redirects=True, requests without allow_redirects=False, and urllib.request.urlopen (its default opener
+#   follows redirects and forwards Authorization) outside the reasoned list below. A listed file absent from the
+#   tree is skipped (the entry is unused); the private-only modules' reasoned entries are loaded from the private file (see _keel_allow).
+# ----------------------------------------------------------------------------------------------
+
+_G1R_UNSEEN: tuple[str, ...] = ()  # the private-only modules were reviewed at the fold (SEX-060)
+
+ALLOW_G1R: list[Allow] = [
+    ("src/atlas_plus/doctor/cli.py", "/api/tags", "probe of the user's own configured Ollama URL; no credential, the body is a model list"),
+    ("src/atlas_plus/summarizer/hook_entry.py", "/api/tags", "probe of the user's own configured Ollama URL; no credential, only reachability is used"),
+]
+ALLOW_G1R += _keel_allow("ALLOW_G1R")
+
+
+def _g1r_hits(text: str) -> list[int]:
+    out = set()
+    for n in ast.walk(ast.parse(text)):
+        if not isinstance(n, ast.Call):
+            continue
+        name = _dotted(n.func)
+        kws = {k.arg: _dotted(k.value) for k in n.keywords if k.arg}
+        if _is_http_call(name) and name.split(".")[-1] != "urlopen":
+            if kws.get("follow_redirects") == "True":
+                out.add(n.lineno)
+            if name.startswith(("requests.", "_requests.")) and kws.get("allow_redirects") != "False":
+                out.add(n.lineno)
+        elif name in ("urllib.request.urlopen", "_ur.urlopen", "request.urlopen", "urlopen"):
+            out.add(n.lineno)  # the default opener follows redirects (and forwards headers)
+    return sorted(out)
+
+
+def test_g1r_no_fetch_follows_a_redirect_unguarded():
+    offenders = []
+    for p in _py_files(SRC):
+        rel = _rel(p)
+        if rel.startswith(_G1R_UNSEEN):
+            continue
+        for lineno in _g1r_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(rel, _g15_call_text(p, lineno), ALLOW_G1R):
+                offenders.append(f"{rel}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G1 (redirects)", "follow redirects by hand with every hop through "
+                                             "atlas_plus.inbox.summarize._refuse_private_target (httpx "
+                                             "follow_redirects=False; urllib through a no-redirect opener)")
+
+
+def test_g1r_scan_sees_each_shape():
+    planted = (
+        "import httpx, requests, urllib.request\n"
+        "httpx.get(u, timeout=5, follow_redirects=True)\n"            # 2 offender
+        "httpx.get(u, timeout=5)\n"                                   # 3 fine (httpx does not follow by default)
+        "requests.get(u, timeout=5)\n"                                # 4 offender (requests follows by default)
+        "requests.get(u, timeout=5, allow_redirects=False)\n"         # 5 fine
+        "urllib.request.urlopen(req, timeout=5)\n"                    # 6 offender
+        "_OPENER.open(req, timeout=5)\n"                              # 7 fine (a no-redirect opener)
+        "httpx.Client(timeout=5, follow_redirects=True)\n"            # 8 offender
+    )
+    assert _g1r_hits(planted) == [2, 4, 6, 8]

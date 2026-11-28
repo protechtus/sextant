@@ -160,6 +160,8 @@ def _git_commits(day: str, repos: list[Path]) -> dict[str, list[str]]:
     """Commit subjects per repository for the local day. Bounded, timeout, no stdin (LES-002)."""
     start = f"{day}T00:00:00"
     until = (datetime.fromisoformat(day) + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+    from atlas_plus import gitsafe
+
     out: dict[str, list[str]] = {}
     for repo in repos:
         try:
@@ -168,6 +170,7 @@ def _git_commits(day: str, repos: list[Path]) -> dict[str, list[str]]:
                  "--format=%h %s", "--no-merges", f"-n{_MAX_COMMITS_PER_REPO}"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=_GIT_TIMEOUT, stdin=subprocess.DEVNULL,
+                env=gitsafe._env(),  # git is another party's program: allowlisted environment (AG127)
             )
         except (OSError, subprocess.TimeoutExpired):
             continue

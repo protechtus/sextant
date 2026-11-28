@@ -42,6 +42,23 @@ public tree.
 
 ### Changed
 
+- A program Sextant starts that it does not ship now gets an environment built from an allowlist, not the
+  parent's whole environment (SEX-060, lane AG127; lessons LES-079 and LES-053). That is git, rclone, docker,
+  PowerShell, your editor, the `claude`, `codex` and `opencode` CLIs and the workspace's own scripts (the research
+  runners, the intake validator). Each gets the path and system names, home, temp, locale, proxy and certificate
+  settings, the machine and session names, the cache locations (`PIP_CACHE_DIR`, `UV_CACHE_DIR`, `HF_HOME`,
+  `PLAYWRIGHT_BROWSERS_PATH`) and its OWN variables: `GIT_*`, `SSH_*`, `GCM_*` for git; `RCLONE_*` for rclone,
+  its config and crypt password names included; `DOCKER_*`, `COMPOSE_*`; `EDITOR`, `VISUAL`; for a model CLI its
+  own prefixes, its unprefixed switches (`DISABLE_TELEMETRY` and the like) and, only when the CLI is switched to
+  Bedrock or Vertex, that cloud's sign-in names. A model CLI and the research runners also get this package's
+  settings, because they start it again, but never a setting whose name holds TOKEN, KEY, SECRET, PASS,
+  CREDENTIAL, AUTH or COOKIE, under either the `ATLAS_` or the `SEXTANT_` spelling. Before, a fake `claude`
+  started by the Brain saw the MCP token, the Telegram bot token, the dashboard key and the sync device token.
+  What changes for you: a task the Brain hands to a model CLI can no longer read those from its environment; a
+  third-party variable that is not on the list (a cloud key, `GH_TOKEN`) no longer reaches such a child either.
+  Programs that ARE this package (`python -m atlas_plus...`, the hooks, the MCP server) keep the whole
+  environment. Guardrail G15 has an environment layer; `tests/test_sex060.py` drives every caller with a fake
+  program of that name and the real PowerShell.
 - Every command has a `sextant-*` name (SEX-043, AG130; the owner: "wish it said sextant everywhere").
   Nineteen commands existed only under their older `atlas-*` name: `sextant-review-memory`, `sextant-prime`,
   `sextant-pre-compact`, `sextant-temporal`, `sextant-db-backup`, `sextant-tickets`, `sextant-suggest-facts`,
@@ -77,6 +94,11 @@ public tree.
 
 ### Fixed
 
+- The research web search no longer follows a redirect blindly (SEX-060, lane AG127; lesson LES-044). A 302
+  to a loopback address was fetched and its body went into the research snippets. Redirects are followed by
+  hand now and every hop passes the public-address check the inbox fetch and the link checker use; the check
+  has a resolver hook so tests need no hosts file. The MCP round trip's `close()` uses the same no-redirect
+  opener as its requests. Guardrail G1 has a redirect layer.
 - A search that arrives while another search of the same process is rebuilding the index no longer rebuilds
   it a second time (SEX-056; lesson LES-097). A rebuild clears the index in one step and fills it in the
   next; a search that looked in between saw "no notes", waited for the rebuild to finish and then built

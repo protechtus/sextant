@@ -59,7 +59,8 @@ def _open_in_editor(text: str, suffix: str = ".txt") -> str:
         f.write(text)
         tmp = f.name
 
-    subprocess.run([editor, tmp], check=False)
+    from atlas_plus._proc import other_party_env  # the editor is another party's program (AG127)
+    subprocess.run([editor, tmp], check=False, env=other_party_env(keep=("EDITOR", "VISUAL")))
 
     try:
         with open(tmp, encoding="utf-8") as fh:

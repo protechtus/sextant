@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+
+from atlas_plus._proc import other_party_env as _other_party_env
 from pathlib import Path
 
 _COMPOSE_FILENAMES = [
@@ -23,7 +25,7 @@ def _kill_tree(p: subprocess.Popen) -> None:
     import os as _os
     try:
         if _os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], stdin=subprocess.DEVNULL,
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], stdin=subprocess.DEVNULL, env=_other_party_env(),
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
         else:
             import signal as _signal
@@ -54,6 +56,7 @@ def _run_ps(project_dir: Path):
             stdin=subprocess.DEVNULL,
             stdout=_out,
             stderr=subprocess.DEVNULL,
+            env=_other_party_env(keep_prefixes=("DOCKER_", "COMPOSE_")),  # docker: allowlisted (AG127)
             **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if _os.name == "nt" else {"start_new_session": True}),
         )
         try:

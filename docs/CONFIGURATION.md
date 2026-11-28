@@ -126,6 +126,17 @@ the README before exposing anything.
 | `APPDATA` | Windows default | Read only by the uninstall report to find Claude Desktop's `claude_desktop_config.json`. |
 | `LOCALAPPDATA` | Windows default | Read only by the uninstall report to find the Microsoft Store build of Claude Desktop (`Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json`). |
 
+### What a program Sextant starts can see
+
+A program Sextant starts that it does not ship (git, rclone, docker, PowerShell, your editor, the `claude`,
+`codex` and `opencode` CLIs, the workspace's own scripts) gets an allowlisted environment: the path and system
+names, home, temp, locale, proxy and certificate settings, cache locations, and the program's own variables
+(`GIT_*`, `RCLONE_*`, `DOCKER_*`, `ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*` and so on). The tokens, keys and
+passwords in the table above never reach it, under either spelling. A model CLI also gets the other settings
+on this page, because it starts Sextant's MCP server and hooks again; a cloud's sign-in names (`AWS_*`,
+`GOOGLE_*`) reach it only when `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` is set. If a task you
+hand to a model CLI needs another variable, set it in that CLI's own settings file.
+
 ## Write consent (the two switches)
 
 | Variable | Default | What it does |

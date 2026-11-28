@@ -47,7 +47,9 @@ _EXEC_KEYS = re.compile(
 
 
 def _env() -> dict:
-    env = dict(os.environ)
+    # git is another party's program: the allowlist plus git's and ssh's own variables (AG127, LES-079)
+    from atlas_plus._proc import other_party_env
+    env = other_party_env(keep=("GNUPGHOME", "GPG_TTY"), keep_prefixes=("GIT_", "SSH_", "GCM_"))
     env["GIT_TERMINAL_PROMPT"] = "0"
     # The SYSTEM config stays: it is installed by an administrator, not by a repo, and on
     # Windows it carries core.autocrlf=true; without it every CRLF file read as modified and

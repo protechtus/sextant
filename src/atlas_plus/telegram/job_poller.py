@@ -77,7 +77,8 @@ def _run_claude(ticket) -> tuple[bool, str]:
     )
     try:
         # KL3: the whole tree ends at the timeout (claude starts MCP servers that inherit its stdout)
-        result = _proc.run_bounded([CLAUDE_CLI, "--print", prompt], timeout=JOB_TIMEOUT, max_bytes=_MAX_OUTPUT_BYTES)
+        result = _proc.run_bounded([CLAUDE_CLI, "--print", prompt], timeout=JOB_TIMEOUT, max_bytes=_MAX_OUTPUT_BYTES,
+                                    env=_proc.model_cli_env("claude"))
     except FileNotFoundError:
         return False, f"claude CLI not found at '{CLAUDE_CLI}'"
     if result.timed_out:

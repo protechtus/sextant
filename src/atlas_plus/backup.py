@@ -10,6 +10,8 @@ Commands:
 import json
 import os
 import subprocess
+
+from atlas_plus._proc import other_party_env as _other_party_env
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -154,6 +156,7 @@ def _rclone(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
             capture_output=capture,
             text=True, encoding="utf-8", errors="replace",
             timeout=_RCLONE_TIMEOUT_SECS, stdin=subprocess.DEVNULL,
+            env=_other_party_env(keep_prefixes=("RCLONE_",)),  # rclone: allowlisted (AG127)
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
@@ -462,6 +465,7 @@ def install(
                 "-RunTime", time,
             ],
             text=True, encoding="utf-8", errors="replace",
+            env=_other_party_env(settings=True),  # PowerShell: allowlisted, settings without secrets (AG127)
             timeout=300, stdin=subprocess.DEVNULL,  # LES-G2: schtasks registration is seconds; a hung elevation prompt is not
         )
     except subprocess.TimeoutExpired:

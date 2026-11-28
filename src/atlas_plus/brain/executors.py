@@ -378,6 +378,11 @@ def _pytest_python(project_root: Path) -> Path | str:
     return sys.executable
 
 
+#: what the workspace's research runner keeps beside the allowlist and the settings: the model API's names, the
+#: local model server's, the model cache's (AG127, SEX-060). It is the user's script, not this package.
+_RUNNER_ENV_PREFIXES = ("ANTHROPIC_", "OLLAMA_", "HF_")
+
+
 def _utf8_env() -> dict[str, str]:
     """Environment for python child processes: UTF-8 stdio regardless of the console code page.
 
@@ -931,7 +936,8 @@ def _research_runner(ctx: ExecutorContext) -> ExecutionResult:
     completed = _bounded_text_run(
         cmd,
         timeout=_PYTEST_TIMEOUT_SECONDS,
-        env=_utf8_env(),
+        env=_proc.other_party_env(settings=True, keep_prefixes=_RUNNER_ENV_PREFIXES,
+                                  extra={"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}),
     )
 
     if completed.returncode == 0 and not completed.stdout.strip():
@@ -1005,7 +1011,8 @@ def _research_runner_api(ctx: ExecutorContext) -> ExecutionResult:
     completed = _bounded_text_run(
         cmd,
         timeout=api_timeout,
-        env=_utf8_env(),
+        env=_proc.other_party_env(settings=True, keep_prefixes=_RUNNER_ENV_PREFIXES,
+                                  extra={"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}),
     )
 
     if completed.returncode == 0 and not completed.stdout.strip():
@@ -1227,7 +1234,8 @@ def _run_supervisor_model(prompt: str, model: str, timeout: int) -> tuple[str, s
             # KL4: the whole tree ends at the timeout (claude starts MCP servers that inherit its stdout)
             completed = _bounded_text_run(
                 [claude_bin, "--print", "--model", model, "--max-turns", "1"],
-                timeout=timeout, cwd=str(_PROJECT_ROOT), env=_utf8_env(), input=prompt,
+                timeout=timeout, cwd=str(_PROJECT_ROOT), input=prompt,
+                env=_proc.model_cli_env("claude", extra={"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}),
             )
         except subprocess.TimeoutExpired:
             return "", f"claude --print timed out after {timeout}s"
@@ -1853,7 +1861,8 @@ def _claude_task(ctx: ExecutorContext) -> ExecutionResult:
 
     try:
         # KL4: bounded; the MCP servers claude starts inherit its stdout and outlived the old timeout
-        completed = _bounded_text_run(cmd, timeout=_CLAUDE_TASK_TIMEOUT, cwd=str(working_dir))
+        completed = _bounded_text_run(cmd, timeout=_CLAUDE_TASK_TIMEOUT, cwd=str(working_dir),
+                                      env=_proc.model_cli_env("claude"))
     except subprocess.TimeoutExpired:
         msg = f"claude --print timed out after {_CLAUDE_TASK_TIMEOUT}s"
         artifact = _write_text_artifact(ctx, "claude-task.md", msg)

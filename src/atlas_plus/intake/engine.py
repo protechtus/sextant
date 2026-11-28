@@ -255,7 +255,8 @@ def _action_brand_import(record: store.Record) -> str:
         try:
             from atlas_plus import _proc  # KL4: the validator is a workspace script; its tree ends at the timeout
             res = _proc.run_bounded([sys.executable, "-I", str(validator), str(target)],
-                                    timeout=_VALIDATOR_TIMEOUT, max_bytes=1024 * 1024, cwd=str(workspace))
+                                    timeout=_VALIDATOR_TIMEOUT, max_bytes=1024 * 1024, cwd=str(workspace),
+                                    env=_proc.other_party_env())  # a workspace script, not this package (AG127)
             if res.timed_out:
                 raise subprocess.TimeoutExpired([str(validator)], _VALIDATOR_TIMEOUT)
             proc = subprocess.CompletedProcess([str(validator)], res.returncode,

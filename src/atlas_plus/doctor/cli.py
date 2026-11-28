@@ -95,7 +95,7 @@ def _powershell_json(script: str, timeout: float = 8.0):
     try:
         res = _proc.run_bounded(
             ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-            timeout=timeout, max_bytes=1024 * 1024, no_window=True,
+            timeout=timeout, max_bytes=1024 * 1024, no_window=True, env=_proc.other_party_env(),  # AG127
         )
     except (OSError, subprocess.SubprocessError):
         return None

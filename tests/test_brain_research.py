@@ -7,6 +7,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
+def _ddg_client(mock_resp):
+    """A fake httpx.Client for the DDG search (it follows redirects by hand since AG127; no network)."""
+    mock_resp.is_redirect = False
+    client = MagicMock()
+    client.get.return_value = mock_resp
+    ctx = MagicMock()
+    ctx.__enter__.return_value = client
+    return patch("httpx.Client", return_value=ctx), patch("atlas_plus.inbox.summarize._refuse_private_target")
+
+
 # ---------------------------------------------------------------------------
 # _slugify
 # ---------------------------------------------------------------------------
@@ -145,7 +155,8 @@ class TestWebSearch:
             "RelatedTopics": [],
             "Results": [],
         }
-        with patch("httpx.get", return_value=mock_resp):
+        _c, _g = _ddg_client(mock_resp)
+        with _c, _g:
             results = _web_search_duckduckgo("SIP protocol")
 
         assert len(results) == 1
@@ -159,7 +170,8 @@ class TestWebSearch:
 
         mock_resp = MagicMock()
         mock_resp.status_code = 429  # rate limited
-        with patch("httpx.get", return_value=mock_resp):
+        _c, _g = _ddg_client(mock_resp)
+        with _c, _g:
             results = _web_search_duckduckgo("anything")
         assert results == []
 

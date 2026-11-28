@@ -20,6 +20,13 @@ _MAX_SOURCE_CHARS = 6000
 _MAX_REDIRECTS = 5
 
 
+def _getaddrinfo(host: str, port: int):
+    """The guard's resolver (a hook: tests map a name to an address here, never through the hosts file)."""
+    import socket
+
+    return socket.getaddrinfo(host, port)
+
+
 def _refuse_private_target(url: str, *, what: str = "inbox fetch", allow_env: str | None = "ATLAS_INBOX_FETCH_PRIVATE") -> None:
     """Raise ValueError unless ``url`` is http(s) to a public address.
 
@@ -40,7 +47,7 @@ def _refuse_private_target(url: str, *, what: str = "inbox fetch", allow_env: st
     if allow_env and os.environ.get(allow_env, "").strip().lower() in ("1", "on", "true", "yes"):
         return
     try:
-        infos = socket.getaddrinfo(parts.hostname, parts.port or (443 if parts.scheme.lower() == "https" else 80))
+        infos = _getaddrinfo(parts.hostname, parts.port or (443 if parts.scheme.lower() == "https" else 80))
     except (socket.gaierror, UnicodeError) as exc:
         raise ValueError(f"{what} refused: cannot resolve {parts.hostname!r}") from exc
     for info in infos:

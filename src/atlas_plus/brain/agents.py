@@ -422,7 +422,8 @@ def dispatch(agent: Agent, instruction: str, session_id: str, timeout: int = 300
         safe = instruction.replace("<", "").replace(">", "")[:2000]
         try:
             # KL3: the whole tree ends at the timeout (the CLI starts MCP servers that inherit its stdout)
-            result = _proc.run_bounded([cli, "--print", safe], timeout=timeout, max_bytes=_MAX_OUTPUT_BYTES)
+            result = _proc.run_bounded([cli, "--print", safe], timeout=timeout, max_bytes=_MAX_OUTPUT_BYTES,
+                                        env=_proc.model_cli_env(agent.agent_type))  # allowlisted (AG127, SEX-060)
         except FileNotFoundError:
             return f"[{agent.name}] CLI not found: {cli!r}"
         if result.timed_out:
@@ -435,7 +436,8 @@ def dispatch(agent: Agent, instruction: str, session_id: str, timeout: int = 300
     if agent.agent_type == "opencode-cli":
         safe = instruction.replace("<", "").replace(">", "")[:2000]
         try:
-            result = _proc.run_bounded([OPENCODE_CLI, "run", safe], timeout=timeout, max_bytes=_MAX_OUTPUT_BYTES)
+            result = _proc.run_bounded([OPENCODE_CLI, "run", safe], timeout=timeout, max_bytes=_MAX_OUTPUT_BYTES,
+                                        env=_proc.model_cli_env("opencode"))  # allowlisted (AG127, SEX-060)
             if result.timed_out:
                 return f"[opencode] timed out after {timeout}s"
             output = _cli_output(result)

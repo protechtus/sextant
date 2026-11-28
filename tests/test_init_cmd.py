@@ -84,7 +84,9 @@ class TestFirstRunWording:
         out = self._main(monkeypatch, capsys)
         steps = [ln.strip().split(".")[0] for ln in out.splitlines() if ln.startswith("  ") and ln.strip()[:2] in ("1.", "2.", "3.", "4.")]
         assert steps == ["1", "2", "3", "4"]
-        assert "2b" not in out and "atlas-doctor" not in out
+        # a step LABELLED 2b, not the two characters anywhere: the output prints the corpus path, and a temp
+        # folder named after a commit (b22b923) held them (full suite, 2026-11-28)
+        assert not [ln for ln in out.splitlines() if ln.strip().startswith("2b")] and "atlas-doctor" not in out
         assert "projects/demo.md" in out
 
 

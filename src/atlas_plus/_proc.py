@@ -39,11 +39,124 @@ import time
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-__all__ = ["BoundedResult", "run_bounded", "run_bounded_async"]
+__all__ = ["BoundedResult", "model_cli_env", "other_party_env", "run_bounded", "run_bounded_async"]
 
 _CHUNK = 64 * 1024
 _KILL_GRACE_SECONDS = 5.0   # wait for the killed child to be reaped
 _JOIN_GRACE_SECONDS = 2.0   # wait for the readers to see EOF after the kill
+
+
+# ---- the environment of another party's program (LES-079, LES-053; AG127) -----------------------------------
+#
+# A child that runs a program this project does not ship (git, rclone, docker, PowerShell, an editor, a client
+# program, a workspace script) gets an environment built from this allowlist, never the parent's whole one: the
+# parent holds the user's tokens and keys (ATLAS_MCP_TOKEN, ATLAS_WEB_API_KEY, ... and their SEXTANT_* twins).
+# A child that IS this package (`sys.executable -m atlas_plus...`, this package's own console scripts) keeps the
+# full environment: it needs its settings.
+
+#: names every program may need to start and behave: path and system, home, temp, locale, terminal, network setup
+#: (proxies and CA bundles are the user's network configuration; a proxy URL can carry a password, and the program
+#: needs it to reach the network at all). Matched case-insensitively (Windows names are).
+CHILD_ENV_NAMES = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "OS", "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+    "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "ALLUSERSPROFILE",
+    "PUBLIC", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "USER", "USERNAME",
+    "USERDOMAIN", "LOGNAME", "SHELL", "TERM", "COLORTERM", "NO_COLOR", "TEMP", "TMP", "TMPDIR", "LANG", "LANGUAGE",
+    "TZ", "PYTHONIOENCODING", "PYTHONUTF8", "DISPLAY", "WAYLAND_DISPLAY",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE", "OPENSSL_CONF",
+    # the machine and the session (SEX-060): PowerShell's module path and scripts that name the machine, the
+    # processor level some installers read, the session bus and X authority a credential helper talks to
+    "COMPUTERNAME", "HOSTNAME", "PSMODULEPATH", "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "SESSIONNAME",
+    "LOGONSERVER", "USERDOMAIN_ROAMINGPROFILE", "DRIVERDATA", "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY",
+    # where the user keeps caches (SEX-060): a child that lost these wrote gigabytes to the default drive instead
+    "PIP_CACHE_DIR", "UV_CACHE_DIR", "HF_HOME", "PLAYWRIGHT_BROWSERS_PATH", "NPM_CONFIG_CACHE",
+})
+#: name prefixes kept for every program: locale categories and the XDG base directories
+CHILD_ENV_PREFIXES = ("LC_", "XDG_")
+#: this package's settings, under both spellings (SEXTANT_<NAME> is adopted as ATLAS_<NAME> at import)
+_SETTING_PREFIXES = ("ATLAS_", "SEXTANT_")
+#: a setting whose name holds one of these words is a secret and never reaches another party's program
+_SECRET_WORDS = ("TOKEN", "KEY", "SECRET", "PASS", "CREDENTIAL", "AUTH", "COOKIE")
+
+
+def _is_secret_setting(upper_name: str) -> bool:
+    return any(w in upper_name for w in _SECRET_WORDS)
+
+
+def other_party_env(
+    *,
+    keep: Sequence[str] = (),
+    keep_prefixes: Sequence[str] = (),
+    settings: bool = False,
+    extra: Mapping[str, str] | None = None,
+    base: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """The environment for a child that runs another party's program, built from an allowlist.
+
+    Kept from ``base`` (default ``os.environ``): ``CHILD_ENV_NAMES`` and ``CHILD_ENV_PREFIXES``, plus the tool's
+    own variables the caller names (``keep``: exact names such as ``EDITOR``; ``keep_prefixes``: such as
+    ``GIT_`` or ``RCLONE_``). ``settings=True`` (for a client program that starts this package, such as a
+    model CLI whose MCP servers are ours) also keeps the ``ATLAS_*`` / ``SEXTANT_*`` settings whose names are
+    not secret-shaped; a token, key, password or secret under either spelling never passes, whatever the
+    caller asks. ``extra`` is set last. Matching is case-insensitive.
+    """
+    src = os.environ if base is None else base
+    names = {n.upper() for n in CHILD_ENV_NAMES} | {n.upper() for n in keep}
+    prefixes = tuple(p.upper() for p in (*CHILD_ENV_PREFIXES, *keep_prefixes))
+    env: dict[str, str] = {}
+    for name, value in src.items():
+        up = name.upper()
+        if up.startswith(_SETTING_PREFIXES):
+            if settings and not _is_secret_setting(up):
+                env[name] = value
+            continue  # a setting passes only through `settings`, never through `keep` or a prefix
+        if up in names or up.startswith(prefixes):
+            env[name] = value
+    if extra:
+        env.update(extra)
+    return env
+
+
+#: a model CLI's own variables: its prefixes (its sign-in, its settings, its privacy switches, the limits of the
+#: tools it starts, its telemetry exporter) and the unprefixed switches it documents
+_MODEL_CLI_PREFIXES = {
+    "claude": ("ANTHROPIC_", "CLAUDE_", "DISABLE_", "MCP_", "BASH_", "OTEL_"),
+    "codex": ("OPENAI_", "CODEX_"),
+    "opencode": ("OPENCODE_", "ANTHROPIC_", "OPENAI_"),
+}
+_MODEL_CLI_NAMES = {
+    "claude": ("MAX_THINKING_TOKENS", "MAX_MCP_OUTPUT_TOKENS", "API_TIMEOUT_MS", "USE_BUILTIN_RIPGREP"),
+}
+#: a cloud's sign-in names reach the CLI only when the CLI's own switch selects that cloud
+_MODEL_CLI_CLOUD = {
+    "claude": (("CLAUDE_CODE_USE_BEDROCK", ("AWS_",)),
+               ("CLAUDE_CODE_USE_VERTEX", ("GOOGLE_", "CLOUD_ML_", "CLOUDSDK_"))),
+}
+
+
+def model_cli_env(
+    cli: str,
+    *,
+    extra: Mapping[str, str] | None = None,
+    base: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """The environment for a model CLI (``claude``, ``codex``, ``opencode``; an ``-cli`` suffix is accepted).
+
+    ``other_party_env`` with this package's settings (the CLI starts our MCP server and hooks; a secret-shaped
+    setting never passes) plus the CLI's own variables. One place, so every caller hands the same CLI the same
+    names (SEX-060: six call sites repeated the prefixes and none kept the CLI's unprefixed switches).
+    """
+    kind = cli.lower().removesuffix("-cli")
+    src = os.environ if base is None else base
+    present = {n.upper() for n, v in src.items() if v}
+    prefixes = list(_MODEL_CLI_PREFIXES.get(kind, ()))
+    for switch, cloud in _MODEL_CLI_CLOUD.get(kind, ()):
+        if switch in present:
+            prefixes.extend(cloud)
+    return other_party_env(keep=_MODEL_CLI_NAMES.get(kind, ()), keep_prefixes=tuple(prefixes), settings=True,
+                           extra=extra, base=src)
 
 
 @dataclass

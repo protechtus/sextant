@@ -245,7 +245,7 @@ def _http_rpc(url: str, token: str, timeout: int, skipped: list[str]):
             return
         try:
             req = urllib.request.Request(url, headers=_headers(), method="DELETE")
-            urllib.request.urlopen(req, timeout=10).close()
+            _OPENER.open(req, timeout=10).close()  # no redirect, like rpc: the token stays with its host (AG127)
         except Exception:  # noqa: BLE001
             pass
 
