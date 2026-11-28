@@ -126,7 +126,7 @@ def test_g1_outbound_http_calls_have_a_timeout():
 
 _SUBPROCESS_FUNCS = ("subprocess.run", "subprocess.check_output", "subprocess.check_call", "subprocess.call")
 ALLOW_G2: list[Allow] = [
-    ("src/atlas_plus/summarizer/review.py", "subprocess.run([editor, tmp]",
+    ("src/atlas_plus/summarizer/review.py", "subprocess.run([*argv, tmp]",
      "opens the user's editor and waits until they close it; a timeout would discard their edit"),
 ]
 
@@ -157,7 +157,7 @@ def test_g2_blocking_subprocess_calls_have_a_timeout():
 # detached worker keeps the client's pipe open. Every call closes stdin (stdin=subprocess.DEVNULL)
 # or feeds it (input=, stdin=PIPE). Popen is included here: inheriting is the default there too.
 ALLOW_G2_STDIN: list[Allow] = [
-    ("src/atlas_plus/summarizer/review.py", "subprocess.run([editor, tmp]",
+    ("src/atlas_plus/summarizer/review.py", "subprocess.run([*argv, tmp]",
      "opens the user's editor in their terminal: it needs the real stdin"),
 ]
 

@@ -51,18 +51,41 @@ def review(session_log_text: str, updates_text: str) -> tuple[bool, str, str]:
             console.print("[green]Updates entry updated.[/green]")
 
 
+def _editor_argv(editor: str) -> list[str]:
+    """EDITOR split the way a shell would (`code --wait`, a quoted Windows path with spaces and its
+    flags); an unquoted value that is itself an existing file (a full path with spaces, unquoted) stays whole."""
+    editor = (editor or "").strip()
+    if not editor:
+        return []
+    if os.path.isfile(editor):
+        return [editor]
+    from atlas_plus._cmdline import split_command
+    try:
+        return split_command(editor)
+    except ValueError:  # an unbalanced quote
+        return [editor]
+
+
 def _open_in_editor(text: str, suffix: str = ".txt") -> str:
-    editor = os.environ.get("EDITOR", "notepad.exe")
+    """The text after the user edited it; the text unchanged when the editor cannot be started."""
+    argv = _editor_argv(os.environ.get("EDITOR", "")) or ["notepad.exe"]
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=suffix, delete=False, encoding="utf-8"
     ) as f:
         f.write(text)
         tmp = f.name
 
-    from atlas_plus._proc import other_party_env  # the editor is another party's program (AG127)
-    subprocess.run([editor, tmp], check=False, env=other_party_env(keep=("EDITOR", "VISUAL")))
-
     try:
+        from atlas_plus._proc import other_party_env  # the editor is another party's program (AG127)
+        try:
+            subprocess.run([*argv, tmp], check=False, env=other_party_env(keep=("EDITOR", "VISUAL")))
+        except OSError as exc:
+            # a raw FileNotFoundError traceback, and the temp note left behind (AG136, MN98 F6)
+            from rich.markup import escape as _esc
+            console.print(f"[red]Could not start the editor {_esc(repr(argv[0]))}[/red] ({exc.__class__.__name__}); "
+                          "the text is unchanged. Next step: set EDITOR to a program on PATH or its full path "
+                          "(quote a path with spaces; flags may follow, e.g. EDITOR=\"code --wait\").")
+            return text
         with open(tmp, encoding="utf-8") as fh:
             return fh.read()
     finally:

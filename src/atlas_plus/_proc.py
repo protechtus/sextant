@@ -136,6 +136,10 @@ _MODEL_CLI_CLOUD = {
 }
 
 
+#: values that leave a CLI's cloud switch off
+_SWITCH_OFF = frozenset({"0", "false", "no", "off"})
+
+
 def model_cli_env(
     cli: str,
     *,
@@ -150,7 +154,8 @@ def model_cli_env(
     """
     kind = cli.lower().removesuffix("-cli")
     src = os.environ if base is None else base
-    present = {n.upper() for n, v in src.items() if v}
+    # a switch set to 0/false/no/off selects no cloud (MN98: CLAUDE_CODE_USE_BEDROCK=0 passed every AWS_ name)
+    present = {n.upper() for n, v in src.items() if v and v.strip().lower() not in _SWITCH_OFF}
     prefixes = list(_MODEL_CLI_PREFIXES.get(kind, ()))
     for switch, cloud in _MODEL_CLI_CLOUD.get(kind, ()):
         if switch in present:

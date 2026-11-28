@@ -134,8 +134,15 @@ names, home, temp, locale, proxy and certificate settings, cache locations, and 
 (`GIT_*`, `RCLONE_*`, `DOCKER_*`, `ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*` and so on). The tokens, keys and
 passwords in the table above never reach it, under either spelling. A model CLI also gets the other settings
 on this page, because it starts Sextant's MCP server and hooks again; a cloud's sign-in names (`AWS_*`,
-`GOOGLE_*`) reach it only when `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` is set. If a task you
-hand to a model CLI needs another variable, set it in that CLI's own settings file.
+`GOOGLE_*`) reach it only when `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` is set to something other
+than `0`, `false`, `no` or `off`.
+
+If a task you hand to a model CLI needs another variable (a `GH_TOKEN` for `gh`, a cloud key), give it to the
+CLI itself, not to Sextant: for Claude Code that is the `env` block of its settings file
+(`~/.claude/settings.json`, or the folder `CLAUDE_CONFIG_DIR` names), which the CLI applies to every session
+it runs; other CLIs have their own. A workspace script the Brain starts (the research runners) gets the same
+list plus `ANTHROPIC_*`, `OLLAMA_*` and `HF_*`; have such a script read anything else from a file of its own.
+There is no Sextant setting that widens the list, on purpose.
 
 ## Write consent (the two switches)
 

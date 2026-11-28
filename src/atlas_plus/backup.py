@@ -23,7 +23,7 @@ from rich.table import Table
 
 from atlas_plus import paths as atlas_paths
 
-from atlas_plus.branding import product
+from atlas_plus.branding import product, prog as _prog
 
 # LES-G2 (ATL-069): a stuck rclone (dead network, an unexpected prompt) must not hold the nightly task
 # or a terminal forever. Six hours is above any observed full run; the scheduled task's own limit is
@@ -127,19 +127,52 @@ _SOURCE_SIGNATURES = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _remote_problem() -> str:
-    """'' when RCLONE_REMOTE is a configured rclone remote, else what exactly is missing."""
+def _rclone_last_line(text: str | None) -> str:
+    """rclone's last non-empty line, WHOLE (its own next step sits at the end: AG136), through the
+    redaction helper (a path is fine, a secret never)."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    from atlas_plus.redaction import redact
+    return redact(lines[-1]) or ""
+
+
+def _config_next_step(stderr: str | None) -> str:
+    """What to do when rclone could not read its config. Never 'create a remote': the remote may well
+    exist, and re-creating it can overwrite a working config (AG136, MN98 F2)."""
+    low = (stderr or "").lower()
+    verify = _prog("atlas-backup") + " verify"
+    if "rclone_config_pass" in low or "decrypt configuration" in low:
+        return ("the rclone config is encrypted and no password reached rclone: set RCLONE_CONFIG_PASS "
+                "in this shell or in the scheduled task (or give rclone a --password-command), then run "
+                f"`{verify}`. Do not re-create the remote: it is still in the config")
+    return (f"check the config rclone reads (`rclone config file`, then `rclone listremotes`), then run `{verify}`")
+
+
+def _remote_check() -> tuple[str, str, str]:
+    """('', '', '') when RCLONE_REMOTE is a configured rclone remote, else (what is missing, its kind).
+
+    kind: unset | no-rclone | config (rclone ran but could not list its remotes) | no-remote;
+    the third item is rclone's stderr (for the next step)."""
     if not RCLONE_REMOTE:
-        return "ATLAS_RCLONE_REMOTE is not set"
+        return "ATLAS_RCLONE_REMOTE is not set", "unset", ""
     r = _rclone("listremotes", capture=True)
     if r.returncode == 127:
-        return "rclone is not on PATH"
+        return "rclone is not on PATH", "no-rclone", r.stderr or ""
     if r.returncode != 0:
-        return f"rclone listremotes failed (exit {r.returncode}): {(r.stderr or '').strip()[:120]}"
+        # classified before the stdout is parsed: a failed listing is not an empty one (AG136)
+        return (f"rclone could not read its config (listremotes exit {r.returncode}): "
+                f"{_rclone_last_line(r.stderr) or 'no message'}"), "config", r.stderr or ""
     names = {line.strip().rstrip(":") for line in (r.stdout or "").splitlines() if line.strip()}
     if RCLONE_REMOTE not in names:
-        return f"rclone has no remote named '{RCLONE_REMOTE}' (it has: {', '.join(sorted(names)) or 'none'})"
-    return ""
+        return (f"rclone has no remote named '{RCLONE_REMOTE}' (it has: {', '.join(sorted(names)) or 'none'})",
+                "no-remote", "")
+    return "", "", ""
+
+
+def _remote_problem() -> str:
+    """'' when RCLONE_REMOTE is a configured rclone remote, else what exactly is missing."""
+    return _remote_check()[0]
 
 
 def _remote_configured() -> bool:
@@ -218,6 +251,15 @@ def verify():
     console.print(f"[green]rclone OK[/green]  {version_line}")
 
     result = _rclone("listremotes", "--long", capture=True)
+    if result.returncode != 0:
+        # a failed listing is not "no remotes" (AG136, MN98 F2: "Configured remotes: (none)" for a remote
+        # that exists in a config rclone could not decrypt)
+        from rich.markup import escape as _esc
+        from atlas_plus._term import safe as _safe
+        console.print(f"[red]rclone could not read its config[/red] (listremotes exit {result.returncode}): "
+                      f"{_esc(_safe(_rclone_last_line(result.stderr) or 'no message'))}")
+        console.print(f"Next step: {_esc(_config_next_step(result.stderr))}.")
+        raise typer.Exit(1)
     # rclone listremotes --long emits "name: type" per line.
     remotes: dict[str, str] = {}
     for line in result.stdout.splitlines():
@@ -297,11 +339,20 @@ def now(
     date_str = started.strftime("%Y-%m-%d")
     errors: list[str] = []
 
-    problem = _remote_problem()
+    problem, kind, rclone_err = _remote_check()
     if problem:
+        # EVERY early exit records the failed run and logs it BEFORE it exits: `status` and doctor's
+        # Backup line said OK with the last good run while the backup had stopped (AG136, MN98 F1).
+        _record_failed_run(started, dry_run, f"Backup refused: {problem}")
+        from rich.markup import escape as _esc
+        from atlas_plus._term import safe as _safe
+        if kind == "config":
+            console.print(f"[red]Backup refused: {_esc(_safe(problem))}.[/red] "
+                          f"Next step: {_esc(_config_next_step(rclone_err))}.")
+            raise typer.Exit(1)
         console.print(
-            f"[red]Backup refused: {problem}.[/red] "
-            "sextant-backup copies your corpus to an rclone remote: install rclone, create a remote "
+            f"[red]Backup refused: {_esc(_safe(problem))}.[/red] "
+            f"{_prog('atlas-backup')} copies your corpus to an rclone remote: install rclone, create a remote "
             "(a crypt remote for any cloud target: https://rclone.org/crypt/), then set "
             "ATLAS_RCLONE_REMOTE=<name> and optionally ATLAS_RCLONE_ROOT=<folder>. "
             "To back up without rclone, copy the corpus folder with any tool you trust "
@@ -376,13 +427,26 @@ def now(
             else:
                 _log(f"Archive OK: {name} -> {dest}")
 
-    finished = datetime.now(timezone.utc)
-    elapsed = (finished - started).total_seconds()
+    elapsed = _write_run_state(started, errors, dry_run)
     success = len(errors) == 0
 
-    # A dry run is reported as what it is and never replaces the record of the last REAL
-    # run (wave-2 2026-11-09: `status` after a rehearsal claimed a backup had just
-    # succeeded and the real timestamp was gone).
+    if success:
+        _log(f"Backup complete in {elapsed:.1f}s")
+        console.print(f"\n[green]Backup complete[/green] ({elapsed:.1f}s)")
+    else:
+        _log(f"Backup finished with {len(errors)} error(s)")
+        console.print(f"\n[red]{len(errors)} error(s)[/red] -- check {BACKUP_LOG}")
+        raise typer.Exit(1)
+
+
+def _write_run_state(started: datetime, errors: list[str], dry_run: bool) -> float:
+    """Write the state of the run that began at `started`; returns its duration in seconds.
+
+    A dry run is reported as what it is and never replaces the record of the last REAL
+    run (wave-2 2026-11-09: `status` after a rehearsal claimed a backup had just
+    succeeded and the real timestamp was gone). A failed run keeps `last_real_success`."""
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    success = len(errors) == 0
     prev = _read_state() or {}
     prev_real_run = prev.get("last_real_run") or (None if prev.get("dry_run") else prev.get("last_run"))
     prev_real_success = prev.get("last_real_success") or (
@@ -398,14 +462,18 @@ def now(
         "last_real_success": prev_real_success if (dry_run or not success) else started.isoformat(),
     }
     _write_state(state)
+    return elapsed
 
-    if success:
-        _log(f"Backup complete in {elapsed:.1f}s")
-        console.print(f"\n[green]Backup complete[/green] ({elapsed:.1f}s)")
-    else:
-        _log(f"Backup finished with {len(errors)} error(s)")
-        console.print(f"\n[red]{len(errors)} error(s)[/red] -- check {BACKUP_LOG}")
-        raise typer.Exit(1)
+
+def _record_failed_run(started: datetime, dry_run: bool, reason: str) -> None:
+    """A run that stops before it starts still leaves its trace: the state file (not ok, the time,
+    the reason in one line, `last_real_success` kept) and a log line, which doctor's Backup line reads."""
+    reason = " ".join(reason.split())
+    try:
+        _log(reason + (" (dry run)" if dry_run else ""))
+        _write_run_state(started, [reason], dry_run)
+    except OSError as exc:  # an unwritable state dir must not hide the refusal itself
+        console.print(f"[yellow]Could not record the failed run:[/yellow] {exc.__class__.__name__}")
 
 
 @app.command()

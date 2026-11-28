@@ -38,8 +38,9 @@ PROJECTS_ROOT = atlas_paths.projects_root()
 SESSION_STATE_FILE = STATE_DIR / "session-state.json"
 
 
-def _detect_project() -> tuple[str, Path] | None:
-    cwd = Path.cwd()
+def _detect_project(cwd: Path | None = None) -> tuple[str, Path] | None:
+    """Walk up from cwd (the payload's, else the process's) to a git root under PROJECTS_ROOT."""
+    cwd = Path(cwd) if cwd else Path.cwd()
     check = cwd
     while check != check.parent:
         if (check / ".git").exists() and _under_projects(check):
@@ -77,7 +78,11 @@ def main() -> None:
         "summary": "",
     }
 
-    project_info = _detect_project()
+    # The session's folder as the payload names it, the way session-start reads it (AG87): given the
+    # payload alone this hook recorded no project and no git state (AG136, MN98 F5).
+    from atlas_plus.hooks.scope import payload_cwd as _payload_cwd, read_payload as _read_payload
+    _cwd = _payload_cwd(_read_payload())
+    project_info = _detect_project(Path(_cwd) if _cwd and os.path.isdir(_cwd) else None)
     if project_info:
         name, project_dir = project_info
         state["project"] = name

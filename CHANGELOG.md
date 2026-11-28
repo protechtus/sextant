@@ -63,6 +63,9 @@ public tree.
   started by the Brain saw the MCP token, the Telegram bot token, the dashboard key and the sync device token.
   What changes for you: a task the Brain hands to a model CLI can no longer read those from its environment; a
   third-party variable that is not on the list (a cloud key, `GH_TOKEN`) no longer reaches such a child either.
+  If a task of yours needs one, give it to the CLI itself (for Claude Code: the `env` block of its settings
+  file); docs/CONFIGURATION.md, "What a program Sextant starts can see", has the details. A cloud switch set to
+  `0`, `false`, `no` or `off` selects no cloud (lane MN98: `CLAUDE_CODE_USE_BEDROCK=0` passed every `AWS_*` name).
   Programs that ARE this package (`python -m atlas_plus...`, the hooks, the MCP server) keep the whole
   environment. Guardrail G15 has an environment layer; `tests/test_sex060.py` drives every caller with a fake
   program of that name and the real PowerShell.
@@ -101,6 +104,18 @@ public tree.
 
 ### Fixed
 
+- A backup that stops says so (lane AG136; found by the operator walk MN98; older than 0.1.1). A
+  `sextant-backup now` that refuses or stops early (rclone missing, the remote missing or unset, a config
+  rclone cannot read, for example an encrypted config whose password did not reach a scheduled task) records
+  the failed run before it exits: `sextant-backup status` says FAILED with the reason and keeps the last real
+  success, and doctor's Backup line shows the refusal. Before, both kept saying OK with the last good run and
+  only the task's exit code told. A config rclone cannot read is reported as that by `verify` and by `now`,
+  with rclone's own last line in full (redacted) and a next step that names `RCLONE_CONFIG_PASS` and says not
+  to re-create the remote; before, `verify` said the remote did not exist and `now` cut rclone's text right
+  before its own advice and said to create a remote. The pre-compact hook takes the session folder from the
+  hook payload's `cwd`, as the session-start hook does. The review step accepts an `EDITOR` with arguments
+  (`code --wait`, a quoted path with spaces); an editor that cannot start is one line with a next step, not a
+  traceback, and the temporary note is always removed.
 - A command's usage line names what was typed on every supported Python (lane AG133 and its fold). On Python
   3.14, argparse builds the program name from how the interpreter was started: an installed command on Windows
   printed `usage: python.exe C:\...\Scripts\sextant-doctor [-h]`, a full path, and `sextant dashboard --help`
