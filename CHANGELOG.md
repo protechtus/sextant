@@ -42,6 +42,13 @@ public tree.
 
 ### Changed
 
+- `sextant commands` lists the `sextant-*` commands, one line each with what it does (SEX-043, lane AG133).
+  The module each command starts and the 36 older `atlas-*` names moved behind `sextant commands --all`;
+  `--json` is unchanged, every name and target. A first-timer saw the word "atlas" 110 times on that screen
+  and read the module paths as the commands to type; the default view now shows it 0 times.
+  `sextant backup` is a subcommand (the same as `sextant-backup`): it answered "No such command" on 0.1.0,
+  0.1.1 and the head. The README's install blocks end with `sextant verify`, so the reader job in CI runs the
+  round trip on three systems.
 - A program Sextant starts that it does not ship now gets an environment built from an allowlist, not the
   parent's whole environment (SEX-060, lane AG127; lessons LES-079 and LES-053). That is git, rclone, docker,
   PowerShell, your editor, the `claude`, `codex` and `opencode` CLIs and the workspace's own scripts (the research
@@ -94,6 +101,15 @@ public tree.
 
 ### Fixed
 
+- A command's usage line names what was typed on every supported Python (lane AG133 and its fold). On Python
+  3.14, argparse builds the program name from how the interpreter was started: an installed command on Windows
+  printed `usage: python.exe C:\...\Scripts\sextant-doctor [-h]`, a full path, and `sextant dashboard --help`
+  printed the interpreter's name; on every Python it said `usage: sextant web`. The shared parser names the
+  program from the command typed; a `python -m ...` start keeps argparse's own answer. The import report prints
+  CJK file names readably where the output can carry them and keeps `\uXXXX` on a pipe that cannot (a cp437 or
+  cp1252 redirect printed `????` otherwise); docs/CONFIGURATION.md says a piped output on Windows needs
+  `PYTHONIOENCODING=utf-8`. `sextant review convergence` names this install's re-check command (it said
+  `atlas-review-memory contradictions`), and its table has a test for a note type that carries markup.
 - The research web search no longer follows a redirect blindly (SEX-060, lane AG127; lesson LES-044). A 302
   to a loopback address was fetched and its body went into the research snippets. Redirects are followed by
   hand now and every hop passes the public-address check the inbox fetch and the link checker use; the check

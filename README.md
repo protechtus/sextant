@@ -158,6 +158,9 @@ py -3 -m venv .venv   # needs Python 3.11+ (check: py --list; install: winget in
 
 # Scaffold your memory corpus (safe to re-run; lands in ~\.memory and ~\.atlas):
 .\.venv\Scripts\sextant-init.exe
+
+# Prove it: starts the server the way a client would, writes one fact, searches it back (ROUND-TRIP: OK):
+.\.venv\Scripts\sextant.exe verify
 ```
 
 The block above is safe to copy and paste whole. PowerShell runs each line as it
@@ -210,6 +213,9 @@ python3 -m venv .venv        # needs 3.11+ (check: python3 --version)
 
 # Scaffold your memory corpus (safe to re-run; lands in ~/.memory and ~/.atlas):
 .venv/bin/sextant-init
+
+# Prove it: starts the server the way a client would, writes one fact, searches it back (ROUND-TRIP: OK):
+.venv/bin/sextant verify
 ```
 
 The block above is safe to copy and paste whole.
@@ -282,9 +288,9 @@ claude mcp add -s user sextant -- "$PWD/.venv/bin/python" -m atlas_plus.mcp.memo
 claude mcp list   # expect a sextant row; "failed" means the baked path is wrong
 ```
 
-Verify without leaving the terminal: `sextant verify` starts the server the
+Verify without leaving the terminal: `sextant verify` (the last line of the install blocks above) starts the server the
 way a client would, writes one fact and searches it back (`ROUND-TRIP: OK`).
-Then restart Claude Code and ask Claude to call `memory_health`. The
+After connecting, restart Claude Code and ask Claude to call `memory_health`. The
 healthy reply is `{"status": "ok", "memory_root_exists": true, "memory_root": ...}`
 (check the root is the corpus you chose). If it
 answers `"status": "degraded"` instead, the reply's `hint` says why --

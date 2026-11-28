@@ -1118,6 +1118,19 @@ def _detect_source(src: Path) -> str | None:
     return None
 
 
+def _report_json(result: dict) -> str:
+    """The report as JSON with readable characters (a CJK file name printed as u-escapes, AG133), unless
+    this stdout cannot encode them: a pipe on a cp437/cp1252 console would turn them into `?`, and the
+    escapes at least keep the name recoverable there."""
+    import sys as _sys
+    text = json.dumps(result, indent=2, ensure_ascii=False)
+    try:
+        text.encode(getattr(_sys.stdout, "encoding", None) or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        return json.dumps(result, indent=2)
+    return text
+
+
 def main() -> None:
     import sys as _sys
     for _st in (_sys.stdout, _sys.stderr):  # a Japanese or emoji file name crashed the report in a cp1252 console or pipe (MN72)
@@ -1207,7 +1220,7 @@ def main() -> None:
               f"file?", file=sys.stderr)
         raise SystemExit(1)
 
-    print(json.dumps(result, indent=2))
+    print(_report_json(result))
     if result.get("source") == "obsidian":
         print(f"\nplan: {result.get('new', 0)} new, {result.get('edited', 0)} edited (a new copy beside the old), "
               f"{result.get('renamed', 0)} renamed or moved, {result.get('unchanged', 0)} unchanged; "

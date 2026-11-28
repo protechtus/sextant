@@ -182,11 +182,70 @@ def _main(
         _overview()
 
 
+# One line per command for the default `commands` view, keyed by the name without its family prefix
+# ("" is the umbrella itself). A first-timer read 110 "atlas" in the old table: module targets and the
+# older names now sit behind --all (SEX-043, AG133).
+_PURPOSE = {
+    "": "this overview; `commands`, `setup`, `verify`, `search`, `remember` and more as subcommands",
+    "backup": "mirror the corpus with rclone (verify, now, status, install)",
+    "brain": "the Brain service (port 8767)",
+    "brain-chat": "terminal chat against the Brain",
+    "brain-worker": "the Brain's local worker",
+    "contradiction-check": "nightly contradiction check and resolution",
+    "db-backup": "back up the SQLite state databases",
+    "doctor": "health checks for this install",
+    "dream": "Dream Mode: an on-demand reflection pass",
+    "embed-index": "build the semantic search index (local embeddings)",
+    "fts-rebuild": "rebuild the keyword search index",
+    "import": "bring your existing notes and exports with you",
+    "init": "create the folder your notes live in",
+    "intake": "operate the intake drop folder",
+    "job-poller": "pick up queued tickets and dispatch them",
+    "mcp": "the MCP memory server your AI client talks to",
+    "memory-mcp": "the MCP memory server (older name of mcp)",
+    "narrative": "cross-session momentum and narrative",
+    "ntfy-listener": "inbound command channel from your phone (ntfy)",
+    "pre-compact": "hook: save session state before context compaction",
+    "prime": "hook: task-aware context for a prompt",
+    "rederive": "the curation review program (same as review-memory)",
+    "reflexion-loop": "self-critique on recent facts",
+    "reset": "wipe and re-scaffold one area",
+    "review-memory": "curate the corpus (`review report` is the weekly check)",
+    "session-start": "hook: project context at the start of a session",
+    "sprint-summary": "sprint summaries from the git log",
+    "suggest-facts": "scan a transcript and propose facts",
+    "summarize-session": "the transcript summariser (uses the configured model)",
+    "sync": "device sync with a hub",
+    "telegram-bot": "the Telegram bot",
+    "temporal": "query the temporal knowledge graph",
+    "tickets": "local tickets",
+    "transcripts": "list, search and recover session transcripts",
+    "uninstall": "report or remove this install's data",
+    "versions": "the corpus history: report and prune old copies",
+    "web": "the web dashboard (Brain chat, memory browser)",
+    "web-ui": "the web dashboard (older name of web)",
+    "weekly-synthesis": "the weekly cross-session insight report",
+}
+
+
+def _purpose(name: str) -> str:
+    for head in ("sextant-", "atlas-"):
+        if name.startswith(head):
+            key = name[len(head):]
+            break
+    else:
+        key = ""
+    if key == "plus":
+        key = ""
+    return _PURPOSE.get(key, "")
+
+
 @app.command("commands")
 def cmd_commands(
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON (every installed name and its module target)."),
+    show_all: bool = typer.Option(False, "--all", help="Also the older names, with each command's module target."),
 ) -> None:
-    """List every installed command and its target: the sextant-* names, then the older atlas-* names (they keep working)."""
+    """List the installed commands, one line each with what it does (--all: the older names and the module targets too)."""
     import json as _json
     from importlib import metadata
 
@@ -197,6 +256,18 @@ def cmd_commands(
     }
     if json_output:
         typer.echo(_json.dumps(eps, indent=2, sort_keys=True))
+        return
+    if not show_all:
+        _, prefix = _brand()
+        shown = sorted(n for n in eps if n.startswith(prefix)) or sorted(eps)
+        width = max((len(n) for n in shown), default=0)
+        for name in shown:
+            typer.echo(f"{name.ljust(width)}  {_purpose(name)}".rstrip())
+        hidden = len(eps) - len(shown)
+        if hidden:
+            umbrella = "sextant" if prefix == "sextant" else "atlas-plus"
+            typer.echo(f"\n{len(shown)} commands. {hidden} older names (they keep working) and each "
+                       f"command's module: {_how_to_run(umbrella)} commands --all")
         return
     # Brand-first: show the family matching how the user invoked us on top
     # (the public install's sextant-* aliases were previously HIDDEN by an
@@ -370,7 +441,7 @@ def cmd_help() -> None:
 
 
 @app.command("dashboard", hidden=True, **_PASSTHROUGH)
-def cmd_dashboard(ctx: typer.Context) -> None:
+def cmd_dashboard(ctx: typer.Context, _typed: str = "sextant dashboard") -> None:
     """Start the web dashboard (same as sextant-web; needs ATLAS_WEB_API_KEY)."""
     # Three strangers in a row typed `sextant web` and got a pointer (sweep 11): it starts now.
     from atlas_plus.web.app import main as web_main
@@ -381,13 +452,23 @@ def cmd_dashboard(ctx: typer.Context) -> None:
                              f"bind: this start {_webapp.WEB_HOST}:{_webapp.WEB_PORT}, default 127.0.0.1:8766; "
                              "the page loads htmx from the internet).")  # it named only the default (SEX-050 item 9)
 
-    _delegate(web_main, "sextant web", ctx.args)
+    # usage names what was typed: `sextant dashboard --help` said "usage: sextant web" (AG133)
+    _delegate(web_main, _typed, ctx.args)
 
 
 @app.command("web", **_PASSTHROUGH)
 def cmd_web(ctx: typer.Context) -> None:
     """Alias of `dashboard`."""
-    cmd_dashboard(ctx)
+    cmd_dashboard(ctx, _typed="sextant web")
+
+
+@app.command("backup", **_PASSTHROUGH)
+def cmd_backup(ctx: typer.Context) -> None:
+    """Mirror the corpus with rclone (same as sextant-backup): verify, now, status."""
+    # `sextant backup` was "No such command" while the README names the backup program (SEX-053 item 18).
+    from atlas_plus.backup import app as _backup_app
+
+    _backup_app(args=list(ctx.args), prog_name="sextant backup")
 
 
 @app.command("context", **_PASSTHROUGH)

@@ -264,9 +264,33 @@ def write_refused(exc: OSError, folder: object) -> str:
             f"Next: check that folder's permissions (it must be writable by you), then run {command('doctor')}.")
 
 
+def _typed_prog() -> str | None:
+    """The program name from `sys.argv[0]`: the installed command's name (no folder, no `.exe`), or the words the
+    umbrella put there when it delegates (`sextant dashboard`). None for a `python -m ...` or `python file.py`
+    start, where argparse's own answer is the better one."""
+    arg0 = sys.argv[0] if sys.argv and sys.argv[0] else ""
+    name = arg0.replace("\\", "/").rsplit("/", 1)[-1]
+    if not name or name in ("-c", "-m") or name.lower().endswith((".py", ".pyz", ".pyc")):
+        return None
+    for suffix in (".exe", "-script"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+    return name or None
+
+
 class ArgumentParser(argparse.ArgumentParser):
     """argparse whose usage errors end with the pointer to --help instead of a bare
     `error: unrecognized arguments`. Subparsers inherit it (argparse uses type(self))."""
+
+    def __init__(self, *args, **kwargs):
+        # Python 3.14 names the program from how __main__ was started: an installed command on Windows printed
+        # `usage: python.exe C:\\...\\Scripts\\sextant-doctor`, and a command the umbrella delegates to printed the
+        # interpreter instead of the words typed (AG133 at the fold). The name is what was typed, as before 3.14.
+        if not args and kwargs.get("prog") is None:
+            typed = _typed_prog()
+            if typed:
+                kwargs["prog"] = typed
+        super().__init__(*args, **kwargs)
 
     def error(self, message: str):  # type: ignore[override]
         self.print_usage(sys.stderr)

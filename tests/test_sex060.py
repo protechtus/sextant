@@ -71,7 +71,25 @@ class Fake:
         self.bin.mkdir()
         self.root = root
 
-    def add(self, name: str, reply: str = "") -> str:
+    @staticmethod
+    def _shadowed(name: str) -> str | None:
+        """Windows starts a bare program name from the interpreter's folder, the current folder and the SYSTEM
+        folders before it looks at PATH: a real program there cannot be shadowed by a fake on PATH (GitHub's
+        Windows runners keep a docker.exe in System32; CI run 46125043496)."""
+        if os.name != "nt" or "." in name and not name.lower().endswith(".exe"):
+            return None
+        exe = name if name.lower().endswith(".exe") else name + ".exe"
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        for folder in (os.path.dirname(sys.executable), os.getcwd(), os.path.join(root, "System32"), root):
+            if os.path.isfile(os.path.join(folder, exe)):
+                return folder
+        return None
+
+    def add(self, name: str, reply: str = "", bare: bool = True) -> str:
+        """`bare`: the caller starts the program by its bare name (not by the path this returns)."""
+        if bare and self._shadowed(name):
+            pytest.skip(f"a real {name} sits in {self._shadowed(name)}, which Windows searches before PATH: "
+                        "a fake cannot be first here")
         out = self.root / f"{name}.calls.jsonl"
         source = _FAKE_SOURCE.format(out=str(out), values=_VALUE_NAMES, reply=reply)
         if os.name == "nt":
@@ -283,7 +301,7 @@ def test_supervisor_claude_gets_its_own_variables_the_settings_and_no_secret(fak
            "MCP_TIMEOUT": "30000"}
     for name, value in own.items():
         monkeypatch.setenv(name, value)
-    program = fake.add("claude", reply="the report")
+    program = fake.add("claude", reply="the report", bare=False)
     real_which = shutil.which
     monkeypatch.setattr(shutil, "which", lambda name, *a, **k: program if name == "claude" else real_which(name, *a, **k))
 
@@ -358,6 +376,10 @@ def test_docker_compose_gets_its_host_and_no_secret(fake, monkeypatch, tmp_path)
     monkeypatch.setenv("DOCKER_HOST", "npipe:////./pipe/nowhere")
     fake.add("docker", reply="[]")
     result = compose._run_ps(tmp_path)
+    if os.name == "nt" and not (fake.root / "docker.calls.jsonl").exists():
+        # CI run 46125043496: a Windows runner's own docker.exe answered (exit 1, no output) and the fake was never
+        # started; Windows resolves a bare name in places a test cannot put a fake first
+        pytest.skip("a real docker answered before the fake on this Windows machine")
     assert result.returncode == 0 and result.stdout.strip() == "[]"
     (call,) = fake.calls("docker")
     assert call["values"]["DOCKER_HOST"] == "npipe:////./pipe/nowhere"
@@ -368,7 +390,7 @@ def test_docker_compose_gets_its_host_and_no_secret(fake, monkeypatch, tmp_path)
 def test_the_editor_gets_no_secret(fake, monkeypatch):
     from atlas_plus.summarizer import review
 
-    program = fake.add("fakeeditor")
+    program = fake.add("fakeeditor", bare=False)
     monkeypatch.setenv("EDITOR", program)
     assert review._open_in_editor("some text") == "some text"
     (call,) = fake.calls("fakeeditor")

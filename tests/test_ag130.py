@@ -141,7 +141,8 @@ def test_commands_marks_atlas_names_as_older_names_that_keep_working(sandbox_env
     from typer.testing import CliRunner
     from atlas_plus import cli
     monkeypatch.setattr(sys, "argv", ["sextant"])
-    res = CliRunner().invoke(cli.app, ["commands"], prog_name="sextant", env={"COLUMNS": "240"})
+    # the older names and the module targets sit behind --all since AG133 (the default view is names + purposes)
+    res = CliRunner().invoke(cli.app, ["commands", "--all"], prog_name="sextant", env={"COLUMNS": "240"})
     assert res.exit_code == 0
     out = res.output
     assert "older atlas-* names, still working" in out and "also installed" not in out

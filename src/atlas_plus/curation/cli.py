@@ -789,7 +789,8 @@ def cmd_convergence(
     console.print(table)
     console.print(f"\n[yellow]{len(results)} file(s) with unresolved contradiction flags.[/yellow]")
     console.print("[dim]Resolve by editing the files and removing the contradictions: list.[/dim]")
-    console.print("[dim]Or run: atlas-review-memory contradictions to re-check with LLM.[/dim]")
+    from atlas_plus import _next_step as _ns  # the command as this install types it (G18, AG133)
+    console.print(f"[dim]Or run: {_p(_ns.review('contradictions'))} to re-check with LLM.[/dim]")
 
     if write_report:
         state_dir = atlas_paths.state_dir()
