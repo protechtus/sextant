@@ -77,7 +77,9 @@ class OllamaEmbedder:
         # Proxy variables are skipped for loopback only: a remote ATLAS_EMBED_URL behind a
         # required corporate proxy went direct and failed silently (MN8, sweep 10).
         self.uses_proxy = not _is_loopback_url(self.base_url)
-        self._opener = urllib.request.build_opener() if self.uses_proxy else _NO_PROXY_OPENER
+        # neither opener follows a redirect: a 301/302/303 from the configured URL turned the POST into a GET
+        # to wherever Location named, and that answer became the stored vector (AG135, SEX-061)
+        self._opener = urllib.request.build_opener(_NoRedirect()) if self.uses_proxy else _NO_PROXY_OPENER
 
     def embed(self, text: str) -> list[float]:
         # /api/embed (modern), not the legacy /api/embeddings: newer Ollama
@@ -102,7 +104,12 @@ class OllamaEmbedder:
         return [float(x) for x in vec]
 
 
-_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None  # a 3xx surfaces as HTTPError: the embed fails and search stays keyword-only (AG135)
+
+
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
 
 def _is_loopback_url(url: str) -> bool:

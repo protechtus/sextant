@@ -84,15 +84,14 @@ def _web_search_duckduckgo(query: str, max_results: int = 6) -> list[str]:
     Uses the free DDG JSON API (no API key). Returns abstract + related topics.
     Empty list on any failure -- callers treat web search as best-effort.
     """
-    import httpx
-
-    from atlas_plus.inbox.summarize import _MAX_REDIRECTS, _refuse_private_target
+    from atlas_plus.inbox.summarize import _MAX_REDIRECTS, _pinned_client, _vet
     try:
         # redirects by hand: every hop must be a public address (LES-044; it followed any redirect, AG127)
-        with httpx.Client(timeout=8.0, follow_redirects=False) as client:
+        pins: dict = {}
+        with _pinned_client(8.0, pins) as client:  # the vetted address, not a second lookup (AG135)
             url, params = _DDG_API, {"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"}
             for _ in range(_MAX_REDIRECTS + 1):
-                _refuse_private_target(url, what="research search", allow_env=None)
+                _vet(url, pins, what="research search", allow_env=None)
                 resp = client.get(url, params=params, headers={"User-Agent": "Sextant-Research-Agent/1.0"})
                 if not (resp.is_redirect and resp.headers.get("location")):
                     break

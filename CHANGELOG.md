@@ -104,6 +104,25 @@ public tree.
 
 ### Fixed
 
+- The dashboard reads a note saved as UTF-16 (Notepad's "Unicode") as text (lane AG134; lesson LES-100): the
+  note viewer, the session viewer and download, the weekly narrative, the session search and the folder search
+  showed it as replacement characters while search and import already read it. They use the reader the index
+  uses. Guardrail G26 holds the rule as a baseline: a NEW read of a note that decodes with replacement
+  characters fails; 100 older readers (several MCP tools, the prime and session-start hooks, curation and doctor
+  passes) are on a reviewed list that only shrinks, and each of them still shows such a note garbled. New tests
+  for device sync: a peer's edit of a shared hub file the hub did not change becomes a proposal and the hub's
+  copy stays; a file the hub refused is not sent again after a run with a narrower `--share`; a hub that goes
+  away between the batches of a 600-file push leaves nothing partial and the resume sends exactly the rest.
+- Two fetch paths no longer trust a second answer (lane AG135; ticket SEX-061). Semantic search never follows
+  a redirect from the embeddings URL: a 301, 302 or 303 sent the request to whatever address the redirect named
+  and its answer was stored as the vector; a redirect is an error now and search stays keyword-only. The inbox
+  fetch, the research link checker and the research web search connect to the address the public-address check
+  approved: the check resolved the name and the HTTP client resolved it again, so a name that answered public
+  first and 127.0.0.1 second reached a loopback service (DNS rebinding). The URL, the Host header and the TLS
+  server name stay the name (checked at the fold against a real public HTTPS page). Two limits, said plainly:
+  with a proxy configured the proxy resolves the name and the pin does not apply, as before; the pin uses an
+  internal hook of the HTTP library, and a test fails first if a new version moves it. Guardrail G1's redirect
+  layer scans urllib openers too.
 - A backup that stops says so (lane AG136; found by the operator walk MN98; older than 0.1.1). A
   `sextant-backup now` that refuses or stops early (rclone missing, the remote missing or unset, a config
   rclone cannot read, for example an encrypted config whose password did not reach a scheduled task) records

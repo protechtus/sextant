@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - public build
 
 
 from atlas_plus._yaml import fast_safe_load as _fast_yaml_load
+from atlas_plus._readahead import read_note_text as _read_note_text  # a UTF-16 note reads as text (AG134)
 
 
 def _js_arg(value: str) -> str:
@@ -1841,7 +1842,7 @@ async def memory_file_read(request: Request, path: str = "", raw: str = ""):
             "X-Sextant-Eol": ("mixed" if ((b"\r\n" in data and _re.search(rb"(?<!\r)\n", data)) or _re.search(rb"\r(?!\n)", data)) else ("crlf" if b"\r\n" in data else "lf")),  # a lone CR counts as mixed too (AG44)  # a mixed note is normalised on save, and the editor says so (MN31/MN32)
             "X-Sextant-Bom": "1" if data.startswith(b"\xef\xbb\xbf") else "0",
         })
-    full = target.read_text(encoding="utf-8", errors="replace")
+    full = _read_note_text(target)
     content = full[:8000]
     cut = (f'<div class="text-amber-400 text-xs mb-1">showing the first 8,000 of {len(full):,} characters; '
            f'Edit loads the whole file</div>') if len(full) > 8000 else ''
@@ -4748,7 +4749,7 @@ async def memory_search(request: Request, q: str = ""):
                     n = sum(1 for f in d.rglob("*.md") if not (_skip & set(f.relative_to(MEMORY_ROOT).parts)))
                     rows.append(f'<div class="text-xs"><span class="text-cyan-400 font-mono">{_html_mod.escape(d.name)}/</span> <span class="text-slate-500">{n} note(s)</span></div>')
                 return ('<div class="text-slate-500 text-xs mb-1">Type words to search; the corpus holds:</div>' + "".join(rows)) if rows else '<div class="text-slate-500 text-xs">The corpus is empty: remember something first.</div>'
-            content = index_file.read_text(encoding="utf-8", errors="replace")[:6000]
+            content = _read_note_text(index_file)[:6000]
             return (
                 f'<pre class="text-xs text-slate-300 whitespace-pre-wrap overflow-auto leading-relaxed">'
                 f'{_html_mod.escape(content)}</pre>'
@@ -4856,7 +4857,7 @@ async def memory_search(request: Request, q: str = ""):
             if any(p in ("versions", "_atlas", "_sync", "archive") for p in rel_parts):
                 continue   # the grep listed one hit per version copy (AG17, sweep 11)
             try:
-                text = md_file.read_text(encoding="utf-8", errors="replace")
+                text = _read_note_text(md_file)
                 if q_lower not in _gfold(text):
                     continue
                 from atlas_plus.mcp.memory_server.fts import strip_snippet_comments as _ssc
@@ -4951,7 +4952,7 @@ async def sessions_search(q: str = "", request: Request = None):
     results: list[tuple[str, str]] = []  # (filename, snippet)
     for f in sorted(sessions_dir.glob("*.md"), reverse=True):
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            text = _read_note_text(f)
         except OSError:
             continue
         idx = text.lower().find(q_lower)
@@ -4997,7 +4998,7 @@ async def sessions_narrative(request: Request):
             'No weekly narrative yet. Runs Sunday 03:55 UTC or trigger via scheduler.</div>'
         )
     latest = narratives[0]
-    content = latest.read_text(encoding="utf-8", errors="replace")[:5000]
+    content = _read_note_text(latest)[:5000]
     # Quick markdown-lite render: headers + bullets
     lines_html = []
     for line in content.splitlines():
@@ -5028,7 +5029,7 @@ async def session_read(name: str, request: Request):
     session_file = MEMORY_ROOT / "sessions" / safe_name
     if not session_file.exists():
         return HTMLResponse(f'<div class="text-red-400 text-xs">Session {_html_mod.escape(safe_name)} not found</div>')  # (AG73)
-    content = session_file.read_text(encoding="utf-8", errors="replace")
+    content = _read_note_text(session_file)
     truncated = len(content) > 10_000
     preview = content[:10_000]
     # No ?key= in the link: the authed page load set the HttpOnly cookie
@@ -5065,7 +5066,7 @@ async def session_download(name: str, request: Request):
     session_file = MEMORY_ROOT / "sessions" / safe_name
     if not session_file.exists():
         raise HTTPException(status_code=404, detail=f"{safe_name} not found")
-    content = session_file.read_text(encoding="utf-8", errors="replace")
+    content = _read_note_text(session_file)
     from fastapi.responses import Response as _Resp
     return _Resp(
         content=content.encode("utf-8"),

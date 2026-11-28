@@ -55,15 +55,16 @@ def check_url(url: str) -> dict:
             "User-Agent": "Sextant-LinkChecker/1.0 (research corpus health check)",
             "Accept": "*/*",
         }
-        from atlas_plus.inbox.summarize import _refuse_private_target
+        from atlas_plus.inbox.summarize import _pinned_client, _vet
         # Redirects are followed by hand and every hop must be a public address: a report's link
         # (written from web research) that redirected to 127.0.0.1, the LAN or a metadata address
         # made the checker probe it blind (MN86's rule, applied here by AG98, sweep 25).
-        with httpx.Client(timeout=_TIMEOUT_SECS, follow_redirects=False) as client:
+        pins: dict = {}
+        with _pinned_client(_TIMEOUT_SECS, pins) as client:  # the vetted address, not a second lookup (AG135)
             hop = url
             for _ in range(_MAX_REDIRECTS + 1):
                 try:
-                    _refuse_private_target(hop, what="link check", allow_env=None)
+                    _vet(hop, pins, what="link check", allow_env=None)
                 except ValueError as exc:
                     if "cannot resolve" in str(exc):  # a dead name is a broken link, as before
                         return {"url": url, "status": None, "ok": False, "gated": False, "skipped": False, "error": str(exc)[:160]}

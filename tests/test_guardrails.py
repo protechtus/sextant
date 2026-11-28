@@ -2888,3 +2888,367 @@ def test_g1r_scan_sees_each_shape():
         "httpx.Client(timeout=5, follow_redirects=True)\n"            # 8 offender
     )
     assert _g1r_hits(planted) == [2, 4, 6, 8]
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G1 (redirect layer, opener part, AG135, ticket SEX-061)  a urllib opener never follows a redirect
+#   Sweep 40: the embeddings client built `urllib.request.build_opener()` (and a ProxyHandler-only opener); both
+#   carry urllib's default HTTPRedirectHandler, so a 301/302/303 from the configured URL turned the POST into a
+#   GET to wherever Location named and that answer became the stored vector. The layer above scans urlopen only.
+#   Offenders: a `build_opener(...)` call with no argument whose name ends in `NoRedirect` (the shape of
+#   roundtrip._NoRedirect: redirect_request returns None), every `install_opener(...)` (it changes what every
+#   urlopen in the process follows), and an `<x>.open(...)` on a receiver named like an opener in a file that
+#   builds no opener (the opener came from somewhere this scan cannot see). It scans the tree it runs in; a
+#   listed file absent from the tree is skipped (the entry is unused).
+# ----------------------------------------------------------------------------------------------
+
+ALLOW_G1R_OPENER: list[Allow] = []
+ALLOW_G1R_OPENER += _keel_allow("ALLOW_G1R_OPENER")
+
+
+def _g1r_opener_hits(text: str) -> list[int]:
+    tree = ast.parse(text)
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    builds = [n for n in calls if _dotted(n.func).split(".")[-1] == "build_opener"]
+    out = set()
+    for n in builds:
+        handlers = [_dotted(a.func if isinstance(a, ast.Call) else a).split(".")[-1] for a in n.args]
+        if not any(h.endswith("NoRedirect") for h in handlers):
+            out.add(n.lineno)
+    for n in calls:
+        name = _dotted(n.func)
+        if name.split(".")[-1] == "install_opener":
+            out.add(n.lineno)
+        elif (isinstance(n.func, ast.Attribute) and n.func.attr == "open" and not builds
+              and "opener" in _dotted(n.func.value).split(".")[-1].lower()):
+            out.add(n.lineno)
+    return sorted(out)
+
+
+def test_g1r_opener_no_urllib_opener_follows_a_redirect():
+    offenders = []
+    for p in _py_files(SRC):
+        rel = _rel(p)
+        for lineno in _g1r_opener_hits(p.read_text(encoding="utf-8", errors="replace")):
+            if not _allowed(rel, _line(p, lineno), ALLOW_G1R_OPENER):
+                offenders.append(f"{rel}:{lineno}: {_line(p, lineno)[:110]}")
+    _report(offenders, "LES-G1 (redirects, openers)", "build every urllib opener with a no-redirect handler "
+                                                      "(class _NoRedirect(HTTPRedirectHandler) whose redirect_request "
+                                                      "returns None, as in atlas_plus/roundtrip.py)")
+
+
+def test_g1r_opener_scan_sees_each_shape():
+    planted = (
+        "import urllib.request\n"
+        "a = urllib.request.build_opener()\n"                                       # 2 offender
+        "b = urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"        # 3 offender
+        "c = urllib.request.build_opener(_NoRedirect())\n"                          # 4 fine
+        "d = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())\n"  # 5 fine
+        "urllib.request.install_opener(c)\n"                                        # 6 offender
+        "c.open(req, timeout=5)\n"                                                  # 7 fine (built here)
+    )
+    assert _g1r_opener_hits(planted) == [2, 3, 6]
+    elsewhere = "from x import _OPENER\n_OPENER.open(req, timeout=5)\npath.open('r')\n"
+    assert _g1r_opener_hits(elsewhere) == [2]   # an opener built elsewhere; a file's .open is not an opener
+
+
+# ----------------------------------------------------------------------------------------------
+# LES-G26  a corpus note is read through _readahead.read_note_text (AG134, SEX-053 item 17, LES-100)
+#   MN96 made the index decode a note saved by Notepad as "Unicode" (UTF-16 with a byte-order mark)
+#   through `atlas_plus._readahead.read_note_text`; the dashboard's note viewer, its session viewers and
+#   the session search kept their own `read_text(encoding="utf-8", errors="replace")` and showed the
+#   same note as replacement characters (AG134 moved them). This guardrail finds, by AST over the
+#   shipped `src/atlas_plus` of THIS tree, every `.read_text(..., errors="replace")` and every text-mode
+#   `open(..., errors="replace")`; each hit, keyed (file, function, what it reads), must be either
+#     ALLOW_G26:   a file that is never a corpus note (a lock, a log, a kernel file, a client config, an
+#                  import input), with ONE sentence of reason; or
+#     PENDING_G26: a corpus-note reader that has not moved to read_note_text yet (reviewed by AG134; this
+#                  list only shrinks: move the read, then delete its row).
+#   A new hit in neither list fails. A row whose file is present but whose read is gone fails too (the
+#   lists cannot rot); a row whose file is absent from this tree is not checked. The file set is the one
+#   the public build ships: when `scripts/public_exclude.txt` exists its patterns are left out (the same
+#   reading as G25). `_readahead.py` itself is the helper and is not scanned.
+# ----------------------------------------------------------------------------------------------
+import ast as _g26_ast
+import fnmatch as _g26_fnmatch
+from pathlib import Path as _G26Path
+
+_G26_REPO = _G26Path(__file__).resolve().parents[1]
+_G26_HELPER = "src/atlas_plus/_readahead.py"
+
+ALLOW_G26: dict[tuple[str, str, str], str] = {
+    ('src/atlas_plus/_fsutil.py', 'mode_fix', "'/proc/mounts'"):
+        'a Linux kernel file, never a note',
+    ('src/atlas_plus/activity.py', '_trim', 'path'):
+        'the activity log the product writes, never a note',
+    ('src/atlas_plus/brain/cli.py', '_list_cli_sessions', 'jsonl_file'):
+        'a JSONL history the product writes, never a note',
+    ('src/atlas_plus/brain/cli.py', '_load_cli_history_jsonl', 'path'):
+        'a JSONL history the product writes, never a note',
+    ('src/atlas_plus/doctor/cli.py', 'check_backup', 'log_file'):
+        'a log file the product writes, never a note',
+    ('src/atlas_plus/doctor/cli.py', 'check_tui_activity', 'log_file'):
+        'a log file the product writes, never a note',
+    ('src/atlas_plus/import_cmd.py', '_detect_source', 'src'):
+        'a chat export (JSON) that import reads as input, never a note',
+    ('src/atlas_plus/import_cmd.py', '_load_claude_export', 'path'):
+        'a chat export (JSON) that import reads as input, never a note',
+    ('src/atlas_plus/import_cmd.py', 'plan_chatgpt', 'export_file'):
+        'a chat export (JSON) that import reads as input, never a note',
+    ('src/atlas_plus/intake/store.py', 'ledger_load', 'path'):
+        'the intake ledger (JSONL) the product writes, never a note',
+    ('src/atlas_plus/mcp/memory_server/routing.py', '_lock_holder_dead', 'lock_path'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/mcp/memory_server/routing.py', '_proc_start', "Path(f'/proc/{pid}/stat')"):
+        'a Linux kernel file, never a note',
+    ('src/atlas_plus/mcp/memory_server/routing.py', '_write_lock', 'lock_path'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/mcp/memory_server/tools/remember.py', '_autocommit_lock', 'lock'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/mcp/memory_server/tools/search_log.py', 'load_log', 'LOG_FILE'):
+        'the search log the product writes, never a note',
+    ('src/atlas_plus/project_state/manifest.py', '_read_requirements', 'path'):
+        "a project's requirements file, never a note",
+    ('src/atlas_plus/summarizer/cli.py', '_release', 'lock'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/summarizer/renderer.py', '_break_lock', 'lock'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/summarizer/renderer.py', '_cm', 'lock'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/summarizer/renderer.py', '_lock_owner_dead', 'lock'):
+        'a lock file that holds a pid or owner token, never a note',
+    ('src/atlas_plus/sync/store.py', '_trim_audit', 'path'):
+        'the sync audit log the product writes, never a note',
+    ('src/atlas_plus/temporal_graph/sources.py', '_extract_tool_patterns', 'path'):
+        'a client transcript (JSONL), never a note',
+    ('src/atlas_plus/temporal_graph/sources.py', '_extract_transcript_metadata', 'path'):
+        'a client transcript (JSONL), never a note',
+    ('src/atlas_plus/uninstall_cmd.py', '_scan_client_configs', 'cfg'):
+        "an MCP client's config file, never a note",
+    ('src/atlas_plus/uninstall_cmd.py', '_stale_client_references', 'cfg'):
+        "an MCP client's config file, never a note",
+}
+
+PENDING_G26: list[tuple[str, str, str]] = [
+    ('src/atlas_plus/brain/cli.py', '_queue_research_bulk', 'topic_path'),
+    ('src/atlas_plus/brain/cli.py', '_show_quality', 'md_file'),
+    ('src/atlas_plus/brain/cli.py', '_show_research_index', 'md_file'),
+    ('src/atlas_plus/brain/context.py', '_read_head', 'path'),
+    ('src/atlas_plus/brain/executors.py', '_research_digest', 'plan'),
+    ('src/atlas_plus/brain/executors.py', '_research_gap', 'Path(report_path)'),
+    ('src/atlas_plus/brain/learning.py', '_notes_for', 'path'),
+    ('src/atlas_plus/brain/learning.py', '_read', 'path'),
+    ('src/atlas_plus/brain/research.py', '_apply_quality_gate', 'report_path'),
+    ('src/atlas_plus/brain/research.py', 'find_similar_research_reports', 'md_file'),
+    ('src/atlas_plus/brain/research.py', 'inject_cross_refs', 'ref_file'),
+    ('src/atlas_plus/brain/scheduler.py', '_research_quality_daily', 'md_file'),
+    ('src/atlas_plus/brain/system_prompt.py', '_read_stripped', 'path'),
+    ('src/atlas_plus/curation/_corpus_pass.py', 'read_text', 'path'),
+    ('src/atlas_plus/curation/cli.py', 'cmd_age_stats', 'md_file'),
+    ('src/atlas_plus/curation/cli.py', 'cmd_convergence', 'path'),
+    ('src/atlas_plus/curation/cli.py', 'cmd_decisions', 'path'),
+    ('src/atlas_plus/curation/cli.py', 'cmd_research_index', 'md_file'),
+    ('src/atlas_plus/curation/contradictions.py', 'find_contradictions', 'f'),
+    ('src/atlas_plus/curation/decay.py', '_parse_frontmatter', 'path'),
+    ('src/atlas_plus/curation/dream_mode.py', '_parse_frontmatter_title', 'path'),
+    ('src/atlas_plus/curation/dream_mode.py', '_previous_corpus_hash', 'newest'),
+    ('src/atlas_plus/curation/dream_mode.py', '_read_stripped', 'path'),
+    ('src/atlas_plus/curation/health.py', 'compute_file_health', 'path'),
+    ('src/atlas_plus/curation/link_check.py', 'check_report_links', 'report_path'),
+    ('src/atlas_plus/curation/rederive.py', '_index_doc_files', 'f'),
+    ('src/atlas_plus/curation/rederive.py', '_parse_frontmatter_body', 'path'),
+    ('src/atlas_plus/curation/ref_graph.py', 'build_reference_graph', 'md_file'),
+    ('src/atlas_plus/curation/reverify.py', 'load_content', 'MEMORY_ROOT / c.path'),
+    ('src/atlas_plus/curation/reverify.py', 'reset_clock', 'path'),
+    ('src/atlas_plus/curation/suggest_facts.py', '_fact_already_there', 'target'),
+    ('src/atlas_plus/curation/suggest_facts.py', '_load_memory_corpus', 'f'),
+    ('src/atlas_plus/curation/tag_suggest.py', 'suggest_tags_for_file', 'path'),
+    ('src/atlas_plus/curation/weekly_report.py', '_generate_report', 'md_file'),
+    ('src/atlas_plus/curation/weekly_report.py', '_scan_decisions', 'path'),
+    ('src/atlas_plus/curation/weekly_synthesis.py', '_latest_session_text', 'latest'),
+    ('src/atlas_plus/curation/weekly_synthesis.py', 'run_weekly_synthesis', 'draft_path'),
+    ('src/atlas_plus/doctor/cli.py', 'check_decisions', 'p'),
+    ('src/atlas_plus/doctor/cli.py', 'check_research_quality', 'md_file'),
+    ('src/atlas_plus/doctor/cli.py', 'read', 'path'),
+    ('src/atlas_plus/doctor/cli.py', 'record_trends_snapshot', 'md_file'),
+    ('src/atlas_plus/hooks/prime.py', '_house_rules', "root / 'identity' / 'house-rules.md'"),
+    ('src/atlas_plus/hooks/prime.py', '_latest_dream_questions', 'newest'),
+    ('src/atlas_plus/hooks/prime.py', '_read_stripped', 'path'),
+    ('src/atlas_plus/hooks/prime.py', '_score_memory_files', 'f'),
+    ('src/atlas_plus/hooks/session_start.py', '_brain_notes', 'reports[-1]'),
+    ('src/atlas_plus/hooks/session_start.py', '_house_rules', "atlas_paths.memory_root() / 'identity' / 'house-rules.md'"),
+    ('src/atlas_plus/hooks/session_start.py', '_read_file', 'path'),
+    ('src/atlas_plus/hooks/session_start.py', 'main', 'history_file'),
+    ('src/atlas_plus/identity.py', '_frontmatter_value', 'path'),
+    ('src/atlas_plus/import_cmd.py', '_chat_already_imported', 'parent / name'),
+    ('src/atlas_plus/import_cmd.py', '_chat_fingerprints', 'p'),
+    ('src/atlas_plus/import_cmd.py', '_claim_note', 'path'),
+    ('src/atlas_plus/import_cmd.py', '_corpus_index', 'p'),
+    ('src/atlas_plus/import_cmd.py', '_existing_bodies', 'p'),
+    ('src/atlas_plus/import_cmd.py', '_grew', 'prior_path'),
+    ('src/atlas_plus/import_cmd.py', '_import_copies', 'cand'),
+    ('src/atlas_plus/inbox/store.py', '_parse_item', 'path'),
+    ('src/atlas_plus/mcp/memory_server/embeddings.py', '_body_of', 'path'),
+    ('src/atlas_plus/mcp/memory_server/routing.py', 'confirm_fact', 'target'),
+    ('src/atlas_plus/mcp/memory_server/routing.py', 'downgrade_stale_confirmations', 'md_file'),
+    ('src/atlas_plus/mcp/memory_server/routing.py', 'mark_contradiction', 'target'),
+    ('src/atlas_plus/mcp/memory_server/tools/anti.py', 'anti_remember', 'target'),
+    ('src/atlas_plus/mcp/memory_server/tools/anti.py', 'list_anti', 'md_file'),
+    ('src/atlas_plus/mcp/memory_server/tools/anti.py', 'propagate_anti_rejection', 'md_file'),
+    ('src/atlas_plus/mcp/memory_server/tools/decision.py', 'list_decisions', 'f'),
+    ('src/atlas_plus/mcp/memory_server/tools/frontmatter.py', 'memory_frontmatter', 'target'),
+    ('src/atlas_plus/mcp/memory_server/tools/list.py', 'memory_list', 'p'),
+    ('src/atlas_plus/mcp/memory_server/tools/list.py', 'memory_list_confirmed', 'p'),
+    ('src/atlas_plus/mcp/memory_server/tools/personas.py', '_parse_frontmatter', 'path'),
+    ('src/atlas_plus/mcp/memory_server/tools/personas.py', '_split_body', 'path'),
+    ('src/atlas_plus/mcp/memory_server/tools/remember.py', '_already_in_note', 'target'),
+    ('src/atlas_plus/mcp/memory_server/tools/remember.py', '_has_conflict_markers', 'path'),
+    ('src/atlas_plus/mcp/memory_server/tools/remember.py', '_same_file_repeat', 'written_to'),
+    ('src/atlas_plus/mcp/memory_server/tools/remember.py', 'memory_confirm', 'target'),
+    ('src/atlas_plus/mcp/memory_server/tools/skills.py', '_first_sentence', 'path'),
+    ('src/atlas_plus/mcp/memory_server/tools/skills.py', '_parse_frontmatter', 'path'),
+    ('src/atlas_plus/mcp/memory_server/tools/skills.py', '_split_body', 'path'),
+    ('src/atlas_plus/memory_agent.py', '_recent_projects_from_history', 'history'),
+    ('src/atlas_plus/memory_agent.py', 'scan_decisions_to_revisit', 'f'),
+    ('src/atlas_plus/memory_agent.py', 'scan_stale_projects', 'proj_file'),
+    ('src/atlas_plus/session_narrative.py', '_parse_dated_sessions', 'f'),
+    ('src/atlas_plus/session_patterns.py', '_parse_session_history', 'history_file'),
+    ('src/atlas_plus/summarizer/renderer.py', '_write_locked', 'UPDATES_TXT'),
+    ('src/atlas_plus/summarizer/renderer.py', 'find_session_entry', 'f'),
+    ('src/atlas_plus/summarizer/renderer.py', 'partial_count', 'f'),
+    ('src/atlas_plus/summarizer/renderer.py', 'write_outputs', 'UPDATES_TXT'),
+    ('src/atlas_plus/summarizer/renderer.py', 'write_outputs', '_path'),
+    ('src/atlas_plus/summarizer/renderer.py', 'write_outputs', 'session_file'),
+    ('src/atlas_plus/telegram/commands.py', '_do_check', 'path'),
+    ('src/atlas_plus/telegram/commands.py', 'cmd_research_index', 'md_file'),
+    ('src/atlas_plus/telegram/commands.py', 'cmd_research_quality', 'md_file'),
+    ('src/atlas_plus/telegram/job_poller.py', '_write_result', 'ticket_file'),
+    ('src/atlas_plus/temporal_graph/sources.py', '_parse_session_log', 'path'),
+    ('src/atlas_plus/temporal_graph/sources.py', 'ingest', 'path'),
+    ('src/atlas_plus/testing/persistence_metrics.py', 'measure_persistence', 'f'),
+    ('src/atlas_plus/testing/persistence_metrics.py', 'measure_persistence', 'target'),
+    ('src/atlas_plus/testing/session_simulator.py', 'find_fact_in_memory', 'f'),
+    ('src/atlas_plus/testing/session_simulator.py', 'memory_contains_phrase', 'f'),
+    ('src/atlas_plus/tickets/store.py', '_parse_ticket', 'path'),
+]
+
+
+def _g26_excluded() -> list:
+    f = _G26_REPO / "scripts" / "public_exclude.txt"
+    if not f.exists():
+        return []
+    out = []
+    for ln in f.read_text(encoding="utf-8").splitlines():
+        ln = ln.split("#", 1)[0].strip()
+        if ln:
+            out.append(ln.replace("\\", "/"))
+    return out
+
+
+def _g26_shipped(rel: str, excl: list) -> bool:
+    shipped = True   # gitignore reading: a `!` line re-includes, the LAST matching line decides
+    for line in excl:
+        keep = line.startswith("!")
+        pat = line[1:] if keep else line
+        if (pat.endswith("/") and (rel + "/").startswith(pat)) or _g26_fnmatch.fnmatch(rel, pat) \
+                or _g26_fnmatch.fnmatch(rel, pat.rstrip("/") + "/*"):
+            shipped = keep
+    return shipped
+
+
+def _g26_hits(text: str) -> list:
+    """(line, function, receiver) of every read with errors="replace" in one module's source."""
+    try:
+        tree = _g26_ast.parse(text)
+    except SyntaxError:
+        return []
+    out = []
+
+    def visit(node, fn):
+        for child in _g26_ast.iter_child_nodes(node):
+            name = fn
+            if isinstance(child, (_g26_ast.FunctionDef, _g26_ast.AsyncFunctionDef)):
+                name = child.name
+            if isinstance(child, _g26_ast.Call):
+                hit = _g26_call(child)
+                if hit is not None:
+                    out.append((child.lineno, fn, hit))
+            visit(child, name)
+
+    visit(tree, "<module>")
+    return sorted(out)
+
+
+def _g26_call(n):
+    f = n.func
+    name = getattr(f, "attr", None) or getattr(f, "id", "")
+    if name not in ("read_text", "open"):
+        return None
+    kw = {k.arg: k.value for k in n.keywords if k.arg}
+    e = kw.get("errors")
+    if not (isinstance(e, _g26_ast.Constant) and e.value == "replace"):
+        return None
+    if name == "read_text":
+        return _g26_ast.unparse(f.value) if isinstance(f, _g26_ast.Attribute) else "?"
+    mode = kw.get("mode") or (n.args[1] if len(n.args) > 1 else None)
+    if isinstance(mode, _g26_ast.Constant) and "b" in str(mode.value):
+        return None   # a binary open takes no errors= anyway
+    if isinstance(f, _g26_ast.Attribute) and not (isinstance(f.value, _g26_ast.Name) and f.value.id in ("io", "codecs")):
+        return _g26_ast.unparse(f.value)   # path.open(...)
+    return _g26_ast.unparse(n.args[0]) if n.args else "?"
+
+
+def _g26_scan():
+    """{(rel, function, receiver): [line, ...]} over the shipped package of this tree, and the files seen."""
+    excl = _g26_excluded()
+    seen, hits = set(), {}
+    for p in sorted((_G26_REPO / "src" / "atlas_plus").rglob("*.py")):
+        rel = p.relative_to(_G26_REPO).as_posix()
+        if rel == _G26_HELPER or not _g26_shipped(rel, excl):
+            continue
+        seen.add(rel)
+        for lineno, fn, recv in _g26_hits(p.read_text(encoding="utf-8")):
+            hits.setdefault((rel, fn, recv), []).append(lineno)
+    return hits, seen
+
+
+def test_g26_corpus_notes_are_read_through_read_note_text():
+    for key, why in ALLOW_G26.items():
+        assert why.strip() and ". " not in why.strip(), f"ALLOW_G26 {key} needs ONE sentence of reason"
+    assert not set(ALLOW_G26) & set(PENDING_G26), "a row is in both lists"
+    hits, seen = _g26_scan()
+    known = set(ALLOW_G26) | set(PENDING_G26)
+    offenders = [f"{rel}:{lines[0]} in {fn}(): reads {recv} with errors='replace'"
+                 for (rel, fn, recv), lines in sorted(hits.items()) if (rel, fn, recv) not in known]
+    stale = [f"{k}" for k in sorted(known) if k[0] in seen and k not in hits]
+    assert not offenders, (
+        "LES-G26: a corpus note read without atlas_plus._readahead.read_note_text (a UTF-16 note reads as "
+        "replacement characters). Read it with read_note_text(path), or, for a file that is never a note, "
+        "add a row to ALLOW_G26 with one sentence of reason:\n  " + "\n  ".join(offenders))
+    assert not stale, "LES-G26: rows whose read is gone (delete them; PENDING_G26 only shrinks):\n  " + "\n  ".join(stale)
+
+
+def test_g26_self_test_flags_planted_offenders():
+    planted = (
+        "import io\n"
+        "def show(note):\n"
+        "    return note.read_text(encoding='utf-8', errors='replace')\n"          # 3 offender
+        "def show2(p):\n"
+        "    with open(p, encoding='utf-8', errors='replace') as fh:\n"            # 5 offender
+        "        return fh.read()\n"
+        "def fine(p):\n"
+        "    a = p.read_text(encoding='utf-8')\n"                                  # 8 strict read: not this rule
+        "    b = open(p, 'rb').read()\n"                                           # 9 binary
+        "    c = read_note_text(p)\n"                                              # 10 the helper
+        "    return io.open(p, 'r', encoding='utf-8', errors='replace').read()\n"  # 11 offender
+        "x = (ROOT / 'n.md').open(encoding='utf-8', errors='replace')\n"           # 12 offender
+    )
+    assert _g26_hits(planted) == [(3, "show", "note"), (5, "show2", "p"), (11, "fine", "p"),
+                                  (12, "<module>", "ROOT / 'n.md'")]
+
+
+def test_g26_self_test_the_scan_sees_this_tree():
+    hits, seen = _g26_scan()
+    assert "src/atlas_plus/web/app.py" in seen and _G26_HELPER not in seen
+    # the dashboard's viewer moved to the helper (AG134): it is no hit any more
+    assert not [k for k in hits if k[0] == "src/atlas_plus/web/app.py" and k[1] == "memory_file_read"]
