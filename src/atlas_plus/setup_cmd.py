@@ -40,6 +40,16 @@ def _keygen() -> str:
     return _next_step.keygen_command()
 
 
+def _py_launcher_form(command: str) -> str:
+    """`python -m ...` as the Windows `py` launcher types it (`py -m ...`); any other line unchanged."""
+    return "py" + command[len("python"):] if command.startswith("python ") else command
+
+
+def _setup_there() -> str:
+    from atlas_plus import _next_step  # a named command is built, never typed (G18)
+    return f"{_next_step.command('setup')} run there prints its PowerShell form"
+
+
 SERVER_MODULE = "atlas_plus.mcp.memory_server.server"
 SERVER_NAME = "sextant"
 #: The variables the MCP SERVER reads to decide where the corpus and its state live. When any
@@ -330,6 +340,10 @@ def describe(environ: dict | None = None, name: str = SERVER_NAME) -> dict:
                                          '--header "Authorization: Bearer $env:ATLAS_MCP_TOKEN"',
         "verify_http_powershell": f"python -m atlas_plus verify --url http://<host>:{port}/mcp "
                                   "--token $env:ATLAS_MCP_TOKEN",
+        # A Windows client that has only the `py` launcher (the python.org installer's default) has no
+        # bare `python`, or only the Store stub, so the line above fails there (AG128, SEX-048).
+        "verify_http_py": _py_launcher_form(f"python -m atlas_plus verify --url http://<host>:{port}/mcp "
+                                            "--token $env:ATLAS_MCP_TOKEN"),
         "docs": _self_hosting_doc(),
     }
     import shutil as _shutil
@@ -503,6 +517,10 @@ def render(info: dict, client: str = "all") -> str:
                       "and shell history show it)",
                       "   Prove a write over HTTP from the client machine, with that machine's own Python that "
                       "has the package (or scripts/mcp_roundtrip.py from a clone): " + h["verify_http"],
+                      "   (a Windows client with only the py launcher, where `python` is not found or opens "
+                      "the Store, types `py` in place of `python`" + (
+                          ": " + h.get("verify_http_py", _py_launcher_form(h["verify_http"])) if _powershell()
+                          else "; " + _setup_there()) + ")",
                       f"   (curl -s http://<host>:{h.get('port', 8765)}/health answers without a token; 10 failed "
                       "requests from one source lock it out for 5 min (429), and every client behind "
                       "one NAT, Docker's bridge included, shares that counter: ATLAS_MCP_TRUSTED_PEERS=<ip> "

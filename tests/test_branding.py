@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from atlas_plus import branding
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "atlas_plus"
@@ -25,6 +27,11 @@ SWEPT = [
 
 
 class TestProductDetection:
+    @pytest.fixture(autouse=True)
+    def _private_install(self, monkeypatch):
+        # These pin the argv rule on the PRIVATE build; the public-install rule is tests/test_mn97.py.
+        monkeypatch.setattr(branding, "public_install", lambda: False)
+
     def test_sextant_alias(self, monkeypatch):
         # Forward-slash absolute path splits correctly on every OS (a raw
         # C:\...\x.exe literal only splits on Windows -- backslash is not a

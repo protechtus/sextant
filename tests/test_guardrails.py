@@ -2507,3 +2507,209 @@ def test_g25_reads_the_public_exclude_list(tmp_path, monkeypatch):
     assert _g25_shipped("src/atlas_plus/priv/a.py", ["src/atlas_plus/priv/"]) is False
     assert _g25_shipped("src/atlas_plus/priv/a.py", ["src/atlas_plus/priv"]) is False
     assert _g25_shipped("src/atlas_plus/cli.py", ["src/atlas_plus/priv/"]) is True
+
+
+# --- G22 AST layer (AG128, SEX-048): every value printed by `review` / `versions` is escaped ---
+# The functional G22 test above runs three commands; this layer reads every call. In
+# curation/cli.py each argument of `<table>.add_row(...)` and `console.print(...)` must be
+# safe by construction: a literal, a number, a call to `_p(...)` / `escape(...)` / `_escape(...)`,
+# or an f-string / `+` / `a if c else b` / `", ".join(...)` built only from those. In
+# versions_cmd.py (plain `print`, no rich markup) the wrapper is `_safe(...)` and the same rule
+# holds for `print(...)` and `_next_step.say(...)` arguments. A value of a numeric shape is
+# accepted where its shape proves it: `len(...)`, `str(len(...))`, `int/float/round(...)`, a
+# formatted value with a numeric spec (`{x:.2f}`, `{n:,}`, `{n:>4}` is NOT numeric). Anything
+# else is an offender unless its exact source text is on the reviewed list below WITH a reason.
+# Scope is the two files only (they exist in the public and the private tree alike); a file
+# absent from the tree the test runs in is skipped, never failed.
+_G22A_FILES = {
+    "curation/cli.py": {"calls": ("add_row", "console.print"), "wrappers": ("_p", "escape", "_escape")},
+    "versions_cmd.py": {"calls": ("print", "_next_step.say"), "wrappers": ("_safe",)},
+}
+_G22A_NUMERIC_CALLS = ("len", "int", "float", "round", "abs", "sum", "min", "max")
+_G22A_NUMERIC_SPEC = re.compile(r"^[<>=^]?\d*[,_]?(\.\d+)?[dfegn%]?$")
+# Reviewed list, only shrinks. Key: "<file>::<source text of the argument>". Reason required.
+_G22A_REVIEWED = {
+    "curation/cli.py::table": "a rich Table object built in the same function from escaped cells",
+    "curation/cli.py::t": "a rich Table object built in the same function from escaped cells",
+    "curation/cli.py::*row": "the row list is built in the same function from _p(...) cells and computed numbers",
+    "curation/cli.py::'\\n'.join((_safe(line) for line in report.split('\\n')))":
+        "printed with markup=False, so _safe (control and format characters) is the whole job",
+    "versions_cmd.py::json.dumps({'error': info['error']})": "JSON output: json.dumps escapes every control character",
+    "versions_cmd.py::json.dumps(report, indent=2)": "JSON output: json.dumps escapes every control character",
+    "versions_cmd.py::json.dumps(msg) if args.json else f\"no history yet: {_safe(info['versions_dir'])} does not exist (it appears the first time an edit is versioned)\"":
+        "JSON branch is json.dumps, text branch wraps the path in _safe",
+}
+# Reviewed record fields, only shrinks: each is a number (or a count) the scanner COMPUTES; none is
+# read from a note's text or frontmatter. `str(r["age_days"])`, `f"{c.days_overdue}d"` pass.
+_G22A_REVIEWED_FIELDS = {
+    "age_days": "days since a date, computed", "half_life_days": "int parsed by the decay scanner",
+    "days_overdue": "computed", "miss_count": "COUNT(*) from the search log", "total": "COUNT(*)",
+    "urls": "len() of a URL list", "cross_refs_added": "a count", "citation_count": "a count",
+    "word_count": "a count", "inbound_refs": "a count", "score": "a float score", "checked": "a count",
+    "unchecked": "a count", "files": "a count", "bytes": "a byte count", "notes_with_history": "a count",
+    "unparsed": "a count", "sessions": "a count", "open_loops": "a count", "direction_signals": "a count",
+    "total_referenced": "a count", "older_than": "argparse type=int", "keep_last": "argparse type=int",
+    "sessions_analyzed": "a count", "_MAX_FILE_PAIRS": "a module int constant", "candidates": "a count",
+    "approved": "a count", "written": "a count", "inbound_count": "a count",
+}
+# Reviewed local names, only shrinks: a rich style picked by the code, or a number the code
+# computes or a typed (int/float) command option.
+_G22A_REVIEWED_NAMES = {
+    "color": "style name chosen by the code", "conf_color": "style", "tag_color": "style",
+    "health_color": "style", "ref_color": "style", "h_color": "style", "f_color": "style",
+    "bucket": "an age-bucket label from the code's own table", "threshold": "typer int/float option",
+    "min_age": "typer int option", "max_health": "typer float option", "stale_days": "typer int option",
+    "total": "a count", "tf": "a count", "conf": "a percentage", "tagged": "a percentage",
+    "unhealthy": "a count", "orphans_n": "a count", "stale_n": "a count", "anti_n": "a count",
+    "hubs_n": "a count", "k": "a copy count", "count": "a count", "xrc": "a count", "removed": "a count",
+    "score_str": "built from a float with a numeric spec and a style", "fresh_str": "same as score_str",
+    "status": "a literal markup label", "rejected_lc": "a count", "max_refs": "typer int option",
+    "age_str": "built from a computed day count",
+}
+
+
+def _g22a_dotted(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return ""
+
+
+def _g22a_safe(node, wrappers, local_safe) -> bool:
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Starred):
+        return False
+    if isinstance(node, ast.Name):
+        return node.id in local_safe or node.id in _G22A_REVIEWED_NAMES
+    if isinstance(node, ast.Attribute) and node.attr in _G22A_REVIEWED_FIELDS:
+        return True
+    if (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+            and node.slice.value in _G22A_REVIEWED_FIELDS):
+        return True
+    if isinstance(node, ast.JoinedStr):
+        return all(_g22a_safe(v, wrappers, local_safe) for v in node.values)
+    if isinstance(node, ast.FormattedValue):
+        spec = node.format_spec
+        if isinstance(spec, ast.JoinedStr) and len(spec.values) == 1 and isinstance(spec.values[0], ast.Constant):
+            text = str(spec.values[0].value)
+            if text and _G22A_NUMERIC_SPEC.match(text) and text[-1:] in "dfegn%,":
+                return True
+        return _g22a_safe(node.value, wrappers, local_safe)
+    if isinstance(node, ast.BinOp):
+        return _g22a_safe(node.left, wrappers, local_safe) and _g22a_safe(node.right, wrappers, local_safe)
+    if isinstance(node, ast.IfExp):
+        return _g22a_safe(node.body, wrappers, local_safe) and _g22a_safe(node.orelse, wrappers, local_safe)
+    if isinstance(node, ast.BoolOp):
+        return all(_g22a_safe(v, wrappers, local_safe) for v in node.values)
+    if isinstance(node, ast.Compare):
+        return True                                           # a bool prints True/False
+    if isinstance(node, ast.Call):
+        name = _g22a_dotted(node.func)
+        if name in wrappers or name.split(".")[-1] in _G22A_NUMERIC_CALLS:
+            return True
+        if name in ("_size", "json.dumps"):                    # a byte-count formatter; JSON escapes controls
+            return True
+        if name == "str" and len(node.args) == 1:
+            return _g22a_numeric(node.args[0], local_safe) or _g22a_safe(node.args[0], wrappers, local_safe)
+        if name in ("_next_step.command", "branding.prog", "_next_step.prog"):
+            return True                                       # a command name built by the G18 helpers
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "join" and len(node.args) == 1:
+            arg = node.args[0]
+            if isinstance(arg, (ast.GeneratorExp, ast.ListComp)):
+                return _g22a_safe(node.func.value, wrappers, local_safe) and _g22a_safe(arg.elt, wrappers, local_safe)
+        return False
+    return False
+
+
+def _g22a_numeric(node, local_safe) -> bool:
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (int, float))
+    if isinstance(node, ast.Call):
+        return _g22a_dotted(node.func).split(".")[-1] in _G22A_NUMERIC_CALLS
+    if isinstance(node, ast.BinOp):
+        return _g22a_numeric(node.left, local_safe) and _g22a_numeric(node.right, local_safe)
+    return False
+
+
+def _g22a_local_safe(func, wrappers) -> set:
+    """Names that every assignment in `func` binds to a safe expression (one pass, then a fixpoint)."""
+    assigned: dict = {}
+    for n in ast.walk(func):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            assigned.setdefault(n.targets[0].id, []).append(n.value)
+        elif isinstance(n, (ast.AugAssign, ast.AnnAssign)) and isinstance(n.target, ast.Name):
+            assigned.setdefault(n.target.id, []).append(n.value if n.value is not None else ast.Name(id="?"))
+        elif isinstance(n, (ast.For, ast.comprehension)) and isinstance(n.target, ast.Name):
+            assigned.setdefault(n.target.id, []).append(ast.Name(id="?"))   # loop variable: unknown
+        elif isinstance(n, ast.arg):
+            assigned.setdefault(n.arg, []).append(ast.Name(id="?"))
+    safe = set(assigned)                                      # greatest fixpoint: drop until stable
+    changed = True
+    while changed:
+        changed = False
+        for name, values in assigned.items():
+            if name in safe and not all(_g22a_safe(v, wrappers, safe) for v in values):
+                safe.discard(name)
+                changed = True
+    return safe
+
+
+def _g22a_offenders(rel: str, tree: ast.Module) -> list:
+    spec = _G22A_FILES[rel]
+    out = []
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    seen = set()
+    for func in funcs:
+        local_safe = _g22a_local_safe(func, spec["wrappers"])
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Call) or id(node) in seen:
+                continue
+            name = _g22a_dotted(node.func)
+            short = name.split(".")[-1]
+            hit = name in spec["calls"] or (short == "add_row" and "add_row" in spec["calls"])
+            if not hit:
+                continue
+            seen.add(id(node))
+            for arg in node.args:
+                src = ast.unparse(arg)
+                if f"{rel}::{src}" in _G22A_REVIEWED:
+                    continue
+                if not _g22a_safe(arg, spec["wrappers"], local_safe):
+                    out.append(f"{rel}:{node.lineno}: {name}(... {src[:90]} ...)")
+    return out
+
+
+def test_g22_ast_printed_values_are_wrapped():
+    src_root = Path(__file__).resolve().parents[1] / "src" / "atlas_plus"
+    offenders, scanned = [], 0
+    for rel in _G22A_FILES:
+        p = src_root / rel
+        if not p.is_file():
+            continue                                          # absent from this tree: skipped, never failed
+        scanned += 1
+        offenders += _g22a_offenders(rel, ast.parse(p.read_text(encoding="utf-8"), filename=str(p)))
+    assert scanned, "neither curation/cli.py nor versions_cmd.py was found"
+    assert not offenders, ("LES-G22 (AST): a value printed by review/versions must be a literal, a number, or "
+                           "wrapped in _p()/escape() (cli) or _safe() (versions_cmd):\n  " + "\n  ".join(offenders))
+
+
+def test_g22_ast_self_test_catches_a_planted_offender():
+    planted = ast.parse(
+        "def cmd(rows):\n"
+        "    for r in rows:\n"
+        "        table.add_row(_p(r.path), r.updated, str(r.made), f'{r.score:.2f}', str(len(rows)))\n"
+        "        console.print(f'[dim]{r.title}[/dim]')\n"
+        "        console.print(f'[dim]{_p(r.title)}[/dim] {len(rows)} 42')\n"
+        "    label = _p(rows[0].type)\n"
+        "    console.print(label)\n")
+    found = _g22a_offenders("curation/cli.py", planted)
+    joined = "\n".join(found)
+    assert "r.updated" in joined and "r.title" in joined and "str(r.made)" in joined, joined
+    assert len(found) == 3, joined                            # the wrapped, numeric and local-safe ones pass
+    planted_v = ast.parse("def main(n, p):\n    print(f'  {n}')\n    print(f'  {_safe(p)} {len(n):,}')\n")
+    assert [f for f in _g22a_offenders("versions_cmd.py", planted_v)] == ["versions_cmd.py:2: print(... f'  {n}' ...)"]

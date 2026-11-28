@@ -113,8 +113,37 @@ def test_outside_writers_are_still_seen(troot):
     assert _mk(troot, "proj") == ["PRO-031"]
 
 
-def test_create_cost_stays_flat_with_many_projects_and_archive_folders(troot):
+def test_create_cost_stays_flat_with_many_projects_and_archive_folders(troot, monkeypatch):
+    import os
     from atlas_plus.tickets import store
+
+    # The cost that must stay flat is FOLDER READING: before AG84 and AG86 every create listed the whole
+    # project folder and every archive folder. It is counted, not timed: a wall-clock ratio (late < 3 * early)
+    # failed in two full suites that ran beside heavy disk work and passed alone, with the product unchanged
+    # (a file created in a folder of 1,500 entries is slower on a busy disk whatever this code does).
+    read = {"entries": 0}
+    real_scandir = os.scandir
+
+    class _Counting:
+        def __init__(self, path):
+            self._it = real_scandir(path)
+
+        def __enter__(self):
+            self._it.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._it.__exit__(*exc)
+
+        def __iter__(self):
+            for entry in self._it:
+                read["entries"] += 1
+                yield entry
+
+        def close(self):
+            self._it.close()
+
+    monkeypatch.setattr(os, "scandir", _Counting)
     for p in range(20):
         d = troot / f"other{p:02d}"
         d.mkdir()
@@ -127,18 +156,22 @@ def test_create_cost_stays_flat_with_many_projects_and_archive_folders(troot):
             (d / f"OT{p:02d}-9{day:02d}.md").write_text("---\nid: x\n---\n", encoding="utf-8")
 
     def batch(k):
-        t = time.perf_counter()
+        read["entries"] = 0
         for i in range(k):
             store.create_ticket(f"t {i}", "proj", tickets_root=troot, interactive=True)
-        return (time.perf_counter() - t) / k
+        return read["entries"] / k   # folder entries read per create
 
     batch(20)
-    early = min(batch(40), batch(40))
+    early = max(batch(40), batch(40))
     for i in range(1500):
         (troot / "proj" / f"PRO-{i + 1000:04d}.md").write_text("---\nid: x\n---\n", encoding="utf-8")
-    batch(1)
-    late = min(batch(40), batch(40))
-    assert late < 3 * early, (early, late)
+    regrown = batch(1)                      # the grown folder is read again, once
+    late = max(batch(40), batch(40))
+    # Measured 2026-11-27 (four runs): early 115 to 233 (the folders the setup wrote within the last second
+    # are read again while their time stamp is too young to trust), the one re-read 4,846, late 46.0 every time.
+    assert regrown >= 1500, regrown    # the counter sees a real folder read, so this test can fail
+    assert early < 1500, early         # no create lists everything the root holds (about 2,000 entries here)
+    assert late < 500, late            # 1,580 tickets in the project and none of them is listed per create
 
 
 # ---------------------------------------------------------------- the show / ambiguity path

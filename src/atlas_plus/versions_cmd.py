@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         return 0
     print(f"history: {report['files']:,} copies, {_size(report['bytes'])}, "
-          f"{report['notes_with_history']:,} note(s), oldest {report['oldest']} ({_safe(info['versions_dir'])})")
+          f"{report['notes_with_history']:,} note(s), oldest {_safe(report['oldest'])} ({_safe(info['versions_dir'])})")
     if info.get("unparsed"):
         print(f"  ({info['unparsed']} file(s) under versions/ do not follow the <note>_<date>_vN name and are "
               "never pruned)")

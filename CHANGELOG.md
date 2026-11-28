@@ -69,6 +69,11 @@ public tree.
   spelling beside them), `~/.atlas`, `_atlas`, the import name `atlas_plus`, every `atlas-*` command, the
   logger names `atlas.*`, the `X-Atlas-*` headers, `"service": "atlas-mcp"`, `atlas://memory/`,
   `source="atlas"`, the `atlas-theme` storage key and the `Atlas-*` scheduled task names.
+- A command typed under its older name says Sextant too (MN97, the upgrade walk on a lived-in 0.1.0
+  install): `atlas-backup --help`, `atlas-doctor --help`, `atlas-dream --help`, `atlas-brain --help`,
+  `atlas-memory-mcp --help`, `atlas-web-ui --help` and `python -m atlas_plus.mcp.memory_server.server --help`
+  (the command setup wrote into client settings) named the product "Atlas" on the public install, because
+  the name was taken from the typed command alone. The installed package decides now.
 
 ### Fixed
 
@@ -102,6 +107,13 @@ public tree.
   until they are restarted (close and reopen the client session).
 - After the first semantic search the server kept every vector twice, once as a numpy matrix and once as
   Python lists (54.6 MB beside 6.8 MB at 2,323 notes). It keeps the matrix.
+- Every `sextant review` table and line escapes note metadata too (SEX-048, AG128): a note whose frontmatter
+  `type:` held `[bold]` or a right-to-left override reached the terminal as markup in `review decay`, and so
+  did a gap query, a suggestion, a ticket id and a ticket title in `review gaps --autoticket` (36 lines now go
+  through the same helper as the paths did since AG122). `sextant versions` prints its oldest date through
+  the guard as well. Guardrail G22 has an AST layer over both files: every printed argument is a literal, a
+  number, wrapped, or on a reviewed list with its reason. `sextant setup` tells a Windows client that has
+  only the `py` launcher how to type the HTTP verify line (it named a bare `python`).
 
 ## [0.1.1] - 2026-11-27
 

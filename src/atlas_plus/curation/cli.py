@@ -59,7 +59,7 @@ def cmd_duplicates(
         table.add_column("File 2", style="cyan", overflow="fold")
         table.add_column("Fact", overflow="fold")
         for r in rows[:60]:
-            table.add_row(r["kind"], _p(r["file1"]), _p(r["file2"]), _p(r["fact"]))
+            table.add_row(_p(r["kind"]), _p(r["file1"]), _p(r["file2"]), _p(r["fact"]))
         console.print(table)
         exact = sum(1 for r in rows if r["kind"] == "exact")
         console.print(f"\n[yellow]{exact} exact and {len(rows) - exact} near repeat(s)"
@@ -125,7 +125,7 @@ def cmd_stale(
     table.add_column("Last Updated")
     table.add_column("Age (days)", justify="right")
     for r in results:
-        table.add_row(_p(r.path), r.updated, str(r.age_days))
+        table.add_row(_p(r.path), _p(r.updated), str(r.age_days))
     console.print(table)
     console.print(f"\n[yellow]{len(results)} file(s) found.[/yellow]")
 
@@ -198,7 +198,7 @@ def cmd_contradictions(
     table.add_column("Confidence")
     table.add_column("Explanation")
     for r in results:
-        table.add_row(_p(r.file1), _p(r.file2), r.confidence, _p(r.explanation))
+        table.add_row(_p(r.file1), _p(r.file2), _p(r.confidence), _p(r.explanation))
     console.print(table)
     console.print(f"\n[yellow]{len(results)} contradiction(s) found.[/yellow]")
 
@@ -233,7 +233,7 @@ def cmd_suggest_facts(
         elif rejected_lc > 0:
             console.print(f"[dim]No qualifying candidates (rejected {rejected_lc} low-confidence).[/dim]")
     except RuntimeError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {_p(e)}")
         raise typer.Exit(1)
 
 
@@ -397,7 +397,7 @@ def cmd_gaps(
         return
 
     if not misses:
-        console.print(f"[green]No memory misses in the last {since}.[/green]")
+        console.print(f"[green]No memory misses in the last {_p(since)}.[/green]")
         return
 
     table = Table(title=f"Memory Miss Queries (last {since})", show_lines=True)
@@ -410,7 +410,7 @@ def cmd_gaps(
         pct = int(r["miss_count"] / r["total"] * 100)
         words = r["query"].split()[:4]
         suggestion = f"Consider documenting: {' '.join(words)}..."
-        table.add_row(_p(r["query"][:50]), str(r["miss_count"]), str(r["total"]), f"{pct}%", suggestion)
+        table.add_row(_p(r["query"][:50]), str(r["miss_count"]), str(r["total"]), f"{pct}%", _p(suggestion))
     console.print(table)
     console.print(f"\n[yellow]{len(misses)} recurring miss(es) found.[/yellow]")
 
@@ -431,7 +431,7 @@ def cmd_gaps(
             pct = int(r["miss_count"] / r["total"] * 100)
             lines.append(f"- **{r['query']}** -- {r['miss_count']} misses ({pct}%)  Consider documenting this topic.")
         out.write_text("\n".join(lines), encoding="utf-8")
-        console.print(f"\n[green]Written:[/green] {out}")
+        console.print(f"\n[green]Written:[/green] {_p(out)}")
 
     if autofile:
         from datetime import date
@@ -439,7 +439,7 @@ def cmd_gaps(
         gaps_dir = MEMORY_ROOT / "gaps"
         created = _create_gap_stubs(misses, gaps_dir, today_str)
         if created:
-            console.print(f"\n[green]Created {len(created)} gap stub(s) in {gaps_dir}:[/green]")
+            console.print(f"\n[green]Created {len(created)} gap stub(s) in {_p(gaps_dir)}:[/green]")
             for p in created:
                 console.print(f"  {_p(p.relative_to(MEMORY_ROOT))}")
             console.print("[dim]Edit each stub to fill in facts, then change status: unfilled -> active.[/dim]")
@@ -451,7 +451,7 @@ def cmd_gaps(
         if tickets_created:
             console.print(f"\n[green]Filed {len(tickets_created)} gap ticket(s):[/green]")
             for t in tickets_created:
-                console.print(f"  [{t.id}] {t.title}")
+                console.print(f"  \\[{_p(t.id)}] {_p(t.title)}")
         else:
             console.print("\n[dim]No new gap tickets created (all gaps already have a research report or existing ticket).[/dim]")
 
@@ -491,7 +491,7 @@ def cmd_decay(
     table.add_column("Last updated", width=12)
     table.add_column("Overdue", justify="right", width=8)
     for c in candidates:
-        table.add_row(_p(c.path), c.memory_type, f"{c.half_life_days}d", c.updated, f"{c.days_overdue}d")
+        table.add_row(_p(c.path), _p(c.memory_type), f"{c.half_life_days}d", _p(c.updated), f"{c.days_overdue}d")
     console.print(table)
     console.print(f"\n[yellow]{len(candidates)} file(s) past their half-life.[/yellow]")
     console.print("[dim]Review and update, or remove the half_life: field if the fact is permanent.[/dim]")
@@ -546,7 +546,7 @@ def cmd_unconfirmed_decay(
     table.add_column("Last confirmed", width=14)
     table.add_column("Age", justify="right", width=8)
     for c in candidates:
-        table.add_row(_p(c["path"]), c["old_confidence"], c["last_confirmed"], f"{c['age_days']}d")
+        table.add_row(_p(c["path"]), _p(c["old_confidence"]), _p(c["last_confirmed"]), f"{c['age_days']}d")
     console.print(table)
     console.print(f"\n[yellow]{len(candidates)} file(s) with stale last_confirmed.[/yellow]")
     if not write:
@@ -630,7 +630,7 @@ def cmd_age_stats(
         }, indent=2))
         return
 
-    console.print(f"\n[bold]Memory Age Distribution[/bold]  (scope: {scope or 'all'}, total: {total} files)\n")
+    console.print(f"\n[bold]Memory Age Distribution[/bold]  (scope: {_p(scope or 'all')}, total: {total} files)\n")
     table = Table(show_header=True, header_style="bold")
     table.add_column("Age bucket", width=14)
     table.add_column("Count", justify="right", width=8)
@@ -704,7 +704,7 @@ def cmd_rederive(
     table.add_column("Matched doc", style="blue", max_width=40)
     table.add_column("Sim", justify="right", width=6)
     for c in candidates:
-        table.add_row(_p(c.path), c.memory_type, _p(c.matched_doc), f"{c.similarity:.2f}")
+        table.add_row(_p(c.path), _p(c.memory_type), _p(c.matched_doc), f"{c.similarity:.2f}")
     console.print(table)
     console.print(f"\n[yellow]{len(candidates)} file(s) may duplicate project docs.[/yellow]")
     console.print("[dim]Review each file. If the doc is the authoritative source, archive the memory.[/dim]")
@@ -785,7 +785,7 @@ def cmd_convergence(
         contra_list = "\n".join(r["contradictions"][:3])
         if len(r["contradictions"]) > 3:
             contra_list += f"\n  (+{len(r['contradictions']) - 3} more)"
-        table.add_row(_p(r["path"][:40]), r["type"], _p(contra_list))
+        table.add_row(_p(r["path"][:40]), _p(r["type"]), _p(contra_list))
     console.print(table)
     console.print(f"\n[yellow]{len(results)} file(s) with unresolved contradiction flags.[/yellow]")
     console.print("[dim]Resolve by editing the files and removing the contradictions: list.[/dim]")
@@ -808,7 +808,7 @@ def cmd_convergence(
                 lines.append(f"- Last confirmed: {r['last_confirmed']}")
             lines.append("")
         out.write_text("\n".join(lines), encoding="utf-8")
-        console.print(f"\n[green]Written:[/green] {out}")
+        console.print(f"\n[green]Written:[/green] {_p(out)}")
 
 
 @app.command("narrative")
@@ -834,10 +834,10 @@ def cmd_narrative(
             typer.echo(json.dumps(result, indent=2))
             return
         if not result.get("ok"):
-            console.print(f"[yellow]{result.get('reason', 'no sessions found')}[/yellow]")
+            console.print(f"[yellow]{_p(result.get('reason', 'no sessions found'))}[/yellow]")
             return
         console.print(f"[green]Narrative written:[/green] {_p(result['path'])}")
-        console.print(f"  Week: {result['week']} | Sessions: {result['sessions']} | Energy: {result['energy']}")
+        console.print(f"  Week: {_p(result['week'])} | Sessions: {result['sessions']} | Energy: {_p(result['energy'])}")
         console.print(f"  Open loops: {result['open_loops']} | Direction signals: {result['direction_signals']}")
     else:
         report = build_narrative(since_days=since)
@@ -856,18 +856,18 @@ def cmd_narrative(
         if report.sessions_analyzed == 0:
             console.print("[yellow]No session files found.[/yellow]")
             return
-        console.print(f"[bold cyan]Narrative: {report.week_label}[/bold cyan]  "
-                      f"Sessions: {report.sessions_analyzed}  Energy: [bold]{report.energy}[/bold]")
+        console.print(f"[bold cyan]Narrative: {_p(report.week_label)}[/bold cyan]  "
+                      f"Sessions: {report.sessions_analyzed}  Energy: [bold]{_p(report.energy)}[/bold]")
         if report.active_projects:
-            console.print(f"\n[cyan]Active projects:[/cyan] {', '.join(report.active_projects[:6])}")
+            console.print(f"\n[cyan]Active projects:[/cyan] {_p(', '.join(report.active_projects[:6]))}")
         if report.direction_signals:
             console.print("\n[green]Direction signals:[/green]")
             for s in report.direction_signals[:5]:
-                console.print(f"  {s[:100]}")
+                console.print(f"  {_p(s[:100])}")
         if report.open_loops:
             console.print("\n[yellow]Open loops:[/yellow]")
             for s in report.open_loops[:5]:
-                console.print(f"  {s[:100]}")
+                console.print(f"  {_p(s[:100])}")
 
 
 @app.command("decisions")
@@ -969,12 +969,12 @@ def cmd_decisions(
     table.add_column("Status")
     for r in results:
         age_str = f"{r['age_days']}d ago" if r['age_days'] is not None else "?"
-        review_str = r["last_reviewed"] if r["last_reviewed"] != "never" else f"[red]never[/red]"
+        review_str = _p(r["last_reviewed"]) if r["last_reviewed"] != "never" else f"[red]never[/red]"
         status = "[red]STALE[/red]" if r["is_stale"] else "[green]ok[/green]"
-        table.add_row(_p(r["title"][:40]), f"{r['made']} ({age_str})", review_str, status)
+        table.add_row(_p(r["title"][:40]), f"{_p(r['made'])} ({age_str})", review_str, status)
         if show_conditions and r["revisit_if"]:
             for cond in r["revisit_if"][:3]:
-                table.add_row(f"  [dim]if: {cond[:60]}[/dim]", "", "", "")
+                table.add_row(f"  [dim]if: {_p(cond[:60])}[/dim]", "", "", "")
     console.print(table)
 
     if stale_count > 0:
@@ -1035,7 +1035,7 @@ def cmd_ref_graph(
     console.print(t)
     console.print(
         f"\n  {len(graph)} file(s) contain reference links  |  "
-        f"top hub: [cyan]{hubs[0]['stem']}[/cyan] ({hubs[0]['inbound_count']} inbound refs)"
+        f"top hub: [cyan]{_p(hubs[0]['stem'])}[/cyan] ({hubs[0]['inbound_count']} inbound refs)"
         if hubs else ""
     )
 
@@ -1064,7 +1064,7 @@ def cmd_cross_links(
     scan_dir = _Path(reports_dir) if reports_dir else state_dir / "reports"
 
     if not scan_dir.exists():
-        console.print(f"[yellow]Directory not found: {scan_dir}[/yellow]")
+        console.print(f"[yellow]Directory not found: {_p(scan_dir)}[/yellow]")
         return
 
     mem_root = _Path(os.environ.get("ATLAS_MEMORY_ROOT", str(MEMORY_ROOT)))
@@ -1120,7 +1120,7 @@ def cmd_citations(
     scan_dir = Path(reports_dir) if reports_dir else state_dir / "reports"
 
     if not scan_dir.exists():
-        console.print(f"[yellow]Directory not found: {scan_dir}[/yellow]")
+        console.print(f"[yellow]Directory not found: {_p(scan_dir)}[/yellow]")
         return
 
     results = []
@@ -1202,7 +1202,7 @@ def cmd_check_links(
     scan_dir = Path(reports_dir) if reports_dir else state_dir / "reports"
 
     if not scan_dir.exists():
-        console.print(f"[yellow]Directory not found: {scan_dir}[/yellow]")
+        console.print(f"[yellow]Directory not found: {_p(scan_dir)}[/yellow]")
         return
 
     report_results = []
@@ -1322,7 +1322,7 @@ def cmd_health_score(
     for r in results:
         s = r["score"]
         color = "green" if s >= 0.75 else ("yellow" if s >= 0.5 else "red")
-        issue_str = ", ".join(r["issues"][:4])
+        issue_str = _p(", ".join(r["issues"][:4]))
         table.add_row(f"[{color}]{s:.2f}[/{color}]", _p(r["path"][:45]), issue_str)
 
     console.print(table)
@@ -1430,7 +1430,7 @@ def cmd_summary(
     if anti_n > 0:
         console.print(f"  [dim]Anti-flagged:[/dim] {anti_n} file(s)")
     if hubs_n > 0:
-        console.print(f"  [cyan]Hubs:[/cyan] {hubs_n} file(s) with 5+ inbound refs  ({result.get('total_referenced',0)} total files with outbound links)")
+        console.print(f"  [cyan]Hubs:[/cyan] {hubs_n} file(s) with 5+ inbound refs  ({_p(result.get('total_referenced', 0))} total files with outbound links)")
     console.print("")
 
 
@@ -1509,7 +1509,7 @@ def cmd_suggest_tags(
         console.print(
             "[green]No untagged files found -- all files already have tags.[/green]"
             if not scope else
-            f"[green]No untagged files found in {scope}/.[/green]"
+            f"[green]No untagged files found in {_p(scope)}/.[/green]"
         )
         return
 
@@ -1574,7 +1574,7 @@ def cmd_research_index(
     scan_dir = Path(reports_dir) if reports_dir else state_dir / "reports"
 
     if not scan_dir.exists():
-        console.print(f"[yellow]Directory not found: {scan_dir}[/yellow]")
+        console.print(f"[yellow]Directory not found: {_p(scan_dir)}[/yellow]")
         return
 
     cutoff_date = (_date.today() - timedelta(days=since)).isoformat() if since > 0 else ""
@@ -1694,7 +1694,7 @@ def cmd_research_index(
         if gate is False:
             title_display = f"[red]![/red] {title_display}"
         table.add_row(
-            r["date"] or "--",
+            _p(r["date"] or "--"),
             title_display,
             score_str,
             fresh_str,
@@ -1751,7 +1751,7 @@ def cmd_quality(
     scan_dir = Path(reports_dir) if reports_dir else state_dir / "reports"
 
     if not scan_dir.exists():
-        console.print(f"[yellow]Directory not found: {scan_dir}[/yellow]")
+        console.print(f"[yellow]Directory not found: {_p(scan_dir)}[/yellow]")
         return
 
     results = []
@@ -1880,7 +1880,7 @@ def cmd_orphans(
         h = r["score"]
         h_color = "red" if h <= 0.0 else ("yellow" if h < 0.5 else "white")
         ref_color = "red" if r["inbound_refs"] == 0 else "white"
-        issues_str = ", ".join(r["issues"][:3])
+        issues_str = _p(", ".join(r["issues"][:3]))
         t.add_row(
             _p(r["path"]),
             age_str,
@@ -1994,7 +1994,7 @@ def cmd_next_actions(
     if result["untagged"]:
         console.print(f"[cyan]3. Untagged files ({len(result['untagged'])} files -- quick fix):[/cyan]")
         for u in result["untagged"]:
-            tags_str = ", ".join(u["suggested_tags"])
+            tags_str = _p(", ".join(u["suggested_tags"]))
             console.print(f"   [dim]{_p(u['path'])}[/dim]  tags: {tags_str}")
         console.print("   [dim]-> Run: atlas-review-memory suggest-tags --write[/dim]\n")
 
